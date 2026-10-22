@@ -105,8 +105,20 @@ In-process Rust scanners sharing the same contract as CLI plugins:
 
 SQLite via sqlx (WAL, foreign keys on, 5 connections). All queries are parameterized —
 there is no string-built SQL anywhere. Tables: `users`, `refresh_tokens`, `api_keys`,
-`plugin_states`, `tasks`, `task_events`, `findings`, `workflows`, `workflow_runs`,
-`policy_audit`, `settings`. Findings/tasks/events cascade on delete.
+`plugin_states`, `workspaces`, `targets`, `tasks`, `task_events`, `findings`,
+`workflows`, `workflow_runs`, `policy_audit`, `settings`. Findings/tasks/events cascade
+on delete.
+
+### Workspaces
+
+Workspaces are shared project hubs (visible to every authenticated user; scanner role
+mutates; admin deletes). `tasks.workspace_id` is nullable — NULL is the synthetic
+*Personal* scope, which keeps pre-workspace data and ad-hoc scans working unchanged.
+Deleting a workspace sets its tasks' `workspace_id` to NULL (they fall back to Personal)
+and cascades its targets away. Registered targets are unique per workspace and their
+kind (hostname / IP address / URL) is derived server-side. Dynamic query fragments
+(workspace scope, severity sets) share a running placeholder counter so bind order can
+never drift from placeholder numbering — the class of bug found and fixed in cycle 7.
 
 ## Frontend
 
@@ -116,8 +128,12 @@ live console is a fetch-based SSE reader (EventSource cannot send Authorization 
 with cursor reconnection. All state is server-state via React Query — the client holds
 almost no local state beyond forms and filters (URL search params).
 
-## Roadmap (deliberately deferred from v1)
+## Roadmap (deliberately deferred)
 
-credential vault · notification/webhook rules · scheduled workflow ticks · saved views ·
-attack-surface asset graph · WASM plugin engine (for parsers that genuinely need code) ·
-multi-node scan workers.
+scan diffing (new/fixed/regressed between runs) · CVE/CVSS/EPSS enrichment · async report
+generation with webhooks · DOCX/XLSX/PDF reports · per-check test audit trail · finding
+templates & manual findings · MCP server for AI agents · credential vault ·
+notification/webhook rules · scheduled workflow ticks · saved views · attack-surface
+asset graph · WASM plugin engine (for parsers that genuinely need code) · multi-node
+scan workers. (Workspaces and first-class targets — the top two items from the
+pentest-tools.com gap analysis — shipped in 2.1.0.)

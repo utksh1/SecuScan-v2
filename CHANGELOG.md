@@ -3,6 +3,31 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.1.0 — workspaces & first-class targets
+
+Client/project scoping modeled after commercial scanning platforms (pentest-tools.com):
+
+- **Workspaces**: project hubs grouping tasks and registered targets. The synthetic
+  *Personal* scope (tasks with no workspace) keeps everything backward compatible;
+  deleting a workspace preserves its tasks (they fall back to Personal) while removing
+  its targets. Visible to all users; scanner role creates/updates; admin deletes.
+- **Registered targets**: per-workspace asset registry with server-derived kind
+  (hostname / IP address / URL), unique per workspace, per-target scan counts and
+  last-scanned timestamps, and a "scan this target" quick-launch in the UI.
+- **Scoped views**: `?workspace_id=<id|none>` on tasks, findings and dashboard; the UI
+  workspace switcher scopes all data views; new scans can be filed into a workspace;
+  workflow runs accept a workspace; task retry preserves it.
+- **UI**: sidebar workspace switcher with active-task badges, Targets page with
+  registry management and workspace overview in the Personal scope.
+- Fixed during this work: findings multi-severity filter placeholder/OFFSET collision
+  (single-severity filters returned nothing, multi-severity silently dropped all but
+  the first value, count/list disagreed); dashboard bind-index mismatch when no user
+  scope was active.
+- Performance: workspace and target counters use fixed-count GROUP BY queries (no N+1).
+- Tests: 90 backend (incl. a full workspace/target/scoping lifecycle and a severity
+  filter matrix over a deterministic fixture plugin) + 48 frontend; E2E smoke covers
+  the workspace flow end to end.
+
 ## 2.0.0 — the Rust + React rewrite
 
 Ground-up rewrite of SecuScan (Python/FastAPI) in Rust (axum + tokio + sqlx) and

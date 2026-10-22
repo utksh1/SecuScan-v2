@@ -19,7 +19,8 @@
 
 SecuScan is an open-source workspace for running and organizing authorized security scans:
 a plugin catalogue, a task runner with live streaming output, normalized findings with an
-analyst triage workflow, report exports, and multi-user access control — all local-first.
+analyst triage workflow, report exports, multi-user access control, and client/project
+**workspaces with a registered-target registry** — all local-first.
 
 **v2 is a ground-up rewrite** of the original Python/FastAPI project in **Rust + React**:
 
@@ -33,6 +34,7 @@ analyst triage workflow, report exports, and multi-user access control — all l
 | Output streaming | SSE | SSE with DB replay + cursor-based reconnection |
 | Reports | csv/html/pdf/sarif | md/csv/html/sarif/json |
 | Safety | consent, network policy | consent, network policy **with host canonicalization + audit log**, per-plugin concurrency/hourly limits, argv hardening |
+| Organization | flat task list | **workspaces + first-class targets** (per-client/project scoping of tasks, findings and dashboard) |
 
 ## Architecture
 

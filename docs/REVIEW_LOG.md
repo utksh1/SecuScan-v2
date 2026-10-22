@@ -95,3 +95,45 @@ reviews.
   shared-key behaviour.
 - Workflow inputs are JSON textareas in the UI (power-user oriented).
 - v1 features intentionally deferred: vault, notifications, schedulers, saved views.
+
+
+## Review cycle 7 — workspaces & targets feature audit
+
+Scope: every file added or modified for the workspace/target feature (migration 0002,
+`repo/workspaces.rs`, `repo/tasks.rs`, `repo/findings.rs`, `repo/misc.rs`,
+`routes/{workspaces,tasks,findings,dashboard,workflows}.rs`, the full frontend diff)
+plus a re-read of every query the feature touches.
+
+Found and fixed:
+
+1. **Pre-existing (cycle 5 miss): findings multi-severity placeholder collision** —
+   `severity_clause(8)` generated `?8..` while the 8th bound argument was `OFFSET`;
+   single-severity filters compared severity against the offset (returned nothing),
+   multi-severity silently kept only the first value, and `count`/`list` disagreed.
+   The existing test only asserted HTTP 200 on an empty table. Fixed with a running
+   placeholder counter (`Ph`) shared by every optional clause; regression test matrix
+   over a deterministic `sevtest` fixture plugin (1/2/3-severity combinations,
+   items == total).
+2. **Self-introduced (caught by the new integration test before merge): dashboard
+   bind-index mismatch** — with no user scope active, the workspace fragment still
+   referenced `?2` while the bind landed on `?1` (empty dashboards). Restructured to
+   pick the fragment by user-scope presence.
+3. **N+1 queries** — workspace list ran 3 COUNT queries per workspace (UI polls it
+   every 15 s) and the target list ran 2 per target; replaced with fixed-count
+   GROUP BY stitching (`all_workspace_counts`, `target_stats_many`).
+4. **Check-then-insert race on target uniqueness** — two concurrent creates could
+   both pass the pre-check and surface a raw 500 on the UNIQUE constraint; now the
+   constraint violation itself is mapped to 409 via `is_unique_violation()`
+   (create and rename paths).
+5. Minor: `list_workspaces` ordering simplified to `name COLLATE NOCASE`; unused
+   import; stale comments removed.
+
+Verified (no action needed): all new SQL is parameterized; RBAC on every new route
+(viewer read-only, scanner mutate, admin delete); task retry and workflow runs carry
+the workspace; ON DELETE SET NULL fallback asserted by test + E2E; placeholder
+numbering in tasks list/count/recent now derived from a shared counter; frontend
+`scopeParam` never produces an unvalidated id (backend 404s unknown ids); the
+WorkspaceProvider falls back to Personal when the stored selection disappears.
+
+Totals after this cycle: 90 backend + 48 frontend tests, E2E smoke extended with the
+workspace flow, clippy/fmt clean.

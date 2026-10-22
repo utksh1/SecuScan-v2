@@ -44,7 +44,7 @@ TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login \
 | Method | Path | Notes |
 |---|---|---|
 | POST | `/tasks` | start a task — see admission pipeline below |
-| GET | `/tasks` | `?status=&plugin_id=&workflow_run_id=&search=&limit=&offset=` (admins see all; users see their own) |
+| GET | `/tasks` | `?workspace_id=<id\|none>` scopes to a workspace (Personal = `none`) | `?status=&plugin_id=&workflow_run_id=&search=&limit=&offset=` (admins see all; users see their own) |
 | GET | `/tasks/:id` | task detail (no raw output) |
 | DELETE | `/tasks/:id` | cancels first if still active |
 | POST | `/tasks/:id/cancel` | cooperative cancellation (kills subprocesses) |
@@ -90,6 +90,29 @@ Frames carry their DB row id — replay with `?after=` for gap-free reconnection
 | GET | `/findings/:id` | single finding |
 | PATCH | `/findings/:id/triage` | `{analyst_status}` ∈ new/confirmed/needs_review/false_positive/accepted_risk/fixed (scanner+) |
 
+## Workspaces & targets
+
+Workspaces group tasks and registered targets into project hubs (e.g. per client or
+environment). Every authenticated user can read them; the scanner role is required to
+create/update; deletion is admin-only. Tasks with no workspace belong to the synthetic
+**Personal** scope (`workspace_id = null`) — `?workspace_id=none` selects it.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/workspaces` | list + per-workspace `tasks_total` / `tasks_active` / `targets_total` + `personal` counters |
+| POST | `/workspaces` | `{name (1–100), description?}` (scanner+) |
+| GET | `/workspaces/:id` | workspace + counters |
+| PATCH | `/workspaces/:id` | `{name?, description?}` (scanner+) |
+| DELETE | `/workspaces/:id` | admin only; its tasks fall back to Personal, targets are removed |
+| GET | `/workspaces/:id/targets` | registry with `kind` (hostname/ip_address/url, server-derived), `scans_total`, `last_scanned_at` |
+| POST | `/workspaces/:id/targets` | `{name (1–255, no whitespace), description?}`; unique per workspace (409) |
+| PATCH | `/targets/:id` | `{name?, description?}`; rename re-derives the kind (scanner+) |
+| DELETE | `/targets/:id` | scanner+ |
+
+Scoping: `GET /tasks`, `GET /findings` and `GET /dashboard/summary` accept
+`?workspace_id=<id>` or `?workspace_id=none`; an unknown id is a 404. `POST /tasks` and
+`POST /workflows/:id/run` accept a `workspace_id` in the body; task retry preserves it.
+
 ## Workflows
 
 | Method | Path | Notes |
@@ -107,7 +130,7 @@ Frames carry their DB row id — replay with `?after=` for gap-free reconnection
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/dashboard/summary` | counters (scoped to the user unless admin) + recent tasks |
+| GET | `/dashboard/summary` | counters (scoped to the user unless admin) + recent tasks; `?workspace_id=<id\|none>` |
 | GET | `/health` | public liveness |
 | GET/POST | `/admin/users` · PATCH/DELETE `/admin/users/:id` | user management (admin; last-admin guarded) |
 | GET/PUT | `/admin/network-policy` | `{allow:[],deny:[]}` globs/CIDRs |
