@@ -94,6 +94,67 @@ assert d['tasks']['total'] >= 1 and d['findings']['info'] >= 1
 print('E2E DASHBOARD OK')
 "
 
+echo "=== 10. workspaces + targets + scoped views ==="
+WS_ID=$(curl -sf -X POST http://127.0.0.1:8099/api/v1/workspaces \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"E2E Workspace","description":"smoke"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+echo "workspace: $WS_ID"
+
+TG_ID=$(curl -sf -X POST "http://127.0.0.1:8099/api/v1/workspaces/$WS_ID/targets" \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"127.0.0.1","description":"loopback"}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['id']); import sys as s; s.stderr.write('kind: '+d['kind']+'\n')")
+echo "target: $TG_ID"
+
+# Duplicate target must 409.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:8099/api/v1/workspaces/$WS_ID/targets" \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"127.0.0.1"}')
+[ "$CODE" = "409" ] && echo "duplicate target -> 409 OK"
+
+# Scoped scan inside the workspace.
+WS_TASK=$(curl -sf -X POST http://127.0.0.1:8099/api/v1/tasks \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d "{\"plugin_id\":\"port-scanner\",\"inputs\":{\"target\":\"127.0.0.1\",\"ports\":\"9933\"},\"consent_granted\":true,\"workspace_id\":\"$WS_ID\"}" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+for i in $(seq 1 40); do
+  STATUS=$(curl -sf "http://127.0.0.1:8099/api/v1/tasks/$WS_TASK" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then break; fi
+  sleep 0.3
+done
+[ "$STATUS" = "completed" ] || { echo "WORKSPACE SCAN DID NOT COMPLETE"; exit 1; }
+
+curl -sf "http://127.0.0.1:8099/api/v1/tasks?workspace_id=$WS_ID" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+assert r['total'] == 1, f'expected 1 workspace task, got {r[\"total\"]}'
+print('workspace task scoping OK')
+"
+curl -sf "http://127.0.0.1:8099/api/v1/tasks?workspace_id=none" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+assert r['total'] == 1, f'expected 1 personal task, got {r[\"total\"]}'
+print('personal task scoping OK')
+"
+curl -sf "http://127.0.0.1:8099/api/v1/workspaces/$WS_ID/targets" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+t = r['items'][0]
+assert t['scans_total'] == 1, f\"expected 1 scan on target, got {t['scans_total']}\"
+assert t['last_scanned_at'], 'expected last_scanned_at'
+print('target stats OK')
+"
+curl -sf "http://127.0.0.1:8099/api/v1/dashboard/summary?workspace_id=$WS_ID" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['tasks']['total'] == 1, f\"expected 1 workspace task on dashboard, got {d['tasks']['total']}\"
+print('workspace dashboard scoping OK')
+"
+# Unknown workspace filter must 404.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8099/api/v1/tasks?workspace_id=nope" -H "authorization: Bearer $TOKEN")
+[ "$CODE" = "404" ] && echo "unknown workspace filter -> 404 OK"
+
 echo ""
 echo "╔════════════════════════════════════════╗"
 echo "║  E2E SMOKE TEST: ALL STEPS PASSED      ║"

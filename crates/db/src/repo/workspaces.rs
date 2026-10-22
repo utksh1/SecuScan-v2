@@ -76,12 +76,10 @@ pub async fn get_workspace(pool: &SqlitePool, id: &str) -> DbResult<WorkspaceRow
 }
 
 pub async fn list_workspaces(pool: &SqlitePool) -> DbResult<Vec<WorkspaceRow>> {
-    sqlx::query_as::<_, WorkspaceRow>(
-        "SELECT * FROM workspaces ORDER BY (updated_at IS NULL), name COLLATE NOCASE",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+    sqlx::query_as::<_, WorkspaceRow>("SELECT * FROM workspaces ORDER BY name COLLATE NOCASE")
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
 }
 
 pub struct WorkspaceUpdate<'a> {
@@ -131,6 +129,59 @@ pub struct WorkspaceCounts {
     pub targets_total: i64,
 }
 
+/// Counts for every workspace + the Personal scope in three fixed queries
+/// (avoids the N+1 pattern of calling `workspace_counts` per row — this
+/// list is polled by the UI switcher).
+pub async fn all_workspace_counts(
+    pool: &SqlitePool,
+) -> DbResult<(
+    std::collections::HashMap<String, WorkspaceCounts>,
+    WorkspaceCounts,
+)> {
+    use std::collections::HashMap;
+
+    let task_totals: Vec<(Option<String>, i64)> =
+        sqlx::query_as("SELECT workspace_id, COUNT(*) FROM tasks GROUP BY workspace_id")
+            .fetch_all(pool)
+            .await?;
+    let task_active: Vec<(Option<String>, i64)> = sqlx::query_as(
+        "SELECT workspace_id, COUNT(*) FROM tasks \
+         WHERE status IN ('queued', 'running') GROUP BY workspace_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    let target_totals: Vec<(Option<String>, i64)> =
+        sqlx::query_as("SELECT workspace_id, COUNT(*) FROM targets GROUP BY workspace_id")
+            .fetch_all(pool)
+            .await?;
+
+    // NULL workspace_id (the Personal scope) is bucketed under the empty
+    // string and extracted at the end.
+    fn counts_entry<'a>(
+        map: &'a mut std::collections::HashMap<String, WorkspaceCounts>,
+        ws: &Option<String>,
+    ) -> &'a mut WorkspaceCounts {
+        match ws {
+            Some(id) => map.entry(id.clone()).or_default(),
+            None => map.entry(String::new()).or_default(),
+        }
+    }
+
+    let mut map: HashMap<String, WorkspaceCounts> = HashMap::new();
+    for (ws, n) in task_totals {
+        counts_entry(&mut map, &ws).tasks_total = n;
+    }
+    for (ws, n) in task_active {
+        counts_entry(&mut map, &ws).tasks_active = n;
+    }
+    for (ws, n) in target_totals {
+        counts_entry(&mut map, &ws).targets_total = n;
+    }
+    let personal = map.remove("").unwrap_or_default();
+    Ok((map, personal))
+}
+
+/// Counts for a single workspace (used by the detail endpoint).
 pub async fn workspace_counts(pool: &SqlitePool, id: &str) -> DbResult<WorkspaceCounts> {
     let (tasks_total,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM tasks WHERE workspace_id = ?1")
@@ -181,21 +232,6 @@ pub struct NewTarget<'a> {
 }
 
 pub async fn create_target(pool: &SqlitePool, t: NewTarget<'_>) -> DbResult<TargetRow> {
-    // Unique(workspace_id, name) is enforced by the schema; map the
-    // constraint violation to a friendly conflict error.
-    let existing = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM targets WHERE workspace_id = ?1 AND name = ?2",
-    )
-    .bind(t.workspace_id)
-    .bind(t.name)
-    .fetch_one(pool)
-    .await?;
-    if existing > 0 {
-        return Err(DbError::Conflict(format!(
-            "target `{}` already exists in this workspace",
-            t.name
-        )));
-    }
     let row = TargetRow {
         id: new_id(),
         workspace_id: t.workspace_id.to_string(),
@@ -205,7 +241,7 @@ pub async fn create_target(pool: &SqlitePool, t: NewTarget<'_>) -> DbResult<Targ
         created_by: t.created_by.to_string(),
         created_at: now(),
     };
-    sqlx::query(
+    let res = sqlx::query(
         "INSERT INTO targets (id, workspace_id, name, kind, description, created_by, created_at) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
@@ -217,7 +253,19 @@ pub async fn create_target(pool: &SqlitePool, t: NewTarget<'_>) -> DbResult<Targ
     .bind(&row.created_by)
     .bind(&row.created_at)
     .execute(pool)
-    .await?;
+    .await;
+    match res {
+        Ok(_) => {}
+        // Catches both the direct duplicate insert and the check-then-insert
+        // race: UNIQUE(workspace_id, name) is authoritative.
+        Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+            return Err(DbError::Conflict(format!(
+                "target `{}` already exists in this workspace",
+                t.name
+            )))
+        }
+        Err(e) => return Err(e.into()),
+    }
     Ok(row)
 }
 
@@ -251,27 +299,12 @@ pub async fn update_target(
 ) -> DbResult<TargetRow> {
     let current = get_target(pool, id).await?;
     let new_name = u.name.unwrap_or(&current.name);
-    if u.name.is_some() {
-        let dup = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM targets WHERE workspace_id = ?1 AND name = ?2 AND id != ?3",
-        )
-        .bind(&current.workspace_id)
-        .bind(new_name)
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
-        if dup > 0 {
-            return Err(DbError::Conflict(format!(
-                "target `{new_name}` already exists in this workspace"
-            )));
-        }
-    }
     let kind = if u.name.is_some() {
         derive_target_kind(new_name).to_string()
     } else {
         current.kind.clone()
     };
-    sqlx::query(
+    let res = sqlx::query(
         "UPDATE targets SET name = ?1, kind = ?2, description = COALESCE(?3, description) \
          WHERE id = ?4",
     )
@@ -280,7 +313,17 @@ pub async fn update_target(
     .bind(u.description)
     .bind(id)
     .execute(pool)
-    .await?;
+    .await;
+    match res {
+        Ok(_) => {}
+        // Rename collided with an existing target in the same workspace.
+        Err(sqlx::Error::Database(db)) if db.is_unique_violation() => {
+            return Err(DbError::Conflict(format!(
+                "target `{new_name}` already exists in this workspace"
+            )))
+        }
+        Err(e) => return Err(e.into()),
+    }
     get_target(pool, id).await
 }
 
@@ -298,6 +341,40 @@ pub async fn delete_target(pool: &SqlitePool, id: &str) -> DbResult<bool> {
 pub struct TargetStats {
     pub scans_total: i64,
     pub last_scanned_at: Option<String>,
+}
+
+/// Stats for every target in a workspace in two fixed queries (avoids
+/// running 2 queries per target on the list endpoint).
+pub async fn target_stats_many(
+    pool: &SqlitePool,
+    workspace_id: &str,
+) -> DbResult<std::collections::HashMap<String, TargetStats>> {
+    let totals: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT target, COUNT(*) FROM tasks WHERE workspace_id = ?1 AND target IS NOT NULL \
+         GROUP BY target",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    let lasts: Vec<(String, Option<String>)> = sqlx::query_as(
+        "SELECT target, MAX(created_at) FROM tasks WHERE workspace_id = ?1 AND target IS NOT NULL \
+         GROUP BY target",
+    )
+    .bind(workspace_id)
+    .fetch_all(pool)
+    .await?;
+    let mut map: std::collections::HashMap<String, TargetStats> = std::collections::HashMap::new();
+    for (target, n) in totals {
+        map.entry(target).or_default().scans_total = n;
+    }
+    for (target, last) in lasts {
+        if let Some(l) = last {
+            if !l.is_empty() {
+                map.entry(target).or_default().last_scanned_at = Some(l);
+            }
+        }
+    }
+    Ok(map)
 }
 
 pub async fn target_stats(

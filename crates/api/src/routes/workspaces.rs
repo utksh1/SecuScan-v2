@@ -15,7 +15,6 @@ use secuscan_db::repo;
 use secuscan_db::repo::workspaces::WorkspaceScope;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 
 pub fn router() -> axum::Router<SharedState> {
     axum::Router::new()
@@ -105,19 +104,22 @@ fn validate_target_name(raw: &str) -> ApiResult<String> {
 
 async fn list(State(state): State<SharedState>, _user: CurrentUser) -> ApiResult<Json<Value>> {
     let workspaces = repo::workspaces::list_workspaces(&state.db).await?;
-    let mut items = Vec::with_capacity(workspaces.len());
-    for w in &workspaces {
-        let counts = repo::workspaces::workspace_counts(&state.db, &w.id).await?;
-        items.push(workspace_to_json(w, &counts));
-    }
-    let (personal_total, personal_active) = repo::workspaces::personal_counts(&state.db).await?;
+    // Fixed query count regardless of how many workspaces exist.
+    let (counts_by_id, personal) = repo::workspaces::all_workspace_counts(&state.db).await?;
+    let items = workspaces
+        .iter()
+        .map(|w| {
+            let counts = counts_by_id.get(&w.id).cloned().unwrap_or_default();
+            workspace_to_json(w, &counts)
+        })
+        .collect::<Vec<_>>();
     Ok(Json(json!({
         "items": items,
         "personal": {
             "id": null,
             "name": "Personal",
-            "tasks_total": personal_total,
-            "tasks_active": personal_active,
+            "tasks_total": personal.tasks_total,
+            "tasks_active": personal.tasks_active,
         },
     })))
 }
@@ -220,20 +222,13 @@ async fn list_targets(
     // 404 if the workspace does not exist.
     repo::workspaces::get_workspace(&state.db, &id).await?;
     let targets = repo::workspaces::list_targets(&state.db, &id).await?;
-    let mut stats_by_id: BTreeMap<String, repo::workspaces::TargetStats> = BTreeMap::new();
-    for t in &targets {
-        let stats = repo::workspaces::target_stats(&state.db, &t.workspace_id, &t.name).await?;
-        stats_by_id.insert(t.id.clone(), stats);
-    }
+    let stats = repo::workspaces::target_stats_many(&state.db, &id).await?;
     Ok(Json(json!({
         "items": targets
             .iter()
             .map(|t| {
-                let stats = stats_by_id
-                    .get(&t.id)
-                    .cloned()
-                    .unwrap_or_default();
-                target_to_json(t, &stats)
+                let ts = stats.get(&t.name).cloned().unwrap_or_default();
+                target_to_json(t, &ts)
             })
             .collect::<Vec<_>>(),
     })))
