@@ -1,0 +1,22 @@
+services:
+  secuscan:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: secuscan-v2:latest
+    container_name: secuscan-v2
+    # Localhost-only by default. Change to "8080:8080" to expose on the LAN —
+    # only on networks you trust (see docs/DEPLOYMENT.md).
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      SECUSCAN_ADDR: 0.0.0.0:8080
+      SECUSCAN_JWT_SECRET: ${SECUSCAN_JWT_SECRET:-change-me-openssl-rand-hex-32}
+      SECUSCAN_ADMIN_EMAIL: ${SECUSCAN_ADMIN_EMAIL:-admin@secuscan.local}
+      SECUSCAN_ADMIN_PASSWORD: ${SECUSCAN_ADMIN_PASSWORD:-}
+    volumes:
+      - secuscan-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  secuscan-data:
