@@ -155,7 +155,13 @@ fn effective_severity(
     let mut sev = base;
     for rule in rules {
         if let Some(v) = caps.name(&rule.field) {
-            if rule.values.iter().any(|allowed| allowed == v.as_str()) {
+            // Rule values support `*`/`?` globs (e.g. `OSVDB-*`), plus
+            // exact matches.
+            let hit = rule
+                .values
+                .iter()
+                .any(|allowed| allowed == v.as_str() || crate::policy::glob_match(allowed, v.as_str()));
+            if hit {
                 if let Some(s) = Severity::parse(&rule.severity) {
                     // Rules may only *elevate* severity, never lower it.
                     if s > sev {

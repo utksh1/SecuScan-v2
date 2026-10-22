@@ -169,6 +169,20 @@ pub async fn finish(pool: &SqlitePool, id: &str, f: FinishTask<'_>) -> DbResult<
     Ok(())
 }
 
+/// Mark any queued/running rows as failed — called at server startup so
+/// tasks orphaned by a restart do not stay "running" forever.
+pub async fn fail_orphans(pool: &SqlitePool, reason: &str) -> DbResult<u64> {
+    let res = sqlx::query(
+        "UPDATE tasks SET status = 'failed', error = ?1, finished_at = ?2 \
+         WHERE status IN ('queued', 'running')",
+    )
+    .bind(reason)
+    .bind(now())
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 pub async fn delete(pool: &SqlitePool, id: &str) -> DbResult<bool> {
     let res = sqlx::query("DELETE FROM tasks WHERE id = ?1")
         .bind(id)

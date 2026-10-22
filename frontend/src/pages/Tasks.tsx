@@ -7,28 +7,28 @@ import type { Task, TaskStatus } from '@/api/types'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { formatDate, formatDuration, cn } from '@/utils/format'
+import { useAuth } from '@/auth/AuthContext'
 
 const STATUSES: (TaskStatus | 'all')[] = ['all', 'queued', 'running', 'completed', 'failed', 'cancelled']
 
 export function TasksPage() {
   const [params, setParams] = useSearchParams()
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const canMutate = user?.role === 'admin' || user?.role === 'scanner'
+  const [actionError, setActionError] = useState<string | null>(null)
   const status = params.get('status') ?? 'all'
   const search = params.get('search') ?? ''
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['tasks', status, search],
-    queryFn: () =>
-      request<{ items: Task[]; total: number }>('/tasks', {
-        method: 'GET',
-      }).then(async () => {
-        // Build query string
-        const qs = new URLSearchParams()
-        if (status !== 'all') qs.set('status', status)
-        if (search) qs.set('search', search)
-        qs.set('limit', '100')
-        return request<{ items: Task[]; total: number }>(`/tasks?${qs.toString()}`)
-      }),
+    queryFn: () => {
+      const qs = new URLSearchParams()
+      if (status !== 'all') qs.set('status', status)
+      if (search) qs.set('search', search)
+      qs.set('limit', '100')
+      return request<{ items: Task[]; total: number }>(`/tasks?${qs.toString()}`)
+    },
     refetchInterval: (query) => {
       const items = query.state.data?.items ?? []
       const anyActive = items.some((t) => t.status === 'running' || t.status === 'queued')
@@ -36,17 +36,21 @@ export function TasksPage() {
     },
   })
 
+  const onError = (err: Error) => setActionError(err.message)
   const cancelMut = useMutation({
     mutationFn: (id: string) => request(`/tasks/${id}/cancel`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onError,
   })
   const retryMut = useMutation({
     mutationFn: (id: string) => request(`/tasks/${id}/retry`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onError,
   })
   const deleteMut = useMutation({
     mutationFn: (id: string) => request(`/tasks/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onError,
   })
 
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -96,6 +100,7 @@ export function TasksPage() {
         </div>
       </div>
 
+      {actionError && <ErrorNote message={actionError} />}
       {items.length === 0 ? (
         <EmptyState
           title="No tasks found"
@@ -147,7 +152,7 @@ export function TasksPage() {
                     </td>
                     <td className="td">
                       <div className="flex items-center justify-end gap-1">
-                        {active && (
+                        {active && canMutate && (
                           <button
                             className="btn-ghost px-2 py-1 text-xs"
                             title="Cancel"
@@ -156,7 +161,7 @@ export function TasksPage() {
                             <Ban className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {!active && (
+                        {!active && canMutate && (
                           <button
                             className="btn-ghost px-2 py-1 text-xs"
                             title="Retry"
@@ -165,7 +170,7 @@ export function TasksPage() {
                             <RotateCcw className="h-3.5 w-3.5" />
                           </button>
                         )}
-                        {!active &&
+                        {!active && canMutate &&
                           (confirmDelete === t.id ? (
                             <span className="flex items-center gap-1">
                               <button

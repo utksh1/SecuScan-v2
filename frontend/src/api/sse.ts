@@ -24,19 +24,29 @@ interface StreamHandle {
   done: Promise<void>
 }
 
+/**
+ * Stream task events with automatic reconnection: on transport errors or
+ * server closes while the task is (presumably) still live, reconnects with
+ * `?after=<lastId>` so no event is replayed twice. Surfaces the error via
+ * `onError` only after retries are exhausted or a finished frame arrives.
+ */
 export function streamTaskEvents(
   taskId: string,
   onEvent: (evt: TaskStreamEvent) => void,
   onDone?: () => void,
+  isTerminal?: () => boolean,
 ): StreamHandle {
   const controller = new AbortController()
 
   const done = (async () => {
-    let retried = false
+    let lastId = 0
+    let backoff = 500
+    let refreshed401 = false
+
     while (!controller.signal.aborted) {
       let res: Response
       try {
-        res = await fetch(`/api/v1/tasks/${taskId}/stream`, {
+        res = await fetch(`/api/v1/tasks/${taskId}/stream?after=${lastId}`, {
           headers: {
             accept: 'text/event-stream',
             ...(getAccessToken() ? { authorization: `Bearer ${getAccessToken()}` } : {}),
@@ -44,18 +54,35 @@ export function streamTaskEvents(
           credentials: 'include',
           signal: controller.signal,
         })
-      } catch (err) {
+      } catch {
         if (controller.signal.aborted) return
-        throw err
+        // Transport error — retry with backoff unless the task is terminal.
+        if (isTerminal?.()) {
+          onDone?.()
+          return
+        }
+        if (backoff > 15_000) {
+          onDone?.()
+          return
+        }
+        await sleep(backoff)
+        backoff = Math.min(backoff * 2, 15_000)
+        continue
       }
 
-      if (res.status === 401 && !retried) {
-        retried = true
-        const ok = await tryRefresh()
+      if (res.status === 401 && !refreshed401) {
+        refreshed401 = true
+        const { ok } = await tryRefresh()
         if (ok) continue
       }
       if (!res.ok || !res.body) {
-        throw new Error(`task stream failed (${res.status})`)
+        if (isTerminal?.()) {
+          onDone?.()
+          return
+        }
+        await sleep(backoff)
+        backoff = Math.min(backoff * 2, 15_000)
+        continue
       }
 
       const reader = res.body.getReader()
@@ -72,6 +99,8 @@ export function streamTaskEvents(
             buffer = buffer.slice(sep + 2)
             const parsed = parseFrame(frame)
             if (parsed) {
+              lastId = Math.max(lastId, parsed.id)
+              backoff = 500 // reset on progress
               onEvent(parsed)
               if (parsed.event?.type === 'finished') {
                 controller.abort()
@@ -81,9 +110,14 @@ export function streamTaskEvents(
             }
           }
         }
-        // Server closed the stream (terminal task replayed, keepalive timeout…)
-        onDone?.()
-        return
+        // Server closed the stream. If the task is terminal we are done;
+        // otherwise reconnect from the cursor.
+        if (isTerminal?.()) {
+          onDone?.()
+          return
+        }
+        await sleep(300)
+        continue
       } finally {
         reader.cancel().catch(() => undefined)
       }
@@ -92,6 +126,13 @@ export function streamTaskEvents(
 
   return { abort: () => controller.abort(), done }
 }
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/** @internal test-only export */
+export const __test_parseFrame = parseFrame
 
 function parseFrame(frame: string): TaskStreamEvent | null {
   let id = 0

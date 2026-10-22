@@ -68,7 +68,7 @@ severity = "info"
 
 [[parser.severity_rules]]
 field = "item"
-values = ["OSVDB-0", "OSVDB-1", "OSVDB-2", "OSVDB-3", "OSVDB-4", "OSVDB-5", "OSVDB-6", "OSVDB-7", "OSVDB-8", "OSVDB-9"]
+values = ["OSVDB-*"]
 severity = "high"
 
 [[static_rules]]

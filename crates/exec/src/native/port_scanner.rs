@@ -71,7 +71,37 @@ impl NativeScanner for PortScanner {
         let timeout =
             Duration::from_millis(get_i64_or(inputs, "timeout_ms", 800).clamp(50, 10_000) as u64);
 
-        let hosts = expand_hosts(target)?;
+        let host_names = expand_hosts(target)?;
+        // Resolve every unique host up front (async, off the workers) so the
+        // probe futures never perform blocking DNS.
+        let mut resolved: std::collections::HashMap<String, Option<IpAddr>> =
+            std::collections::HashMap::new();
+        for h in &host_names {
+            if resolved.contains_key(h) {
+                continue;
+            }
+            let ip = if let Ok(ip) = h.parse::<IpAddr>() {
+                Some(ip)
+            } else {
+                tokio::net::lookup_host(format!("{h}:0"))
+                    .await
+                    .ok()
+                    .and_then(|mut addrs| addrs.next())
+                    .map(|sa| sa.ip())
+            };
+            if ip.is_none() {
+                ctx.sink
+                    .emit(crate::events::TaskEvent::Warn(format!(
+                        "cannot resolve host `{h}` — skipping"
+                    )))
+                    .await;
+            }
+            resolved.insert(h.clone(), ip);
+        }
+        let hosts: Vec<String> = resolved
+            .iter()
+            .filter_map(|(h, ip)| ip.map(|_| h.clone()))
+            .collect();
         let total = (hosts.len() as u64) * (ports.len() as u64);
         if total == 0 {
             return Err("nothing to scan: no hosts or ports".into());
@@ -90,26 +120,23 @@ impl NativeScanner for PortScanner {
             .await;
 
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
-        let probes: Vec<Probe> = hosts
+        let probes: Vec<(Probe, IpAddr)> = hosts
             .iter()
-            .flat_map(|h| {
-                ports.iter().map(move |p| Probe {
-                    host: h.clone(),
-                    port: *p,
-                })
+            .filter_map(|h| resolved.get(h).copied().flatten().map(|ip| (h.clone(), ip)))
+            .flat_map(|(h, ip)| {
+                ports
+                    .iter()
+                    .map(move |p| (Probe { host: h.clone(), port: *p }, ip))
             })
             .collect();
 
         let mut stream: FuturesUnordered<_> = probes
             .into_iter()
-            .map(|probe| {
+            .map(|(probe, ip)| {
                 let sem = sem.clone();
                 async move {
                     let _permit = sem.acquire_owned().await;
-                    let addr = match resolve_addr(&probe.host, probe.port) {
-                        Ok(a) => a,
-                        Err(_) => return (probe, ProbeResult::Unresolved),
-                    };
+                    let addr = SocketAddr::new(ip, probe.port);
                     match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await
                     {
                         Ok(Ok(_)) => (probe, ProbeResult::Open),
@@ -215,18 +242,6 @@ enum ProbeResult {
     Refused,
     Filtered,
     Unresolved,
-}
-
-fn resolve_addr(host: &str, port: u16) -> Result<SocketAddr, String> {
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return Ok(SocketAddr::new(ip, port));
-    }
-    use std::net::ToSocketAddrs;
-    host.to_socket_addrs()
-        .map_err(|e| e.to_string())?
-        .find(|a| a.is_ipv4())
-        .map(|a| SocketAddr::new(a.ip(), port))
-        .ok_or_else(|| format!("cannot resolve {host}"))
 }
 
 fn expand_hosts(target: &str) -> Result<Vec<String>, String> {

@@ -50,19 +50,30 @@ export function TaskDetailPage() {
     enabled: tab === 'output',
   })
 
-  // Live SSE console.
+  // Live SSE console (with cursor-based reconnection).
+  const taskStatus = task?.status
   useEffect(() => {
     if (!task) return
-    if (task.status !== 'running' && task.status !== 'queued') return
+    if (taskStatus !== 'running' && taskStatus !== 'queued') return
     setEvents([])
     const handle = streamTaskEvents(
       id,
       (evt) => setEvents((prev) => [...prev.slice(-2000), evt]),
-      () => qc.invalidateQueries({ queryKey: ['task', id] }),
+      () => {
+        // Refresh everything about the task when the stream completes.
+        qc.invalidateQueries({ queryKey: ['task', id] })
+        qc.invalidateQueries({ queryKey: ['task-findings', id] })
+        qc.invalidateQueries({ queryKey: ['findings'] })
+      },
+      () => {
+        // The SSE reader polls this to decide whether to reconnect.
+        const t = qc.getQueryData<Task>(['task', id])
+        return !!t && t.status !== 'running' && t.status !== 'queued'
+      },
     )
     handle.done.catch((err) => setStreamError(err instanceof Error ? err.message : 'stream error'))
     return () => handle.abort()
-  }, [id, task?.status]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, taskStatus]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Autoscroll the console.
   useEffect(() => {

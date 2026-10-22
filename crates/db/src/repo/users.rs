@@ -166,6 +166,14 @@ pub async fn delete_refresh_token(pool: &SqlitePool, token_hash: &str) -> DbResu
     Ok(())
 }
 
+pub async fn delete_all_refresh_tokens_for_user(pool: &SqlitePool, user_id: &str) -> DbResult<u64> {
+    let res = sqlx::query("DELETE FROM refresh_tokens WHERE user_id = ?1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
 pub async fn delete_expired_refresh_tokens(pool: &SqlitePool) -> DbResult<u64> {
     let res = sqlx::query("DELETE FROM refresh_tokens WHERE expires_at <= ?1")
         .bind(now())

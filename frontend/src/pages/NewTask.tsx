@@ -67,14 +67,14 @@ export function NewTaskPage() {
     try {
       const inputs: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(values)) {
-        if (v === '' || v === false) {
-          // send empty/false only when it differs from being simply unset
-          const field = plugin.fields.find((f) => f.id === k)
-          if (field && (field.type === 'boolean' || typeof v === 'boolean')) {
-            inputs[k] = v
-          } else if (v === '') {
-            inputs[k] = ''
-          }
+        const field = plugin.fields.find((f) => f.id === k)
+        if (typeof v === 'boolean') {
+          inputs[k] = v
+        } else if (v === '') {
+          // Empty optional fields are omitted entirely: the backend rejects
+          // '' for select/integer fields, and required empties will produce
+          // a clearer "missing required field" error.
+          if (field?.required) inputs[k] = ''
         } else {
           inputs[k] = v
         }
@@ -100,7 +100,10 @@ export function NewTaskPage() {
     if (!plugin) return
     try {
       const inputs: Record<string, unknown> = {}
-      for (const [k, v] of Object.entries(values)) inputs[k] = v
+      for (const [k, v] of Object.entries(values)) {
+        if (typeof v === 'boolean') inputs[k] = v
+        else if (v !== '') inputs[k] = v
+      }
       const body = await request<{ command: string | null }>('/plugins/' + plugin.id + '/preview', {
         method: 'POST',
         body: { inputs, preset: preset ?? undefined },

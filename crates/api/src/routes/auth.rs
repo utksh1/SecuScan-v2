@@ -343,5 +343,7 @@ async fn change_password(
     }
     let hash = hash_password(&req.new_password)?;
     repo::users::update_password(&state.db, &user.id, &hash).await?;
+    // Revoke all sessions: the password that minted them is no longer valid.
+    repo::users::delete_all_refresh_tokens_for_user(&state.db, &user.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

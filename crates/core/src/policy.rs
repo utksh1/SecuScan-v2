@@ -237,9 +237,62 @@ impl IpNet {
     }
 }
 
+/// Canonicalize a host string for policy matching:
+/// - unwrap IPv4-mapped IPv6 (`::ffff:192.0.2.1` → `192.0.2.1`)
+/// - convert 32-bit decimal/hex integer IPv4 forms (`2852039166` → dotted)
+/// - strip trailing dots from FQDNs
+fn canonicalize_host(raw: &str) -> String {
+    let mut h = raw.trim().to_ascii_lowercase();
+    while h.ends_with('.') {
+        h.pop();
+    }
+    if let Ok(ip) = h.parse::<IpAddr>() {
+        if let IpAddr::V6(v6) = ip {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return v4.to_string();
+            }
+        }
+        return h;
+    }
+    // 32-bit integer IPv4 (decimal or 0x hex), a classic bypass form.
+    if let Some(stripped) = h.strip_prefix("0x") {
+        if let Ok(n) = u32::from_str_radix(stripped, 16) {
+            return u32_to_ipv4(n);
+        }
+    }
+    if !h.is_empty() && h.chars().all(|c| c.is_ascii_digit()) {
+        if let Ok(n) = h.parse::<u32>() {
+            return u32_to_ipv4(n);
+        }
+    }
+    h
+}
+
+fn u32_to_ipv4(n: u32) -> String {
+    format!("{}.{}.{}.{}", (n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff)
+}
+
+/// True when a glob pattern is *IPv4-shaped*: every dot-separated segment is
+/// either `*`/`?` or digits (e.g. `192.168.*.*`, `10.?0.*.*`).
+fn is_ipv4_glob(pattern: &str) -> bool {
+    if !pattern.contains('.') || pattern.contains(':') {
+        return false;
+    }
+    pattern.split('.').all(|seg| {
+        seg.chars()
+            .all(|c| c == '*' || c == '?' || c.is_ascii_digit())
+    })
+}
+
 /// Does `host` (a bare hostname/IP/CIDR) match `pattern` (glob or CIDR)?
+///
+/// Hardening rules beyond plain globs:
+/// - hosts are canonicalized first (v4-mapped IPv6, integer IPv4 forms);
+/// - an IPv4-shaped glob pattern (like `192.168.*.*`) only ever matches
+///   literal IPv4 addresses, never hostnames — otherwise
+///   `192.168.attacker.com` would glob-match `192.168.*.*`.
 pub fn matches_target(host: &str, pattern: &str) -> bool {
-    let host = host.trim().to_ascii_lowercase();
+    let host = canonicalize_host(host);
     let pattern = pattern.trim().to_ascii_lowercase();
     if host.is_empty() || pattern.is_empty() {
         return false;
@@ -258,8 +311,16 @@ pub fn matches_target(host: &str, pattern: &str) -> bool {
         }
         return false;
     }
+    // IP-shaped globs only match literal IPs.
+    if is_ipv4_glob(&pattern) {
+        if host.parse::<IpAddr>().is_ok() {
+            return glob_match(&pattern, &host);
+        }
+        return false;
+    }
     glob_match(&pattern, &host)
 }
+
 
 /// Case-insensitive glob with `*` (any run) and `?` (single char).
 pub fn glob_match(pattern: &str, text: &str) -> bool {
@@ -294,6 +355,10 @@ fn glob_rec(p: &[char], pi: usize, t: &[char], ti: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn canonicalize_host_test(s: &str) -> String {
+        canonicalize_host(s)
+    }
 
     #[test]
     fn glob_basics() {
@@ -385,6 +450,32 @@ mod tests {
             evaluate_target(Some("   "), &[], &NetworkPolicy::default()),
             TargetVerdict::NoTarget
         );
+    }
+
+    #[test]
+    fn bypass_forms_are_canonicalized() {
+        // IPv4-mapped IPv6 must not evade IPv4 patterns.
+        assert!(matches_target("::ffff:192.168.1.5", "192.168.*.*"));
+        assert!(matches_target("::ffff:169.254.1.1", "169.254.*.*"));
+        // 32-bit decimal/hex integer IPv4 must not evade patterns.
+        assert!(matches_target("3232235882", "192.168.1.0/24")); // 192.168.1.10... (192.168.1.0 + …)
+        assert_eq!(canonicalize_host_test("3232235777"), "192.168.1.1");
+        // Hostnames must NOT match IPv4-shaped globs (the 192.168.attacker.com bypass).
+        assert!(!matches_target("192.168.attacker.com", "192.168.*.*"));
+        assert!(!matches_target("10.evil.example", "10.*.*.*"));
+        // ...but real hostnames still match hostname globs.
+        assert!(matches_target("www.example.com", "*.example.com"));
+        // Literal IPs still match IP globs.
+        assert!(matches_target("192.168.4.9", "192.168.*.*"));
+    }
+
+    #[test]
+    fn canonicalize_forms() {
+        assert_eq!(canonicalize_host_test("EXAMPLE.com."), "example.com");
+        assert_eq!(canonicalize_host_test("::FFFF:10.0.0.1"), "10.0.0.1");
+        assert_eq!(canonicalize_host_test("0x7f000001"), "127.0.0.1");
+        assert_eq!(canonicalize_host_test("2130706433"), "127.0.0.1");
+        assert_eq!(canonicalize_host_test("localhost"), "localhost");
     }
 
     #[test]

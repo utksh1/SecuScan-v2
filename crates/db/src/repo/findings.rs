@@ -47,7 +47,8 @@ pub async fn insert_many(
 pub struct FindingFilters {
     pub task_id: Option<String>,
     pub user_id: Option<String>,
-    pub severity: Option<String>,
+    /// Multiple severities are OR-combined via a parameterized IN clause.
+    pub severity: Vec<String>,
     pub kind: Option<String>,
     pub analyst_status: Option<String>,
     pub category: Option<String>,
@@ -56,59 +57,77 @@ pub struct FindingFilters {
     pub offset: i64,
 }
 
+impl FindingFilters {
+    /// (sev = ?n OR sev = ?m …) fragment and its bind values.
+    fn severity_clause(&self, start_idx: usize) -> (String, Vec<String>) {
+        if self.severity.is_empty() {
+            return (String::new(), Vec::new());
+        }
+        let placeholders: Vec<String> = (0..self.severity.len())
+            .map(|i| format!("?{}", start_idx + i))
+            .collect();
+        (
+            format!(" AND (f.severity = {})", placeholders.join(" OR f.severity = ")),
+            self.severity.clone(),
+        )
+    }
+}
+
 pub async fn list(pool: &SqlitePool, f: &FindingFilters) -> DbResult<Vec<FindingRow>> {
     let limit = if f.limit <= 0 { 100 } else { f.limit.min(1000) };
-    sqlx::query_as::<_, FindingRow>(
+    let (sev_clause, sev_binds) = f.severity_clause(8);
+    let sql = format!(
         "SELECT f.* FROM findings f \
          JOIN tasks t ON t.id = f.task_id \
          WHERE (?1 IS NULL OR f.task_id = ?1) \
            AND (?2 IS NULL OR t.user_id = ?2) \
-           AND (?3 IS NULL OR f.severity = ?3) \
-           AND (?4 IS NULL OR f.kind = ?4) \
-           AND (?5 IS NULL OR f.analyst_status = ?5) \
-           AND (?6 IS NULL OR f.category = ?6) \
-           AND (?7 IS NULL OR f.title LIKE '%' || ?7 || '%' OR f.description LIKE '%' || ?7 || '%') \
+           AND (?3 IS NULL OR f.kind = ?3) \
+           AND (?4 IS NULL OR f.analyst_status = ?4) \
+           AND (?5 IS NULL OR f.category = ?5) \
+           AND (?6 IS NULL OR f.title LIKE '%' || ?6 || '%' OR f.description LIKE '%' || ?6 || '%'){sev_clause} \
          ORDER BY CASE f.severity \
             WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 \
             WHEN 'low' THEN 3 ELSE 4 END, f.created_at DESC \
-         LIMIT ?8 OFFSET ?9",
-    )
-    .bind(&f.task_id)
-    .bind(&f.user_id)
-    .bind(&f.severity)
-    .bind(&f.kind)
-    .bind(&f.analyst_status)
-    .bind(&f.category)
-    .bind(&f.search)
-    .bind(limit)
-    .bind(f.offset.max(0))
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+         LIMIT ?7 OFFSET ?8"
+    );
+    let mut q = sqlx::query_as::<_, FindingRow>(&sql)
+        .bind(&f.task_id)
+        .bind(&f.user_id)
+        .bind(&f.kind)
+        .bind(&f.analyst_status)
+        .bind(&f.category)
+        .bind(&f.search)
+        .bind(limit)
+        .bind(f.offset.max(0));
+    for value in sev_binds {
+        q = q.bind(value);
+    }
+    q.fetch_all(pool).await.map_err(Into::into)
 }
 
 pub async fn count(pool: &SqlitePool, f: &FindingFilters) -> DbResult<i64> {
-    sqlx::query_scalar::<_, i64>(
+    let (sev_clause, sev_binds) = f.severity_clause(7);
+    let sql = format!(
         "SELECT COUNT(*) FROM findings f \
          JOIN tasks t ON t.id = f.task_id \
          WHERE (?1 IS NULL OR f.task_id = ?1) \
            AND (?2 IS NULL OR t.user_id = ?2) \
-           AND (?3 IS NULL OR f.severity = ?3) \
-           AND (?4 IS NULL OR f.kind = ?4) \
-           AND (?5 IS NULL OR f.analyst_status = ?5) \
-           AND (?6 IS NULL OR f.category = ?6) \
-           AND (?7 IS NULL OR f.title LIKE '%' || ?7 || '%' OR f.description LIKE '%' || ?7 || '%')",
-    )
-    .bind(&f.task_id)
-    .bind(&f.user_id)
-    .bind(&f.severity)
-    .bind(&f.kind)
-    .bind(&f.analyst_status)
-    .bind(&f.category)
-    .bind(&f.search)
-    .fetch_one(pool)
-    .await
-    .map_err(Into::into)
+           AND (?3 IS NULL OR f.kind = ?3) \
+           AND (?4 IS NULL OR f.analyst_status = ?4) \
+           AND (?5 IS NULL OR f.category = ?5) \
+           AND (?6 IS NULL OR f.title LIKE '%' || ?6 || '%' OR f.description LIKE '%' || ?6 || '%'){sev_clause}"
+    );
+    let mut q = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(&f.task_id)
+        .bind(&f.user_id)
+        .bind(&f.kind)
+        .bind(&f.analyst_status)
+        .bind(&f.category)
+        .bind(&f.search);
+    for value in sev_binds {
+        q = q.bind(value);
+    }
+    q.fetch_one(pool).await.map_err(Into::into)
 }
 
 pub async fn get(pool: &SqlitePool, id: &str) -> DbResult<FindingRow> {

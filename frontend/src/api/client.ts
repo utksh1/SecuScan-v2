@@ -26,9 +26,15 @@ export function getAccessToken() {
 
 // --- single-flight refresh ---------------------------------------------------
 
-let refreshInFlight: Promise<boolean> | null = null
+export interface RefreshResult {
+  ok: boolean
+  accessToken?: string
+  user?: unknown
+}
 
-export async function tryRefresh(): Promise<boolean> {
+let refreshInFlight: Promise<RefreshResult> | null = null
+
+export async function tryRefresh(): Promise<RefreshResult> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
@@ -36,12 +42,12 @@ export async function tryRefresh(): Promise<boolean> {
           method: 'POST',
           credentials: 'include',
         })
-        if (!res.ok) return false
+        if (!res.ok) return { ok: false }
         const body = await res.json()
         accessToken = body.access_token ?? null
-        return accessToken != null
+        return { ok: accessToken != null, accessToken: accessToken ?? undefined, user: body.user }
       } catch {
-        return false
+        return { ok: false }
       } finally {
         setTimeout(() => (refreshInFlight = null), 0)
       }
@@ -74,11 +80,15 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
 
   let res = await doFetch()
 
-  // One transparent refresh+retry on 401.
-  if (res.status === 401 && !path.startsWith('/auth/')) {
-    const ok = await tryRefresh()
+  // One transparent refresh+retry on 401 (login/refresh themselves report
+  // their own failures).
+  if (res.status === 401 && !path.startsWith('/auth/login') && !path.startsWith('/auth/refresh')) {
+    const { ok } = await tryRefresh()
     if (ok) {
       res = await doFetch()
+    } else {
+      // Session is truly gone — let the app redirect to /login.
+      window.dispatchEvent(new CustomEvent('secuscan:unauthorized'))
     }
   }
 

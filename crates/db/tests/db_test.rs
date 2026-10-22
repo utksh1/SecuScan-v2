@@ -340,7 +340,7 @@ async fn dashboard_counters() {
     repo::findings::insert_many(&pool, &t.id, "p", &[f])
         .await
         .unwrap();
-    let s = repo::misc::dashboard_summary(&pool).await.unwrap();
+    let s = repo::misc::dashboard_summary(&pool, None).await.unwrap();
     assert_eq!(s.tasks_total, 1);
     assert_eq!(s.tasks_queued, 1);
     assert_eq!(s.findings_critical, 1);

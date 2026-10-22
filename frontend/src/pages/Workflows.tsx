@@ -23,6 +23,11 @@ export function WorkflowsPage() {
     mutationFn: (id: string) => request(`/workflows/${id}/run`, { method: 'POST' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
   })
+  const cancelRunMut = useMutation({
+    mutationFn: (runId: string) =>
+      request(`/workflows/runs/${runId}/cancel`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-runs'] }),
+  })
   const deleteMut = useMutation({
     mutationFn: (id: string) => request(`/workflows/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflows'] }),
@@ -62,6 +67,7 @@ export function WorkflowsPage() {
               canRun={canEdit}
               onRun={() => runMut.mutate(w.id)}
               onDelete={() => deleteMut.mutate(w.id)}
+              onCancelRun={(runId) => cancelRunMut.mutate(runId)}
               running={runMut.isPending && runMut.variables === w.id}
             />
           ))}
@@ -78,12 +84,14 @@ function WorkflowCard({
   canRun,
   onRun,
   onDelete,
+  onCancelRun,
   running,
 }: {
   workflow: Workflow
   canRun: boolean
   onRun: () => void
   onDelete: () => void
+  onCancelRun: (runId: string) => void
   running: boolean
 }) {
   const { data: runs } = useQuery({
@@ -137,7 +145,9 @@ function WorkflowCard({
             Recent runs
           </div>
           <div className="space-y-1.5">
-            {(runs?.items ?? []).slice(0, 5).map((r) => (
+            {(runs?.items ?? []).slice(0, 5).map((r) => {
+              const runActive = r.status === 'running' || r.status === 'queued'
+              return (
               <div key={r.id} className="flex items-center gap-3 text-xs text-slate-500">
                 <StatusBadge status={r.status} />
                 <span>{formatDate(r.created_at)}</span>
@@ -152,8 +162,18 @@ function WorkflowCard({
                   ))}
                 </span>
                 {r.error && <span className="truncate text-rose-500">{r.error}</span>}
+                {runActive && canRun && (
+                  <button
+                    className="btn-ghost ml-auto px-2 py-0.5 text-xs text-slate-500 hover:text-rose-600"
+                    title="Cancel this run"
+                    onClick={() => onCancelRun(r.id)}
+                  >
+                    Cancel
+                  </button>
+                )}
               </div>
-            ))}
+              )
+            })}
           </div>
         </div>
       )}

@@ -138,6 +138,9 @@ impl TaskManager {
             let _permit = match verdict {
                 LimitVerdict::Acquired(p) => p,
                 LimitVerdict::Rejected { reason } => {
+                    // NOTE: no release_hourly() here — a rejected acquire never
+                    // reserved an hourly slot (the cap check failed first),
+                    // so releasing would erode a *different* task's slot.
                     mgr.finish_task(
                         &task,
                         FinishOutcome {
@@ -151,7 +154,6 @@ impl TaskManager {
                         },
                     )
                     .await;
-                    mgr.limiter.release_hourly(&manifest.plugin.id);
                     mgr.cleanup(&task_id).await;
                     return;
                 }
@@ -232,6 +234,11 @@ async fn recorder(
         let level = event_level(&env.event);
         let task_key = env.task_id.to_string();
 
+        // A finished event is always the last one for a task — drop the
+        // counter so the map cannot grow without bound.
+        if level == "finished" {
+            persisted.remove(&task_key);
+        }
         let count = persisted.entry(task_key.clone()).or_insert(0);
         if *count < MAX_PERSISTED_EVENTS_PER_TASK {
             let res = sqlx::query(

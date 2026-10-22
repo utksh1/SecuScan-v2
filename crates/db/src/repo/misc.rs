@@ -170,28 +170,63 @@ pub async fn set_plugin_enabled(pool: &SqlitePool, plugin_id: &str, enabled: boo
 
 // --- dashboard ----------------------------------------------------------------
 
-pub async fn dashboard_summary(pool: &SqlitePool) -> DbResult<DashboardSummary> {
-    let counts: Vec<(String, i64)> =
-        sqlx::query_as("SELECT status, COUNT(*) FROM tasks GROUP BY status")
+/// `user_id` scopes task/finding counters to one user (None = global).
+pub async fn dashboard_summary(
+    pool: &SqlitePool,
+    user_id: Option<&str>,
+) -> DbResult<DashboardSummary> {
+    let counts: Vec<(String, i64)> = match user_id {
+        Some(uid) => sqlx::query_as(
+            "SELECT status, COUNT(*) FROM tasks WHERE user_id = ?1 GROUP BY status",
+        )
+        .bind(uid)
+        .fetch_all(pool)
+        .await?,
+        None => sqlx::query_as("SELECT status, COUNT(*) FROM tasks GROUP BY status")
             .fetch_all(pool)
-            .await?;
-    let sev: Vec<(String, i64)> =
-        sqlx::query_as("SELECT severity, COUNT(*) FROM findings GROUP BY severity")
+            .await?,
+    };
+    let sev: Vec<(String, i64)> = match user_id {
+        Some(uid) => sqlx::query_as(
+            "SELECT f.severity, COUNT(*) FROM findings f \
+             JOIN tasks t ON t.id = f.task_id WHERE t.user_id = ?1 GROUP BY f.severity",
+        )
+        .bind(uid)
+        .fetch_all(pool)
+        .await?,
+        None => sqlx::query_as("SELECT severity, COUNT(*) FROM findings GROUP BY severity")
             .fetch_all(pool)
-            .await?;
-    let new_findings: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM findings WHERE analyst_status = 'new'")
-            .fetch_one(pool)
-            .await?;
+            .await?,
+    };
+    let new_findings: i64 = match user_id {
+        Some(uid) => sqlx::query_scalar(
+            "SELECT COUNT(*) FROM findings f JOIN tasks t ON t.id = f.task_id \
+             WHERE f.analyst_status = 'new' AND t.user_id = ?1",
+        )
+        .bind(uid)
+        .fetch_one(pool)
+        .await?,
+        None => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM findings WHERE analyst_status = 'new'")
+                .fetch_one(pool)
+                .await?
+        }
+    };
     let users_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(pool)
         .await?;
     let workflows_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workflows")
         .fetch_one(pool)
         .await?;
-    let tasks_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
-        .fetch_one(pool)
-        .await?;
+    let tasks_total: i64 = match user_id {
+        Some(uid) => sqlx::query_scalar("SELECT COUNT(*) FROM tasks WHERE user_id = ?1")
+            .bind(uid)
+            .fetch_one(pool)
+            .await?,
+        None => sqlx::query_scalar("SELECT COUNT(*) FROM tasks")
+            .fetch_one(pool)
+            .await?,
+    };
 
     let mut s = DashboardSummary {
         tasks_total,

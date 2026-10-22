@@ -85,7 +85,7 @@ async fn stream(
                 frame = st.live.recv() => {
                     match frame {
                         Ok(f) if f.task_id == st.task_id && f.id > st.cursor => {
-                            let is_finished = f.payload_json.contains("\"finished\"");
+                            let is_finished = is_finished_frame(&f.payload_json);
                             st.cursor = f.id;
                             if is_finished { st.done = true; }
                             return Some((Ok(frame_event(&f.ts, f.id, &f.payload_json)), st));
@@ -106,7 +106,7 @@ async fn stream(
                 if f.task_id != st.task_id || f.id <= st.cursor {
                     return Some((Ok(Event::default().comment("skip")), st));
                 }
-                let is_finished = f.payload_json.contains("\"finished\"");
+                let is_finished = is_finished_frame(&f.payload_json);
                 st.cursor = f.id;
                 if is_finished {
                     st.done = true;
@@ -125,6 +125,15 @@ async fn stream(
             .interval(Duration::from_secs(15))
             .text("ping"),
     ))
+}
+
+/// Parse the frame payload and check its `type` tag — string matching
+/// against user-controlled text (e.g. echoed argv) would false-positive.
+fn is_finished_frame(payload_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()
+        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(|t| t == "finished"))
+        .unwrap_or(false)
 }
 
 fn frame_event(ts: &str, id: i64, payload_json: &str) -> Event {

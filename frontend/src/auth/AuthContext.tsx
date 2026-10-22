@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { authApi, setAccessToken } from '@/api/client'
+import { useQueryClient } from '@tanstack/react-query'
+import { authApi, setAccessToken, tryRefresh } from '@/api/client'
 import type { User } from '@/api/types'
 
 interface AuthState {
@@ -16,20 +17,19 @@ const AuthContext = createContext<AuthState | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [ready, setReady] = useState(false)
+  const queryClient = useQueryClient()
 
-  // On mount: try silent refresh (cookie) to restore the session.
+  // On mount: try silent refresh (cookie) to restore the session. Uses the
+  // module-level single-flight refresh so React StrictMode's double-mount
+  // cannot race two refresh calls (the second would 401 after rotation).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       try {
-        const res = await fetch('/api/v1/auth/refresh', {
-          method: 'POST',
-          credentials: 'include',
-        })
-        if (res.ok) {
-          const body = await res.json()
-          setAccessToken(body.access_token)
-          if (!cancelled) setUser(body.user)
+        const { ok, accessToken, user: refreshed } = await tryRefresh()
+        if (ok && accessToken && !cancelled) {
+          setAccessToken(accessToken)
+          if (refreshed) setUser(refreshed as User)
         }
       } catch {
         /* offline / not logged in */
@@ -42,15 +42,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // Global 401-after-refresh-failure handler: clear state and cache so the
+  // router sends the user to /login instead of showing raw errors forever.
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setAccessToken(null)
+      setUser(null)
+      queryClient.clear()
+    }
+    window.addEventListener('secuscan:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('secuscan:unauthorized', onUnauthorized)
+  }, [queryClient])
+
   const login = useCallback(async (email: string, password: string) => {
     const res = await authApi.login(email, password)
     setUser(res.user)
   }, [])
 
   const logout = useCallback(async () => {
-    await authApi.logout()
-    setUser(null)
-  }, [])
+    try {
+      await authApi.logout()
+    } finally {
+      // Always clear local state + cached queries, even if the server call
+      // failed (e.g. backend briefly down).
+      setAccessToken(null)
+      setUser(null)
+      queryClient.clear()
+    }
+  }, [queryClient])
 
   const refreshUser = useCallback(async () => {
     const me = await authApi.me()

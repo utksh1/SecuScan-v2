@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 
 pub fn router() -> axum::Router<SharedState> {
     axum::Router::new()
+        .route("/admin/settings", axum::routing::get(get_settings))
         .route("/admin/users", axum::routing::post(create_user))
         .route("/admin/users", axum::routing::get(list_users))
         .route("/admin/users/:id", axum::routing::patch(update_user))
@@ -87,6 +88,24 @@ async fn update_user(
 ) -> ApiResult<StatusCode> {
     admin.require_admin()?;
     if let Some(role) = &req.role {
+        // Guard against demoting the last administrator.
+        if role != "admin" {
+            let target = repo::users::find_by_id(&state.db, &id)
+                .await?
+                .ok_or_else(|| ApiError::NotFound(format!("user {id}")))?;
+            if target.role == "admin" {
+                let admins = repo::users::list(&state.db)
+                    .await?
+                    .into_iter()
+                    .filter(|u| u.role == "admin")
+                    .count();
+                if admins <= 1 {
+                    return Err(ApiError::Conflict(
+                        "cannot demote the last administrator".into(),
+                    ));
+                }
+            }
+        }
         repo::users::update_role(&state.db, &id, role).await?;
     }
     if let Some(password) = &req.password {
@@ -193,6 +212,15 @@ async fn audit(
             "reason": r.reason,
         })).collect::<Vec<_>>(),
     })))
+}
+
+async fn get_settings(
+    State(state): State<SharedState>,
+    admin: CurrentUser,
+) -> ApiResult<Json<Value>> {
+    admin.require_admin()?;
+    let require_consent = repo::misc::get_require_consent(&state.db).await?;
+    Ok(Json(json!({ "require_consent": require_consent })))
 }
 
 #[derive(Deserialize)]

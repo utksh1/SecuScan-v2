@@ -40,6 +40,19 @@ async fn main() {
 
     seed::seed_admin(&db, &config).await;
 
+    // Tasks left queued/running by a previous process cannot resume — fail
+    // them explicitly so the UI never shows zombie scans.
+    match secuscan_db::repo::tasks::fail_orphans(
+        &db,
+        "server restarted while the task was queued or running",
+    )
+    .await
+    {
+        Ok(n) if n > 0 => tracing::warn!("marked {n} orphaned task(s) as failed at startup"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("orphan sweep failed: {e}"),
+    }
+
     let registry = PluginRegistry::load_dir(&config.plugins_dir);
     for issue in registry.issues() {
         tracing::warn!("plugin load issue [{}]: {}", issue.file, issue.error);

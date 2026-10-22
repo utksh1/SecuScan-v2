@@ -38,10 +38,40 @@ pub fn finding_to_json(f: &FindingRow) -> Value {
     })
 }
 
+/// Accepts `?severity=high` (single) and `?severity=critical&severity=high`
+/// (repeated) alike, normalizing both to a Vec.
+fn deserialize_multi<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct V;
+    impl<'de> serde::de::Visitor<'de> for V {
+        type Value = Vec<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("a string or a sequence of strings")
+        }
+        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(vec![v.to_string()])
+        }
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut out = Vec::new();
+            while let Some(x) = seq.next_element::<String>()? {
+                out.push(x);
+            }
+            Ok(out)
+        }
+    }
+    d.deserialize_any(V)
+}
+
 #[derive(Deserialize, Default)]
 struct ListQuery {
     task_id: Option<String>,
-    severity: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_multi")]
+    severity: Vec<String>,
     kind: Option<String>,
     analyst_status: Option<String>,
     category: Option<String>,
@@ -57,7 +87,7 @@ fn default_limit() -> i64 {
 }
 
 fn validate_enums(q: &ListQuery) -> ApiResult<()> {
-    if let Some(s) = &q.severity {
+    for s in &q.severity {
         if secuscan_core::models::Severity::parse(s).is_none() {
             return Err(ApiError::BadRequest(format!("unknown severity `{s}`")));
         }
@@ -91,7 +121,7 @@ async fn list(
         } else {
             Some(user.0.id.clone())
         },
-        severity: q.severity,
+        severity: q.severity.clone(),
         kind: q.kind,
         analyst_status: q.analyst_status,
         category: q.category,

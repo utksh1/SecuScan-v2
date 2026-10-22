@@ -177,13 +177,25 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
     let truncated = buf_out.was_truncated() || buf_err.was_truncated();
 
     match wait_result {
-        WaitResult::Exited(code) => CliOutcome {
-            status: TaskStatus::Completed,
-            exit_code: code,
-            output,
-            truncated,
-            error: None,
-        },
+        WaitResult::Exited(code) => {
+            // A child killed by a signal (code None, not success) crashed.
+            if code.is_none() {
+                return CliOutcome {
+                    status: TaskStatus::Failed,
+                    exit_code: Some(-1),
+                    output,
+                    truncated,
+                    error: Some("process terminated by a signal (crash or OOM kill)".into()),
+                };
+            }
+            CliOutcome {
+                status: TaskStatus::Completed,
+                exit_code: code,
+                output,
+                truncated,
+                error: None,
+            }
+        }
         WaitResult::Timeout => CliOutcome {
             status: TaskStatus::Failed,
             exit_code: None,

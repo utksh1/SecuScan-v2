@@ -291,10 +291,12 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let t = load_task_for_user(&state, &user, &id).await?;
-    if t.status() == secuscan_core::models::TaskStatus::Running {
-        return Err(ApiError::Conflict(
-            "cancel the task before deleting it".into(),
-        ));
+    if !t.status().is_terminal() {
+        // Signal cancellation so a queued task does not still run after its
+        // row is gone (the runner's final status write is a harmless no-op
+        // once the row is deleted).
+        let _ = state.tasks.cancel(&t.id).await;
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
     repo::tasks::delete(&state.db, &t.id).await?;
     Ok(StatusCode::NO_CONTENT)
