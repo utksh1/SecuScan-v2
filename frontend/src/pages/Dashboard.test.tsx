@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { DashboardPage } from '@/pages/Dashboard'
 import { AuthProvider } from '@/auth/AuthContext'
+import { WorkspaceProvider } from '@/auth/WorkspaceContext'
 
 const SUMMARY = {
   tasks: { total: 12, running: 1, queued: 0, completed: 10, failed: 1, cancelled: 0 },
@@ -46,6 +47,9 @@ describe('DashboardPage', () => {
             user: { id: 'u1', email: 'a@b.c', name: 'A', role: 'admin', created_at: '' },
           })
         }
+        if (url.includes('/workspaces')) {
+          return route({ items: [], personal: { id: null, name: 'Personal', tasks_total: 0, tasks_active: 0 } })
+        }
         if (url.includes('/dashboard/summary')) {
           return route(SUMMARY)
         }
@@ -61,7 +65,9 @@ describe('DashboardPage', () => {
       <MemoryRouter>
         <QueryClientProvider client={qc}>
           <AuthProvider>
-            <DashboardPage />
+            <WorkspaceProvider>
+              <DashboardPage />
+            </WorkspaceProvider>
           </AuthProvider>
         </QueryClientProvider>
       </MemoryRouter>,
@@ -87,7 +93,9 @@ describe('DashboardPage', () => {
       <MemoryRouter>
         <QueryClientProvider client={qc}>
           <AuthProvider>
-            <DashboardPage />
+            <WorkspaceProvider>
+              <DashboardPage />
+            </WorkspaceProvider>
           </AuthProvider>
         </QueryClientProvider>
       </MemoryRouter>,

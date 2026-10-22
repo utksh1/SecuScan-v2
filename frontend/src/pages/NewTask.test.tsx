@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { NewTaskPage } from '@/pages/NewTask'
 import { AuthProvider } from '@/auth/AuthContext'
+import { WorkspaceProvider } from '@/auth/WorkspaceContext'
 
 const PLUGINS = {
   items: [
@@ -57,7 +58,9 @@ function renderPage() {
     <MemoryRouter initialEntries={['/tasks/new?plugin=port-scanner']}>
       <QueryClientProvider client={qc}>
         <AuthProvider>
-          <NewTaskPage />
+          <WorkspaceProvider>
+            <NewTaskPage />
+          </WorkspaceProvider>
         </AuthProvider>
       </QueryClientProvider>
     </MemoryRouter>,
@@ -75,6 +78,9 @@ describe('NewTaskPage', () => {
             access_token: 'test-token',
             user: { id: 'u1', email: 'a@b.c', name: 'A', role: 'scanner', created_at: '' },
           })
+        }
+        if (url.includes('/workspaces')) {
+          return route({ items: [], personal: { id: null, name: 'Personal', tasks_total: 0, tasks_active: 0 } })
         }
         if (url.includes('/preview')) {
           return route({ command: 'native:port_scanner' })

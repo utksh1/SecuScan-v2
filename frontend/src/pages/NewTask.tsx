@@ -2,15 +2,18 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Play, ShieldAlert, TerminalSquare, ArrowLeft, ChevronDown } from 'lucide-react'
-import { request } from '@/api/client'
+import { request, workspaceApi } from '@/api/client'
 import type { Plugin, PluginField } from '@/api/types'
 import { SafetyBadge } from '@/components/SafetyBadge'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { useAuth } from '@/auth/AuthContext'
+import { useWorkspace } from '@/auth/WorkspaceContext'
 import { cn } from '@/utils/format'
 
 export function NewTaskPage() {
   const [params] = useSearchParams()
+  const { current, workspaces, select } = useWorkspace()
+  const [useWorkspaceScope, setUseWorkspaceScope] = useState(false)
   const navigate = useNavigate()
   const { user } = useAuth()
   const [selectedId, setSelectedId] = useState<string>(params.get('plugin') ?? '')
@@ -27,6 +30,27 @@ export function NewTaskPage() {
   })
   const plugins = data?.items ?? []
   const startablePlugins = plugins.filter((p) => p.available && p.enabled)
+
+  // Registered targets of the selected workspace, offered as quick picks
+  // for the primary target field.
+  const targetsQuery = useQuery({
+    queryKey: ['targets', current?.id ?? 'personal'],
+    queryFn: () => workspaceApi.targets(current!.id),
+    enabled: !!current,
+  })
+  const registeredTargets = targetsQuery.data?.items ?? []
+
+  // Default the workspace toggle to "on" when the user arrived via the
+  // sidebar with a non-Personal workspace selected.
+  useEffect(() => {
+    if (current) setUseWorkspaceScope(true)
+  }, [current?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ?target=<name> prefill (e.g. "Scan" button on the Targets page).
+  useEffect(() => {
+    const prefill = params.get('target')
+    if (prefill) setValues((prev) => ({ ...prev, target: prefill }))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const plugin = useMemo(
     () => startablePlugins.find((p) => p.id === selectedId) ?? null,
     [startablePlugins, selectedId],
@@ -86,6 +110,7 @@ export function NewTaskPage() {
           inputs,
           preset: preset ?? undefined,
           consent_granted: consent,
+          ...(useWorkspaceScope && current ? { workspace_id: current.id } : {}),
         },
       })
       navigate(`/tasks/${task.id}`)
@@ -160,6 +185,61 @@ export function NewTaskPage() {
 
       {plugin && (
         <>
+          {/* Step 1.5: workspace + registered target quick-pick */}
+          <div className="card p-5">
+            <div className="mb-2 text-sm font-semibold text-slate-700">Workspace</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <select
+                className="input max-w-xs"
+                aria-label="Workspace"
+                value={useWorkspaceScope && current ? current.id : ''}
+                onChange={(e) => {
+                  const id = e.target.value
+                  if (!id) {
+                    setUseWorkspaceScope(false)
+                  } else {
+                    setUseWorkspaceScope(true)
+                    if (id !== current?.id) select(id)
+                  }
+                }}
+              >
+                <option value="">Personal (no workspace)</option>
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+              </select>
+              {registeredTargets.length > 0 && (
+                <div className="flex min-w-[220px] flex-1 items-center gap-2">
+                  <label className="whitespace-nowrap text-xs font-medium text-slate-600">
+                    Registered targets
+                  </label>
+                  <select
+                    className="input"
+                    aria-label="Registered targets"
+                    value=""
+                    onChange={(e) => {
+                      if (e.target.value)
+                        setValues((prev) => ({ ...prev, target: e.target.value }))
+                    }}
+                  >
+                    <option value="">Pick a target…</option>
+                    {registeredTargets.map((t) => (
+                      <option key={t.id} value={t.name}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            <p className="mt-2 text-xs text-slate-400">
+              Tasks filed under a workspace are grouped with its targets in Tasks, Findings and
+              the dashboard.
+            </p>
+          </div>
+
           {/* Step 2: inputs */}
           <div className="card p-5">
             <div className="mb-1 flex items-center justify-between">

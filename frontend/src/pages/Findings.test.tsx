@@ -4,6 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { FindingsPage } from '@/pages/Findings'
 import { AuthProvider } from '@/auth/AuthContext'
+import { WorkspaceProvider } from '@/auth/WorkspaceContext'
 
 const FINDINGS = {
   items: [
@@ -47,7 +48,9 @@ function renderPage(initialEntries: string[]) {
     <QueryClientProvider client={qc}>
       <MemoryRouter initialEntries={initialEntries}>
         <AuthProvider>
-          <FindingsPage />
+          <WorkspaceProvider>
+            <FindingsPage />
+          </WorkspaceProvider>
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -65,6 +68,15 @@ describe('FindingsPage — filter → API contract', () => {
             JSON.stringify({
               access_token: 't',
               user: { id: 'u1', email: 'a@b.c', name: 'A', role: 'scanner', created_at: '' },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          )
+        }
+        if (url.includes('/workspaces')) {
+          return new Response(
+            JSON.stringify({
+              items: [],
+              personal: { id: null, name: 'Personal', tasks_total: 0, tasks_active: 0 },
             }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           )

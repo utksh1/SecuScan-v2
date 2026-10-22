@@ -153,3 +153,26 @@ export async function downloadFile(path: string, filename: string): Promise<void
   a.remove()
   URL.revokeObjectURL(url)
 }
+
+// --- workspaces + targets ---------------------------------------------------------
+
+import type { Workspace, WorkspaceList, ScanTarget } from './types'
+
+export const workspaceApi = {
+  list: () => request<WorkspaceList>('/workspaces'),
+  create: (name: string, description: string) =>
+    request<Workspace>('/workspaces', { method: 'POST', body: { name, description } }),
+  update: (id: string, patch: { name?: string; description?: string }) =>
+    request<Workspace>(`/workspaces/${id}`, { method: 'PATCH', body: patch }),
+  remove: (id: string) => request<void>(`/workspaces/${id}`, { method: 'DELETE' }),
+  targets: (workspaceId: string) =>
+    request<{ items: ScanTarget[] }>(`/workspaces/${workspaceId}/targets`),
+  createTarget: (workspaceId: string, name: string, description: string) =>
+    request<ScanTarget>(`/workspaces/${workspaceId}/targets`, {
+      method: 'POST',
+      body: { name, description },
+    }),
+  updateTarget: (id: string, patch: { name?: string; description?: string }) =>
+    request<ScanTarget>(`/targets/${id}`, { method: 'PATCH', body: patch }),
+  removeTarget: (id: string) => request<void>(`/targets/${id}`, { method: 'DELETE' }),
+}

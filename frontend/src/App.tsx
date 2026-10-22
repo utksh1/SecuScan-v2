@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
+import { WorkspaceProvider } from '@/auth/WorkspaceContext'
 import { AppShell } from '@/components/layout/AppShell'
 import { LoginPage } from '@/pages/Login'
 import { DashboardPage } from '@/pages/Dashboard'
@@ -11,6 +12,7 @@ import { TasksPage } from '@/pages/Tasks'
 import { TaskDetailPage } from '@/pages/TaskDetail'
 import { FindingsPage } from '@/pages/Findings'
 import { WorkflowsPage } from '@/pages/Workflows'
+import { TargetsPage } from '@/pages/Targets'
 import { SettingsPage } from '@/pages/Settings'
 import { EmptyState } from '@/components/ui'
 import { Link } from 'react-router-dom'
@@ -35,9 +37,11 @@ function ProtectedLayout() {
   }
   if (!user) return <Navigate to="/login" replace />
   return (
-    <AppShell>
-      <Outlet />
-    </AppShell>
+    <WorkspaceProvider>
+      <AppShell>
+        <Outlet />
+      </AppShell>
+    </WorkspaceProvider>
   )
 }
 
@@ -70,6 +74,7 @@ export default function App() {
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/tasks/:id" element={<TaskDetailPage />} />
             <Route path="/findings" element={<FindingsPage />} />
+            <Route path="/targets" element={<TargetsPage />} />
             <Route path="/workflows" element={<WorkflowsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />

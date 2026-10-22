@@ -9,10 +9,15 @@ import {
   CirclePlus,
   LogOut,
   ShieldCheck,
+  Crosshair,
+  Layers,
+  ChevronDown,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
+import { useWorkspace } from '@/auth/WorkspaceContext'
 import { cn } from '@/utils/format'
 import type { ReactNode } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -20,9 +25,89 @@ const NAV = [
   { to: '/tasks/new', label: 'New Task', icon: CirclePlus },
   { to: '/tasks', label: 'Tasks', icon: ListChecks, end: true },
   { to: '/findings', label: 'Findings', icon: ShieldAlert },
+  { to: '/targets', label: 'Targets', icon: Crosshair, end: true },
   { to: '/workflows', label: 'Workflows', icon: GitBranch },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
+
+function WorkspaceSwitcher() {
+  const { workspaces, selected, select } = useWorkspace()
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click.
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [])
+
+  const currentName =
+    selected === 'personal' ? 'Personal' : (workspaces.find((w) => w.id === selected)?.name ?? 'Personal')
+
+  return (
+    <div className="relative px-3 pb-3" ref={ref}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-800/60 px-3 py-2 text-left text-sm text-slate-200 transition-colors hover:bg-slate-800"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+      >
+        <Layers className="h-4 w-4 shrink-0 text-brand-400" />
+        <span className="min-w-0 flex-1 truncate">{currentName}</span>
+        <ChevronDown className={cn('h-4 w-4 shrink-0 text-slate-500 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute left-3 right-3 z-40 mt-1 max-h-72 overflow-auto rounded-lg border border-slate-700 bg-slate-800 py-1 shadow-xl"
+        >
+          <button
+            role="option"
+            aria-selected={selected === 'personal'}
+            key="personal"
+            onClick={() => {
+              select('personal')
+              setOpen(false)
+            }}
+            className={cn(
+              'flex w-full items-center justify-between px-3 py-2 text-sm',
+              selected === 'personal'
+                ? 'bg-brand-600/20 text-white'
+                : 'text-slate-300 hover:bg-slate-700/60',
+            )}
+          >
+            <span>Personal</span>
+          </button>
+          {workspaces.map((w) => (
+            <button
+              role="option"
+              aria-selected={selected === w.id}
+              key={w.id}
+              onClick={() => {
+                select(w.id)
+                setOpen(false)
+              }}
+              className={cn(
+                'flex w-full items-center justify-between gap-2 px-3 py-2 text-sm',
+                selected === w.id ? 'bg-brand-600/20 text-white' : 'text-slate-300 hover:bg-slate-700/60',
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate text-left">{w.name}</span>
+              {w.tasks_active > 0 && (
+                <span className="shrink-0 rounded-full bg-brand-500/20 px-2 py-0.5 text-[10px] font-medium text-brand-300">
+                  {w.tasks_active} active
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth()
@@ -47,7 +132,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
 
-        <nav className="mt-2 flex-1 space-y-1 px-3">
+        <WorkspaceSwitcher />
+
+        <nav className="mt-1 flex-1 space-y-1 px-3">
           {NAV.map((item) => (
             <NavLink
               key={item.to}

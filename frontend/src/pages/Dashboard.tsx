@@ -14,11 +14,14 @@ import type { DashboardSummary } from '@/api/types'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { relativeTime, SEVERITY_ORDER, SEVERITY_DOT } from '@/utils/format'
+import { useWorkspace } from '@/auth/WorkspaceContext'
 
 export function DashboardPage() {
+  const { scopeParam } = useWorkspace()
   const { data, isLoading, error } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => request<DashboardSummary>('/dashboard/summary'),
+    queryKey: ['dashboard', scopeParam],
+    queryFn: () =>
+      request<DashboardSummary>(`/dashboard/summary?workspace_id=${scopeParam}`),
     refetchInterval: 10_000,
   })
 

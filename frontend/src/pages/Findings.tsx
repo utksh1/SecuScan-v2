@@ -8,6 +8,7 @@ import { SeverityBadge } from '@/components/SeverityBadge'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { cn, SEVERITY_ORDER, ANALYST_STATUS_LABEL, KIND_LABEL } from '@/utils/format'
 import { useAuth } from '@/auth/AuthContext'
+import { useWorkspace } from '@/auth/WorkspaceContext'
 
 const SEVERITIES = [...SEVERITY_ORDER]
 const TRIAGE: AnalystStatus[] = ['new', 'confirmed', 'needs_review', 'false_positive', 'accepted_risk', fixed()]
@@ -17,6 +18,7 @@ function fixed(): AnalystStatus {
 }
 
 export function FindingsPage() {
+  const { scopeParam } = useWorkspace()
   const [params, setParams] = useSearchParams()
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -30,6 +32,7 @@ export function FindingsPage() {
   if (status) qs.set('analyst_status', status)
   if (kind) qs.set('kind', kind)
   if (search) qs.set('search', search)
+  qs.set('workspace_id', scopeParam)
   qs.set('limit', '200')
 
   const { data, isLoading, error } = useQuery({

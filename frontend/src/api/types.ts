@@ -92,6 +92,7 @@ export interface Task {
   }
   output_truncated: boolean
   workflow_run_id?: string
+  workspace_id?: string
   created_at: string
   started_at?: string
   finished_at?: string
@@ -183,6 +184,44 @@ export interface AuditEntry {
   layer: string
   pattern: string
   reason: string
+}
+
+export interface Workspace {
+  id: string
+  name: string
+  description: string
+  created_by: string
+  created_at: string
+  updated_at?: string
+  tasks_total: number
+  tasks_active: number
+  targets_total: number
+}
+
+export interface PersonalWorkspace {
+  id: null
+  name: 'Personal'
+  tasks_total: number
+  tasks_active: number
+}
+
+export interface WorkspaceList {
+  items: Workspace[]
+  personal: PersonalWorkspace
+}
+
+export type TargetKind = 'hostname' | 'ip_address' | 'url'
+
+export interface ScanTarget {
+  id: string
+  workspace_id: string
+  name: string
+  kind: TargetKind
+  description: string
+  created_by: string
+  created_at: string
+  scans_total: number
+  last_scanned_at?: string
 }
 
 export interface ApiErrorShape {

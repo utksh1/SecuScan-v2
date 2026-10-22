@@ -8,10 +8,12 @@ import { StatusBadge } from '@/components/StatusBadge'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { formatDate, formatDuration, cn } from '@/utils/format'
 import { useAuth } from '@/auth/AuthContext'
+import { useWorkspace } from '@/auth/WorkspaceContext'
 
 const STATUSES: (TaskStatus | 'all')[] = ['all', 'queued', 'running', 'completed', 'failed', 'cancelled']
 
 export function TasksPage() {
+  const { scopeParam } = useWorkspace()
   const [params, setParams] = useSearchParams()
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -21,11 +23,12 @@ export function TasksPage() {
   const search = params.get('search') ?? ''
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['tasks', status, search],
+    queryKey: ['tasks', status, search, scopeParam],
     queryFn: () => {
       const qs = new URLSearchParams()
       if (status !== 'all') qs.set('status', status)
       if (search) qs.set('search', search)
+      qs.set('workspace_id', scopeParam)
       qs.set('limit', '100')
       return request<{ items: Task[]; total: number }>(`/tasks?${qs.toString()}`)
     },
