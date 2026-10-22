@@ -23,7 +23,10 @@ pub struct Config {
 }
 
 fn env_or(key: &str, default: &str) -> String {
-    std::env::var(key).ok().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| default.to_string())
+    std::env::var(key)
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| default.to_string())
 }
 
 impl Config {
@@ -31,7 +34,10 @@ impl Config {
         let data_dir = std::path::PathBuf::from(env_or("SECUSCAN_DATA_DIR", "./data"));
         let db_url = env_or(
             "SECUSCAN_DB_URL",
-            &format!("sqlite://{}?mode=rwc", data_dir.join("secuscan.db").display()),
+            &format!(
+                "sqlite://{}?mode=rwc",
+                data_dir.join("secuscan.db").display()
+            ),
         );
         let jwt_secret = match std::env::var("SECUSCAN_JWT_SECRET") {
             Ok(s) if !s.trim().is_empty() => s,
@@ -51,7 +57,10 @@ impl Config {
             db_url,
             jwt_secret,
             plugins_dir: std::path::PathBuf::from(env_or("SECUSCAN_PLUGINS_DIR", "./plugins")),
-            frontend_dir: std::path::PathBuf::from(env_or("SECUSCAN_FRONTEND_DIR", "./frontend/dist")),
+            frontend_dir: std::path::PathBuf::from(env_or(
+                "SECUSCAN_FRONTEND_DIR",
+                "./frontend/dist",
+            )),
             data_dir,
             admin_email: env_or("SECUSCAN_ADMIN_EMAIL", "admin@secuscan.local"),
             admin_password: std::env::var("SECUSCAN_ADMIN_PASSWORD")

@@ -136,7 +136,10 @@ pub async fn update_analyst_status(
 }
 
 /// Severity counts for one task (ordered critical→info).
-pub async fn severity_counts_for_task(pool: &SqlitePool, task_id: &str) -> DbResult<Vec<(String, i64)>> {
+pub async fn severity_counts_for_task(
+    pool: &SqlitePool,
+    task_id: &str,
+) -> DbResult<Vec<(String, i64)>> {
     sqlx::query_as::<_, (String, i64)>(
         "SELECT severity, COUNT(*) FROM findings WHERE task_id = ?1 GROUP BY severity",
     )

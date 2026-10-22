@@ -66,9 +66,7 @@ impl PluginLimiter {
         let sem = {
             let mut sems = self.semaphores.lock().expect("limiter lock");
             sems.entry(plugin.plugin.id.clone())
-                .or_insert_with(|| {
-                    std::sync::Arc::new(tokio::sync::Semaphore::new(max_concurrent))
-                })
+                .or_insert_with(|| std::sync::Arc::new(tokio::sync::Semaphore::new(max_concurrent)))
                 .clone()
         };
         match sem.acquire_owned().await {
@@ -109,9 +107,12 @@ impl PluginLimiter {
     /// Default timeout for a plugin's engine (helper for callers).
     pub fn engine_timeout(plugin: &PluginManifest) -> Duration {
         Duration::from_secs(match &plugin.engine {
-            EngineSpec::Cli { timeout_seconds, .. } | EngineSpec::Native { timeout_seconds, .. } => {
-                *timeout_seconds
+            EngineSpec::Cli {
+                timeout_seconds, ..
             }
+            | EngineSpec::Native {
+                timeout_seconds, ..
+            } => *timeout_seconds,
         })
     }
 }
@@ -199,8 +200,14 @@ mod tests {
     async fn hourly_cap_rejects() {
         let limiter = std::sync::Arc::new(PluginLimiter::new());
         let p = plugin("h", 4, 2);
-        assert!(matches!(limiter.acquire(&p).await, LimitVerdict::Acquired(_)));
-        assert!(matches!(limiter.acquire(&p).await, LimitVerdict::Acquired(_)));
+        assert!(matches!(
+            limiter.acquire(&p).await,
+            LimitVerdict::Acquired(_)
+        ));
+        assert!(matches!(
+            limiter.acquire(&p).await,
+            LimitVerdict::Acquired(_)
+        ));
         match limiter.acquire(&p).await {
             LimitVerdict::Rejected { reason } => assert!(reason.contains("hourly limit")),
             other => panic!("expected rejection, got {other:?}",),
@@ -208,7 +215,10 @@ mod tests {
         assert_eq!(limiter.started_in_window("h"), 2);
         limiter.release_hourly("h");
         assert_eq!(limiter.started_in_window("h"), 1);
-        assert!(matches!(limiter.acquire(&p).await, LimitVerdict::Acquired(_)));
+        assert!(matches!(
+            limiter.acquire(&p).await,
+            LimitVerdict::Acquired(_)
+        ));
     }
 
     #[tokio::test]
@@ -216,7 +226,10 @@ mod tests {
         let limiter = std::sync::Arc::new(PluginLimiter::new());
         let p = plugin("u", 64, 0);
         for _ in 0..10 {
-            assert!(matches!(limiter.acquire(&p).await, LimitVerdict::Acquired(_)));
+            assert!(matches!(
+                limiter.acquire(&p).await,
+                LimitVerdict::Acquired(_)
+            ));
         }
     }
 }

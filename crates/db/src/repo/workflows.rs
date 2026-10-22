@@ -111,10 +111,11 @@ pub async fn create_run(pool: &SqlitePool, workflow_id: &str) -> DbResult<Workfl
 
 pub async fn append_run_task(pool: &SqlitePool, run_id: &str, task_id: &str) -> DbResult<()> {
     // Read-modify-write is safe: only the workflow runner mutates a run.
-    let current: String = sqlx::query_scalar("SELECT task_ids_json FROM workflow_runs WHERE id = ?1")
-        .bind(run_id)
-        .fetch_one(pool)
-        .await?;
+    let current: String =
+        sqlx::query_scalar("SELECT task_ids_json FROM workflow_runs WHERE id = ?1")
+            .bind(run_id)
+            .fetch_one(pool)
+            .await?;
     let mut ids: Vec<String> = serde_json::from_str(&current).unwrap_or_default();
     ids.push(task_id.to_string());
     sqlx::query("UPDATE workflow_runs SET task_ids_json = ?1, status = 'running' WHERE id = ?2")
@@ -131,15 +132,13 @@ pub async fn finish_run(
     status: TaskStatus,
     error: Option<&str>,
 ) -> DbResult<()> {
-    sqlx::query(
-        "UPDATE workflow_runs SET status = ?1, error = ?2, finished_at = ?3 WHERE id = ?4",
-    )
-    .bind(status.label())
-    .bind(error)
-    .bind(now())
-    .bind(run_id)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE workflow_runs SET status = ?1, error = ?2, finished_at = ?3 WHERE id = ?4")
+        .bind(status.label())
+        .bind(error)
+        .bind(now())
+        .bind(run_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

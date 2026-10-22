@@ -22,7 +22,10 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/admin/network-policy", axum::routing::put(put_policy))
         .route("/admin/audit", axum::routing::get(audit))
         .route("/admin/settings", axum::routing::put(put_settings))
-        .route("/admin/plugins/refresh", axum::routing::post(refresh_plugins))
+        .route(
+            "/admin/plugins/refresh",
+            axum::routing::post(refresh_plugins),
+        )
 }
 
 fn user_json(u: &secuscan_db::models::UserRow) -> Value {
@@ -50,7 +53,9 @@ async fn create_user(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     admin.require_admin()?;
     if req.name.trim().is_empty() || req.name.len() > 100 {
-        return Err(ApiError::BadRequest("name must be 1..=100 characters".into()));
+        return Err(ApiError::BadRequest(
+            "name must be 1..=100 characters".into(),
+        ));
     }
     let hash = hash_password(&req.password)?;
     let user = repo::users::create(&state.db, &req.email, &req.name, &hash, &req.role).await?;
@@ -98,11 +103,15 @@ async fn delete_user(
 ) -> ApiResult<StatusCode> {
     admin.require_admin()?;
     if id == admin.0.id {
-        return Err(ApiError::BadRequest("you cannot delete your own account".into()));
+        return Err(ApiError::BadRequest(
+            "you cannot delete your own account".into(),
+        ));
     }
     let count = repo::users::count(&state.db).await?;
     if count <= 1 {
-        return Err(ApiError::Conflict("the instance must keep at least one user".into()));
+        return Err(ApiError::Conflict(
+            "the instance must keep at least one user".into(),
+        ));
     }
     let ok = repo::users::delete(&state.db, &id).await.is_ok();
     if ok {

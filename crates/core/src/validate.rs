@@ -5,9 +5,7 @@
 //! actionable error messages.
 
 use crate::error::{CoreError, CoreResult};
-use crate::manifest::{
-    EngineSpec, FieldSpec, FieldType, ParserSpec, PluginManifest, SeverityRule,
-};
+use crate::manifest::{EngineSpec, FieldSpec, FieldType, ParserSpec, PluginManifest, SeverityRule};
 use crate::models::{FindingKind, Severity};
 use std::collections::{BTreeMap, HashSet};
 
@@ -50,7 +48,10 @@ pub fn validate_manifest(m: &PluginManifest) -> Vec<String> {
 
     // --- fields ------------------------------------------------------------
     if m.fields.len() > MAX_FIELDS {
-        errs.push(format!("too many fields ({} > {MAX_FIELDS})", m.fields.len()));
+        errs.push(format!(
+            "too many fields ({} > {MAX_FIELDS})",
+            m.fields.len()
+        ));
     }
     let mut seen_ids: HashSet<&str> = HashSet::new();
     let mut has_target = false;
@@ -124,7 +125,10 @@ pub fn validate_manifest(m: &PluginManifest) -> Vec<String> {
 
     // --- presets -----------------------------------------------------------
     if m.presets.len() > MAX_PRESETS {
-        errs.push(format!("too many presets ({} > {MAX_PRESETS})", m.presets.len()));
+        errs.push(format!(
+            "too many presets ({} > {MAX_PRESETS})",
+            m.presets.len()
+        ));
     }
     for (pname, values) in &m.presets {
         if pname.trim().is_empty() {
@@ -145,7 +149,9 @@ pub fn validate_manifest(m: &PluginManifest) -> Vec<String> {
     // --- static rules ------------------------------------------------------
     for (i, r) in m.static_rules.iter().enumerate() {
         if let Err(e) = regex::Regex::new(&r.pattern) {
-            errs.push(format!("static_rules[{i}].pattern is not a valid regex: {e}"));
+            errs.push(format!(
+                "static_rules[{i}].pattern is not a valid regex: {e}"
+            ));
         }
         if r.title.trim().is_empty() {
             errs.push(format!("static_rules[{i}].title must not be empty"));
@@ -184,7 +190,10 @@ fn validate_field(f: &FieldSpec, errs: &mut Vec<String>) {
     }
     if let Some(p) = &f.pattern {
         if let Err(e) = regex::Regex::new(p) {
-            errs.push(format!("field `{}` pattern is not a valid regex: {e}", f.id));
+            errs.push(format!(
+                "field `{}` pattern is not a valid regex: {e}",
+                f.id
+            ));
         }
     }
     match f.ftype {
@@ -400,7 +409,12 @@ fn validate_parser(m: &PluginManifest, errs: &mut Vec<String>) {
     }
 }
 
-fn validate_severity_rule(rule: &SeverityRule, groups: &HashSet<&str>, i: usize, errs: &mut Vec<String>) {
+fn validate_severity_rule(
+    rule: &SeverityRule,
+    groups: &HashSet<&str>,
+    i: usize,
+    errs: &mut Vec<String>,
+) {
     if !groups.contains(rule.field.as_str()) {
         errs.push(format!(
             "parser.severity_rules[{i}].field references unknown group `{}`",
@@ -456,9 +470,7 @@ pub fn normalize_inputs(
     let mut errs = Vec::new();
 
     for f in &m.fields {
-        let raw = inputs
-            .get(&f.id)
-            .or_else(|| f.default.as_ref());
+        let raw = inputs.get(&f.id).or(f.default.as_ref());
         let Some(raw) = raw else {
             if f.required {
                 errs.push(format!("missing required field `{}`", f.id));

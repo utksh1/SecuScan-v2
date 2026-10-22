@@ -50,15 +50,20 @@ impl FromRequestParts<Arc<AppState>> for CurrentUser {
     ) -> Result<Self, Self::Rejection> {
         // 1) Bearer JWT
         if let Some(auth) = parts.headers.get(axum::http::header::AUTHORIZATION) {
-            let value = auth
-                .to_str()
-                .map_err(|_| crate::error::ApiError::Unauthorized("bad Authorization header".into()))?;
-            if let Some(token) = value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer ")) {
+            let value = auth.to_str().map_err(|_| {
+                crate::error::ApiError::Unauthorized("bad Authorization header".into())
+            })?;
+            if let Some(token) = value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+            {
                 let claims = verify_access_token(&state.config.jwt_secret, token)?;
                 let user = secuscan_db::repo::users::find_by_id(&state.db, &claims.sub)
                     .await
                     .map_err(crate::error::ApiError::from)?
-                    .ok_or_else(|| crate::error::ApiError::Unauthorized("user no longer exists".into()))?;
+                    .ok_or_else(|| {
+                        crate::error::ApiError::Unauthorized("user no longer exists".into())
+                    })?;
                 return Ok(CurrentUser(user));
             }
         }
@@ -75,7 +80,9 @@ impl FromRequestParts<Arc<AppState>> for CurrentUser {
             let user = secuscan_db::repo::users::find_by_id(&state.db, &api_key.user_id)
                 .await
                 .map_err(crate::error::ApiError::from)?
-                .ok_or_else(|| crate::error::ApiError::Unauthorized("user no longer exists".into()))?;
+                .ok_or_else(|| {
+                    crate::error::ApiError::Unauthorized("user no longer exists".into())
+                })?;
             return Ok(CurrentUser(user));
         }
 

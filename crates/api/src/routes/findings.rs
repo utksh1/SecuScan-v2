@@ -69,7 +69,9 @@ fn validate_enums(q: &ListQuery) -> ApiResult<()> {
     }
     if let Some(s) = &q.analyst_status {
         if AnalystStatus::parse(s).is_none() {
-            return Err(ApiError::BadRequest(format!("unknown analyst_status `{s}`")));
+            return Err(ApiError::BadRequest(format!(
+                "unknown analyst_status `{s}`"
+            )));
         }
     }
     Ok(())
@@ -84,7 +86,11 @@ async fn list(
     // Access control: non-admins are scoped to their own tasks via the join.
     let filters = repo::findings::FindingFilters {
         task_id: q.task_id,
-        user_id: if user.is_admin() { None } else { Some(user.0.id.clone()) },
+        user_id: if user.is_admin() {
+            None
+        } else {
+            Some(user.0.id.clone())
+        },
         severity: q.severity,
         kind: q.kind,
         analyst_status: q.analyst_status,
@@ -137,8 +143,9 @@ async fn triage(
     Json(req): Json<TriageRequest>,
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
-    let status = AnalystStatus::parse(&req.analyst_status)
-        .ok_or_else(|| ApiError::BadRequest(format!("unknown analyst_status `{}`", req.analyst_status)))?;
+    let status = AnalystStatus::parse(&req.analyst_status).ok_or_else(|| {
+        ApiError::BadRequest(format!("unknown analyst_status `{}`", req.analyst_status))
+    })?;
     load_finding_for_user(&state, &user, &id).await?;
     let updated = repo::findings::update_analyst_status(&state.db, &id, status).await?;
     Ok(Json(finding_to_json(&updated)))

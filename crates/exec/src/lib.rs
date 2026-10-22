@@ -4,8 +4,9 @@
 //! - `cli` plugins through [`runner`] (tokio subprocess, no shell, timeout,
 //!   cancellation, output caps, per-task temp working dir, scrubbed env),
 //! - `native` plugins through in-process Rust scanners ([`native`]),
-//! with live [`events`] streamed to the API layer and per-plugin
-//! concurrency/hourly limits enforced by [`limiter`].
+//!
+//! Live [`events`] are streamed to the API layer, and per-plugin
+//! concurrency/hourly limits are enforced by [`limiter`].
 
 pub mod events;
 pub mod limiter;
@@ -17,8 +18,8 @@ pub use limiter::{LimitVerdict, PluginLimiter};
 pub use native::{NativeCtx, NativeScanner};
 pub use runner::{run_cli, CliOutcome};
 
-use secuscan_core::models::{now_iso, Finding, TaskStatus};
 use secuscan_core::manifest::PluginManifest;
+use secuscan_core::models::{now_iso, Finding, TaskStatus};
 use std::collections::BTreeMap;
 
 /// Install the process-wide rustls crypto provider (ring). Must be called
@@ -52,11 +53,16 @@ pub async fn execute_task(
 ) -> TaskOutcome {
     let started = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(match &manifest.engine {
-        secuscan_core::manifest::EngineSpec::Cli { timeout_seconds, .. } => *timeout_seconds,
-        secuscan_core::manifest::EngineSpec::Native { timeout_seconds, .. } => *timeout_seconds,
+        secuscan_core::manifest::EngineSpec::Cli {
+            timeout_seconds, ..
+        } => *timeout_seconds,
+        secuscan_core::manifest::EngineSpec::Native {
+            timeout_seconds, ..
+        } => *timeout_seconds,
     });
 
-    sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Running)).await;
+    sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Running))
+        .await;
 
     let outcome = match &manifest.engine {
         secuscan_core::manifest::EngineSpec::Cli { .. } => {
@@ -76,7 +82,8 @@ pub async fn execute_task(
                 sink,
             )
             .await;
-            sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Parsing)).await;
+            sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Parsing))
+                .await;
             let findings = match secuscan_core::parser_engine::parse_output(
                 &manifest.parser,
                 &manifest.static_rules,
@@ -93,12 +100,8 @@ pub async fn execute_task(
             let scanner = match native::registry().lookup(native) {
                 Some(s) => s,
                 None => {
-                    return failure(
-                        sink,
-                        format!("unknown native scanner `{native}`"),
-                        started,
-                    )
-                    .await;
+                    return failure(sink, format!("unknown native scanner `{native}`"), started)
+                        .await;
                 }
             };
             let ctx = NativeCtx {
@@ -107,7 +110,14 @@ pub async fn execute_task(
                 timeout,
             };
             match tokio::time::timeout(timeout, scanner.run(inputs, &ctx)).await {
-                Err(_) => failure(sink, format!("timed out after {}s", timeout.as_secs()), started).await,
+                Err(_) => {
+                    failure(
+                        sink,
+                        format!("timed out after {}s", timeout.as_secs()),
+                        started,
+                    )
+                    .await
+                }
                 Ok(Err(e)) => failure(sink, e, started).await,
                 Ok(Ok(findings)) => {
                     sink.emit(TaskEvent::Info(format!(
@@ -130,7 +140,8 @@ pub async fn execute_task(
         }
     };
 
-    sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Reporting)).await;
+    sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Reporting))
+        .await;
     let status = outcome.status;
     let exit_code = outcome.exit_code;
     sink.emit(TaskEvent::Finished { status, exit_code }).await;

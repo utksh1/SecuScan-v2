@@ -41,8 +41,9 @@ impl NativeScanner for TlsCheckScanner {
         _ctx: &NativeCtx,
     ) -> Result<Vec<Finding>, String> {
         let (host, port) = parse_target(get_str(inputs, "target")?)?;
-        let timeout =
-            Duration::from_millis(get_i64_or(inputs, "timeout_ms", 10_000).clamp(500, 30_000) as u64);
+        let timeout = Duration::from_millis(
+            get_i64_or(inputs, "timeout_ms", 10_000).clamp(500, 30_000) as u64,
+        );
 
         let roots = public_roots();
         let config = ClientConfig::builder()
@@ -62,9 +63,10 @@ impl NativeScanner for TlsCheckScanner {
         .map_err(|e| format!("TCP connect to {host}:{port} failed: {e}"))?;
 
         let handshake = tokio::time::timeout(timeout, connector.connect(server_name, tcp)).await;
-        let mut stream = match handshake {
-            Err(_) => {
-                return Ok(vec![tls_finding(
+        let mut stream =
+            match handshake {
+                Err(_) => {
+                    return Ok(vec![tls_finding(
                     Severity::High,
                     format!("TLS handshake with {host}:{port} timed out"),
                     format!("The TLS handshake did not complete within {}ms.", timeout.as_millis()),
@@ -74,14 +76,14 @@ impl NativeScanner for TlsCheckScanner {
                     format!("timeout after {}ms", timeout.as_millis()),
                     json!({"host": host, "port": port}),
                 )]);
-            }
-            Ok(Err(e)) => {
-                let (severity, title, desc, remediation) = e
-                    .get_ref()
-                    .and_then(|r| r.downcast_ref::<rustls::Error>())
-                    .map(classify_handshake_error)
-                    .unwrap_or_else(|| {
-                        (
+                }
+                Ok(Err(e)) => {
+                    let (severity, title, desc, remediation) = e
+                        .get_ref()
+                        .and_then(|r| r.downcast_ref::<rustls::Error>())
+                        .map(classify_handshake_error)
+                        .unwrap_or_else(|| {
+                            (
                             Severity::Medium,
                             "TLS connection failed".to_string(),
                             format!("The TLS connection could not be established: {e}"),
@@ -89,18 +91,18 @@ impl NativeScanner for TlsCheckScanner {
                              logs."
                                 .to_string(),
                         )
-                    });
-                return Ok(vec![tls_finding(
-                    severity,
-                    format!("{title} ({host}:{port})"),
-                    desc,
-                    remediation,
-                    format!("{e}"),
-                    json!({"host": host, "port": port, "error": e.to_string()}),
-                )]);
-            }
-            Ok(Ok(stream)) => stream,
-        };
+                        });
+                    return Ok(vec![tls_finding(
+                        severity,
+                        format!("{title} ({host}:{port})"),
+                        desc,
+                        remediation,
+                        format!("{e}"),
+                        json!({"host": host, "port": port, "error": e.to_string()}),
+                    )]);
+                }
+                Ok(Ok(stream)) => stream,
+            };
 
         // Successful handshake: inspect the negotiated session.
         let (version, cipher, version_raw) = {
@@ -171,7 +173,9 @@ fn parse_target(raw: &str) -> Result<(String, u16), String> {
     };
     if let Some(rest) = authority.strip_prefix('[') {
         // IPv6 literal
-        let close = rest.find(']').ok_or_else(|| "unbalanced IPv6 literal".to_string())?;
+        let close = rest
+            .find(']')
+            .ok_or_else(|| "unbalanced IPv6 literal".to_string())?;
         let host = rest[..close].to_string();
         let port = rest[close + 1..]
             .strip_prefix(':')
@@ -299,10 +303,22 @@ mod tests {
 
     #[test]
     fn target_parsing() {
-        assert_eq!(parse_target("example.com").unwrap(), ("example.com".into(), 443));
-        assert_eq!(parse_target("example.com:8443").unwrap(), ("example.com".into(), 8443));
-        assert_eq!(parse_target("https://example.com/x").unwrap(), ("example.com".into(), 443));
-        assert_eq!(parse_target("https://example.com:9443/x").unwrap(), ("example.com".into(), 9443));
+        assert_eq!(
+            parse_target("example.com").unwrap(),
+            ("example.com".into(), 443)
+        );
+        assert_eq!(
+            parse_target("example.com:8443").unwrap(),
+            ("example.com".into(), 8443)
+        );
+        assert_eq!(
+            parse_target("https://example.com/x").unwrap(),
+            ("example.com".into(), 443)
+        );
+        assert_eq!(
+            parse_target("https://example.com:9443/x").unwrap(),
+            ("example.com".into(), 9443)
+        );
         assert_eq!(parse_target("[::1]:8443").unwrap(), ("::1".into(), 8443));
         assert!(parse_target("").is_err());
     }
@@ -313,8 +329,8 @@ mod tests {
         crate::init_tls();
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
         let cert_der = cert.cert.der().clone();
-        let key_der = rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der())
-            .unwrap();
+        let key_der =
+            rustls::pki_types::PrivateKeyDer::try_from(cert.key_pair.serialize_der()).unwrap();
 
         let mut server_config = rustls::ServerConfig::builder()
             .with_no_client_auth()
@@ -327,7 +343,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             loop {
-                let Ok((sock, _)) = listener.accept().await else { break };
+                let Ok((sock, _)) = listener.accept().await else {
+                    break;
+                };
                 let acc = acceptor.clone();
                 tokio::spawn(async move {
                     if let Ok(mut tls) = acc.accept(sock).await {
@@ -354,8 +372,11 @@ mod tests {
         .collect();
         let findings = TlsCheckScanner.run(&inputs, &ctx).await.unwrap();
         assert_eq!(findings.len(), 1);
-        assert!(findings[0].title.contains("not publicly trusted"), "{:?}",
-            findings[0].title);
+        assert!(
+            findings[0].title.contains("not publicly trusted"),
+            "{:?}",
+            findings[0].title
+        );
         assert_eq!(findings[0].severity, Severity::High);
     }
 }

@@ -9,7 +9,9 @@
 //! - [`ParserSpec::JsonLines`] — one finding per JSON object line (nuclei…)
 
 use crate::error::{CoreError, CoreResult};
-use crate::manifest::{JsonFindingTemplate, LineFindingTemplate, ParserSpec, SeverityRule, StaticRule};
+use crate::manifest::{
+    JsonFindingTemplate, LineFindingTemplate, ParserSpec, SeverityRule, StaticRule,
+};
 use crate::models::{Finding, FindingKind, Severity, MAX_FINDINGS_PER_TASK};
 use serde_json::{json, Map, Value};
 use std::collections::HashSet;
@@ -20,7 +22,11 @@ pub const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 /// Parse raw tool output according to the manifest parser spec + static rules.
 /// Truncates the result at [`MAX_FINDINGS_PER_TASK`] findings (flagged in the
 /// returned marker list is unnecessary: truncation is deterministic).
-pub fn parse_output(spec: &ParserSpec, static_rules: &[StaticRule], output: &str) -> CoreResult<Vec<Finding>> {
+pub fn parse_output(
+    spec: &ParserSpec,
+    static_rules: &[StaticRule],
+    output: &str,
+) -> CoreResult<Vec<Finding>> {
     let mut findings = match spec {
         ParserSpec::Passthrough => Vec::new(),
         ParserSpec::LineRegex {
@@ -47,13 +53,7 @@ pub fn parse_output(spec: &ParserSpec, static_rules: &[StaticRule], output: &str
     // Deduplicate identical (severity, title, url) triples produced by
     // overlapping rules, preserving first-seen order.
     let mut seen: HashSet<(String, String, Option<String>)> = HashSet::new();
-    findings.retain(|f| {
-        seen.insert((
-            f.severity.to_string(),
-            f.title.clone(),
-            f.url.clone(),
-        ))
-    });
+    findings.retain(|f| seen.insert((f.severity.to_string(), f.title.clone(), f.url.clone())));
 
     findings.truncate(MAX_FINDINGS_PER_TASK);
     Ok(findings)
@@ -68,8 +68,9 @@ fn parse_line_regex(
 ) -> CoreResult<Vec<Finding>> {
     let re = regex::Regex::new(pattern)
         .map_err(|e| CoreError::Parse(format!("invalid parser pattern: {e}")))?;
-    let base_severity = Severity::parse(&template.severity)
-        .ok_or_else(|| CoreError::Parse(format!("unknown base severity `{}`", template.severity)))?;
+    let base_severity = Severity::parse(&template.severity).ok_or_else(|| {
+        CoreError::Parse(format!("unknown base severity `{}`", template.severity))
+    })?;
 
     let mut findings = Vec::new();
     for line in output.lines() {
@@ -237,7 +238,10 @@ fn parse_json_lines(
                 .unwrap_or(FindingKind::SuspectedIssue),
             severity,
             title,
-            category: template.category.clone().unwrap_or_else(|| "General".to_string()),
+            category: template
+                .category
+                .clone()
+                .unwrap_or_else(|| "General".to_string()),
             description,
             remediation: template.remediation.clone().unwrap_or_default(),
             proof,
@@ -288,7 +292,10 @@ fn apply_static_rule(rule: &StaticRule, output: &str) -> CoreResult<Option<Findi
         kind: FindingKind::SuspectedIssue,
         severity,
         title: rule.title.clone(),
-        category: rule.category.clone().unwrap_or_else(|| "General".to_string()),
+        category: rule
+            .category
+            .clone()
+            .unwrap_or_else(|| "General".to_string()),
         description: rule.description.clone().unwrap_or_default(),
         remediation: rule.remediation.clone().unwrap_or_default(),
         proof: rule
@@ -310,7 +317,9 @@ mod tests {
             LineFindingTemplate {
                 title: "Open port: {port}/{proto} ({service})".into(),
                 description: Some("Port {port} is open and running {service}.".into()),
-                remediation: Some("Verify whether {service} on port {port} should be exposed.".into()),
+                remediation: Some(
+                    "Verify whether {service} on port {port} should be exposed.".into(),
+                ),
                 proof: Some("{proto} port {port} is OPEN".into()),
                 category: Some("Network Service".into()),
                 severity: "info".into(),
@@ -318,8 +327,15 @@ mod tests {
             vec![SeverityRule {
                 field: "port".into(),
                 values: vec![
-                    "21".into(), "22".into(), "23".into(), "139".into(), "445".into(),
-                    "3306".into(), "3389".into(), "5432".into(), "6379".into(),
+                    "21".into(),
+                    "22".into(),
+                    "23".into(),
+                    "139".into(),
+                    "445".into(),
+                    "3306".into(),
+                    "3389".into(),
+                    "5432".into(),
+                    "6379".into(),
                 ],
                 severity: "low".into(),
             }],
@@ -460,7 +476,9 @@ mod tests {
 
     #[test]
     fn passthrough_yields_no_findings() {
-        assert!(parse_output(&ParserSpec::Passthrough, &[], "anything").unwrap().is_empty());
+        assert!(parse_output(&ParserSpec::Passthrough, &[], "anything")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

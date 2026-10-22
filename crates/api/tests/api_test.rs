@@ -64,7 +64,10 @@ max_per_hour = 0
 
     let config = Arc::new(secuscan_api::config::Config {
         addr: "127.0.0.1:0".parse().unwrap(),
-        db_url: format!("sqlite://{}?mode=rwc", db_dir.path().join("test.db").display()),
+        db_url: format!(
+            "sqlite://{}?mode=rwc",
+            db_dir.path().join("test.db").display()
+        ),
         jwt_secret: "integration-test-secret".to_string(),
         plugins_dir: plugins_dir.path().to_path_buf(),
         frontend_dir: db_dir.path().join("no-such-frontend"), // API-only mode
@@ -104,9 +107,7 @@ max_per_hour = 0
 }
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .build()
-        .unwrap()
+    reqwest::Client::builder().build().unwrap()
 }
 
 async fn login(s: &TestServer) -> (reqwest::Client, String) {
@@ -229,7 +230,10 @@ async fn full_task_lifecycle_with_findings_and_reports() {
     let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
 
     // ---- plugin catalog ----
-    let resp = auth(c.get(format!("{}/plugins", s.base))).send().await.unwrap();
+    let resp = auth(c.get(format!("{}/plugins", s.base)))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     let items = body["items"].as_array().unwrap();
@@ -243,7 +247,11 @@ async fn full_task_lifecycle_with_findings_and_reports() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let schema: serde_json::Value = resp.json().await.unwrap();
-    assert!(schema["fields"].as_array().unwrap().iter().any(|f| f["id"] == "target"));
+    assert!(schema["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["id"] == "target"));
 
     // preview (native)
     let resp = auth(c.post(format!("{}/plugins/port-scanner/preview", s.base)))
@@ -266,7 +274,10 @@ async fn full_task_lifecycle_with_findings_and_reports() {
         .unwrap();
     assert_eq!(resp.status(), 400);
     let err: serde_json::Value = resp.json().await.unwrap();
-    assert!(err["error"]["message"].as_str().unwrap().contains("consent"));
+    assert!(err["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("consent"));
 
     // ---- unknown field rejected ----
     let resp = auth(c.post(format!("{}/tasks", s.base)))
@@ -311,7 +322,10 @@ async fn full_task_lifecycle_with_findings_and_reports() {
     let mut status = String::new();
     for _ in 0..100 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base))).send().await.unwrap();
+        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base)))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 200);
         let t: serde_json::Value = resp.json().await.unwrap();
         status = t["status"].as_str().unwrap().to_string();
@@ -330,7 +344,10 @@ async fn full_task_lifecycle_with_findings_and_reports() {
     let result: serde_json::Value = resp.json().await.unwrap();
     let findings = result["findings"].as_array().unwrap();
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert!(findings[0]["title"].as_str().unwrap().contains(&format!("{port}/tcp")));
+    assert!(findings[0]["title"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("{port}/tcp")));
     assert_eq!(result["severity_counts"]["info"], 1);
 
     // ---- findings explorer + triage ----
@@ -396,11 +413,17 @@ async fn full_task_lifecycle_with_findings_and_reports() {
     assert_eq!(d["findings"]["info"], 1);
 
     // ---- admin: audit log contains the blocked target ----
-    let resp = auth(c.get(format!("{}/admin/audit", s.base))).send().await.unwrap();
+    let resp = auth(c.get(format!("{}/admin/audit", s.base)))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let audit: serde_json::Value = resp.json().await.unwrap();
     let items = audit["items"].as_array().unwrap();
-    assert!(items.iter().any(|a| a["target"] == "203.0.113.50"), "{items:?}");
+    assert!(
+        items.iter().any(|a| a["target"] == "203.0.113.50"),
+        "{items:?}"
+    );
 }
 
 #[tokio::test]
@@ -427,7 +450,10 @@ async fn cli_plugin_task_and_cancellation() {
     let mut running = false;
     for _ in 0..100 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base))).send().await.unwrap();
+        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base)))
+            .send()
+            .await
+            .unwrap();
         let t: serde_json::Value = resp.json().await.unwrap();
         if t["status"] == "running" {
             running = true;
@@ -448,7 +474,10 @@ async fn cli_plugin_task_and_cancellation() {
     let mut final_status = String::new();
     for _ in 0..100 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base))).send().await.unwrap();
+        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base)))
+            .send()
+            .await
+            .unwrap();
         let t: serde_json::Value = resp.json().await.unwrap();
         final_status = t["status"].as_str().unwrap().to_string();
         if final_status == "cancelled" {
@@ -578,7 +607,10 @@ async fn non_admin_scoping_and_admin_management() {
     assert_eq!(resp.status(), 403);
 
     // Admin can list users and update network policy.
-    let resp = auth(c.get(format!("{}/admin/users", s.base))).send().await.unwrap();
+    let resp = auth(c.get(format!("{}/admin/users", s.base)))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(resp.status(), 200);
     let users: serde_json::Value = resp.json().await.unwrap();
     assert!(users["items"].as_array().unwrap().len() >= 2);

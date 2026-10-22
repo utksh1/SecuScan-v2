@@ -100,10 +100,7 @@ pub(crate) fn get_bool_or(
     key: &str,
     default: bool,
 ) -> bool {
-    inputs
-        .get(key)
-        .and_then(|v| v.as_bool())
-        .unwrap_or(default)
+    inputs.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
 pub(crate) fn get_i64_or(

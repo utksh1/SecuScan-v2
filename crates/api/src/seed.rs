@@ -25,23 +25,25 @@ pub async fn seed_admin(pool: &SqlitePool, config: &Arc<Config>) {
         }
     };
     match hash_password(&password) {
-        Ok(hash) => match repo::users::create(pool, &email, "Administrator", &hash, "admin").await {
-            Ok(_) => {
-                if generated {
-                    tracing::info!(
-                        "┌──────────────────────────────────────────────────────────┐\n\
+        Ok(hash) => {
+            match repo::users::create(pool, &email, "Administrator", &hash, "admin").await {
+                Ok(_) => {
+                    if generated {
+                        tracing::info!(
+                            "┌──────────────────────────────────────────────────────────┐\n\
                          │  First run: created the initial administrator account.   │\n\
                          │  Email:    {email:<46}│\n\
                          │  Password: {password:<46}│\n\
                          │  Store it now — it will not be shown again.             │\n\
                          └──────────────────────────────────────────────────────────┘"
-                    );
-                } else {
-                    tracing::info!("seeded administrator account {email}");
+                        );
+                    } else {
+                        tracing::info!("seeded administrator account {email}");
+                    }
                 }
+                Err(e) => tracing::error!("failed to seed admin: {e}"),
             }
-            Err(e) => tracing::error!("failed to seed admin: {e}"),
-        },
+        }
         Err(e) => tracing::error!("failed to hash seeded admin password: {e}"),
     }
 }

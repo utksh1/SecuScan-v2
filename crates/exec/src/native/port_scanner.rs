@@ -21,13 +21,13 @@ const MAX_PROBES: u64 = 16_384;
 
 /// Curated top-100 TCP ports (nmap-style ordering, most common first).
 const TOP_100: &[u16] = &[
-    80, 23, 443, 21, 22, 25, 3389, 110, 445, 139, 143, 53, 135, 3306, 8443, 1723, 111, 995,
-    5900, 5432, 993, 587, 5985, 8080, 1025, 49152, 1433, 1521, 6379, 8000, 8081, 8888, 7001,
-    49153, 1720, 3000, 5631, 2000, 593, 6666, 5800, 5222, 902, 2001, 32768, 5555, 1110, 64623,
-    10000, 8082, 2222, 137, 514, 138, 366, 10001, 1026, 1027, 1028, 1029, 1030, 6000, 1031, 1038,
-    1032, 6001, 1035, 5104, 1036, 5000, 1033, 5010, 1037, 1039, 54321, 33354, 1034, 8651, 8652,
-    8653, 8654, 2100, 3689, 9050, 5225, 5226, 7777, 26214, 26257, 31119, 5223, 8444, 1045,
-    1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1060, 1068, 35000,
+    80, 23, 443, 21, 22, 25, 3389, 110, 445, 139, 143, 53, 135, 3306, 8443, 1723, 111, 995, 5900,
+    5432, 993, 587, 5985, 8080, 1025, 49152, 1433, 1521, 6379, 8000, 8081, 8888, 7001, 49153, 1720,
+    3000, 5631, 2000, 593, 6666, 5800, 5222, 902, 2001, 32768, 5555, 1110, 64623, 10000, 8082,
+    2222, 137, 514, 138, 366, 10001, 1026, 1027, 1028, 1029, 1030, 6000, 1031, 1038, 1032, 6001,
+    1035, 5104, 1036, 5000, 1033, 5010, 1037, 1039, 54321, 33354, 1034, 8651, 8652, 8653, 8654,
+    2100, 3689, 9050, 5225, 5226, 7777, 26214, 26257, 31119, 5223, 8444, 1045, 1046, 1047, 1048,
+    1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1060, 1068, 35000,
 ];
 
 const HIGH_RISK: &[u16] = &[
@@ -68,7 +68,8 @@ impl NativeScanner for PortScanner {
             ports
         };
         let concurrency = get_i64_or(inputs, "concurrency", 128).clamp(1, 1024) as usize;
-        let timeout = Duration::from_millis(get_i64_or(inputs, "timeout_ms", 800).clamp(50, 10_000) as u64);
+        let timeout =
+            Duration::from_millis(get_i64_or(inputs, "timeout_ms", 800).clamp(50, 10_000) as u64);
 
         let hosts = expand_hosts(target)?;
         let total = (hosts.len() as u64) * (ports.len() as u64);
@@ -91,21 +92,26 @@ impl NativeScanner for PortScanner {
         let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
         let probes: Vec<Probe> = hosts
             .iter()
-            .flat_map(|h| ports.iter().map(move |p| Probe { host: h.clone(), port: *p }))
+            .flat_map(|h| {
+                ports.iter().map(move |p| Probe {
+                    host: h.clone(),
+                    port: *p,
+                })
+            })
             .collect();
 
         let mut stream: FuturesUnordered<_> = probes
             .into_iter()
             .map(|probe| {
                 let sem = sem.clone();
-                let timeout = timeout;
                 async move {
                     let _permit = sem.acquire_owned().await;
                     let addr = match resolve_addr(&probe.host, probe.port) {
                         Ok(a) => a,
                         Err(_) => return (probe, ProbeResult::Unresolved),
                     };
-                    match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await {
+                    match tokio::time::timeout(timeout, tokio::net::TcpStream::connect(addr)).await
+                    {
                         Ok(Ok(_)) => (probe, ProbeResult::Open),
                         Ok(Err(e)) => {
                             if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -137,7 +143,7 @@ impl NativeScanner for PortScanner {
                 ProbeResult::Unresolved => filtered += 1,
             }
             done += 1;
-            if done % 256 == 0 {
+            if done.is_multiple_of(256) {
                 ctx.sink
                     .emit(crate::events::TaskEvent::Progress {
                         done,
@@ -247,7 +253,7 @@ fn expand_hosts(target: &str) -> Result<Vec<String>, String> {
                 }
                 let base = u32::from(v4) & subnet_mask(prefix);
                 (0..count)
-                    .map(|i| Ipv4AddrStr(base + (i as u32 & 0xffff_ffff)).to_string())
+                    .map(|i| Ipv4AddrStr(base + i as u32).to_string())
                     .collect()
             }
             IpAddr::V6(_) => return Err("IPv6 CIDR ranges are not supported yet".into()),
@@ -328,7 +334,10 @@ mod tests {
     fn port_parsing() {
         assert_eq!(parse_ports("80,443").unwrap(), vec![80, 443]);
         assert_eq!(parse_ports(" 80 , 443 ").unwrap(), vec![80, 443]);
-        assert_eq!(parse_ports("8000-8002,80").unwrap(), vec![80, 8000, 8001, 8002]);
+        assert_eq!(
+            parse_ports("8000-8002,80").unwrap(),
+            vec![80, 8000, 8001, 8002]
+        );
         assert_eq!(parse_ports("").unwrap(), Vec::<u16>::new());
         assert!(parse_ports("0").is_err());
         assert!(parse_ports("70000").is_err());
@@ -341,7 +350,10 @@ mod tests {
         assert_eq!(expand_hosts("127.0.0.1").unwrap(), vec!["127.0.0.1"]);
         assert_eq!(expand_hosts("scanme.local").unwrap(), vec!["scanme.local"]);
         let hosts = expand_hosts("127.0.0.0/30").unwrap();
-        assert_eq!(hosts, vec!["127.0.0.0", "127.0.0.1", "127.0.0.2", "127.0.0.3"]);
+        assert_eq!(
+            hosts,
+            vec!["127.0.0.0", "127.0.0.1", "127.0.0.2", "127.0.0.3"]
+        );
         assert!(expand_hosts("10.0.0.0/8").is_err()); // > 1024 hosts
     }
 

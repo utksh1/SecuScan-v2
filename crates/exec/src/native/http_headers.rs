@@ -8,7 +8,7 @@
 use super::{get_bool_or, get_i64_or, get_str, NativeCtx, NativeScanner};
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
-use reqwest::{Client, Proxy, redirect};
+use reqwest::{redirect, Client, Proxy};
 use secuscan_core::models::{Finding, FindingKind, Severity};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -39,7 +39,9 @@ impl NativeScanner for HttpHeadersScanner {
     ) -> Result<Vec<Finding>, String> {
         let url = normalize_url(get_str(inputs, "target")?)?;
         let follow = get_bool_or(inputs, "follow_redirects", true);
-        let timeout = Duration::from_millis(get_i64_or(inputs, "timeout_ms", 10_000).clamp(500, 30_000) as u64);
+        let timeout = Duration::from_millis(
+            get_i64_or(inputs, "timeout_ms", 10_000).clamp(500, 30_000) as u64,
+        );
 
         let client = build_client(follow, timeout)?;
         let resp = client
@@ -110,8 +112,7 @@ impl NativeScanner for HttpHeadersScanner {
         }
 
         // --- Clickjacking ------------------------------------------------------
-        let frame_ok = headers.contains_key("x-frame-options")
-            || csp_has_frame_ancestors(&headers);
+        let frame_ok = headers.contains_key("x-frame-options") || csp_has_frame_ancestors(&headers);
         if !frame_ok {
             findings.push(finding(
                 Severity::Medium,
@@ -156,11 +157,18 @@ impl NativeScanner for HttpHeadersScanner {
         if let Some(server) = header_str(&headers, "server") {
             let has_version = server.chars().any(|c| c.is_ascii_digit());
             findings.push(finding(
-                if has_version { Severity::Low } else { Severity::Info },
+                if has_version {
+                    Severity::Low
+                } else {
+                    Severity::Info
+                },
                 format!("Server header discloses software: `{server}`"),
-                "The Server header reveals the server software"
-                    .to_string()
-                    + if has_version { " including a version number, which helps attackers match known CVEs." } else { "." },
+                "The Server header reveals the server software".to_string()
+                    + if has_version {
+                        " including a version number, which helps attackers match known CVEs."
+                    } else {
+                        "."
+                    },
                 "Suppress or generalize the Server header (e.g. `Server:` with no value) \
                  unless required.",
                 format!("server: {server}"),
@@ -237,7 +245,12 @@ fn finding(
     proof: impl Into<String>,
     metadata: serde_json::Value,
 ) -> Finding {
-    let mut f = Finding::new(title, "HTTP Security Headers", severity, FindingKind::Observation);
+    let mut f = Finding::new(
+        title,
+        "HTTP Security Headers",
+        severity,
+        FindingKind::Observation,
+    );
     f.description = description.into();
     f.remediation = remediation.to_string();
     f.proof = proof.into();
@@ -261,7 +274,9 @@ pub(crate) fn build_client(follow: bool, timeout: Duration) -> Result<Client, St
     if let Ok(p) = std::env::var("SECUSCAN_TEST_NO_PROXY_FIX") {
         builder = builder.proxy(Proxy::all(&p).map_err(|e| e.to_string())?);
     }
-    builder.build().map_err(|e| format!("client build failed: {e}"))
+    builder
+        .build()
+        .map_err(|e| format!("client build failed: {e}"))
 }
 
 pub(crate) fn normalize_url(raw: &str) -> Result<String, String> {
@@ -279,7 +294,10 @@ pub(crate) fn normalize_url(raw: &str) -> Result<String, String> {
 }
 
 fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
-    headers.get(name).and_then(|v| v.to_str().ok()).filter(|s| !s.is_empty())
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
 }
 
 fn csp_has_frame_ancestors(headers: &HeaderMap) -> bool {
@@ -292,9 +310,11 @@ fn csp_has_frame_ancestors(headers: &HeaderMap) -> bool {
 
 fn looks_session_like(name: &str) -> bool {
     let n = name.to_ascii_lowercase();
-    ["session", "sess", "sid", "token", "auth", "jwt", "login", "csrf"]
-        .iter()
-        .any(|k| n.contains(k))
+    [
+        "session", "sess", "sid", "token", "auth", "jwt", "login", "csrf",
+    ]
+    .iter()
+    .any(|k| n.contains(k))
 }
 
 #[cfg(test)]
@@ -312,7 +332,10 @@ mod tests {
         format!("http://{addr}")
     }
 
-    fn ctx() -> (NativeCtx, tokio::sync::mpsc::Receiver<crate::events::EventEnvelope>) {
+    fn ctx() -> (
+        NativeCtx,
+        tokio::sync::mpsc::Receiver<crate::events::EventEnvelope>,
+    ) {
         let (tx, rx) = tokio::sync::mpsc::channel(64);
         (
             NativeCtx {
@@ -369,12 +392,18 @@ mod tests {
                     [
                         ("content-type", "text/html"),
                         ("strict-transport-security", "max-age=31536000"),
-                        ("content-security-policy", "default-src 'self'; frame-ancestors 'none'"),
+                        (
+                            "content-security-policy",
+                            "default-src 'self'; frame-ancestors 'none'",
+                        ),
                         ("x-content-type-options", "nosniff"),
                         ("x-frame-options", "DENY"),
                         ("referrer-policy", "no-referrer"),
                         ("permissions-policy", "camera=(), geolocation=()"),
-                        ("set-cookie", "sessionid=abc; Secure; HttpOnly; SameSite=Lax"),
+                        (
+                            "set-cookie",
+                            "sessionid=abc; Secure; HttpOnly; SameSite=Lax",
+                        ),
                     ],
                     "<html>ok</html>",
                 )

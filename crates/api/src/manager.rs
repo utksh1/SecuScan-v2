@@ -3,8 +3,8 @@
 use crate::config::Config;
 use secuscan_core::manifest::PluginManifest;
 use secuscan_core::models::TaskStatus;
-use secuscan_db::repo;
 use secuscan_db::models::TaskRow;
+use secuscan_db::repo;
 use secuscan_exec::events::{EventEnvelope, EventSink, TaskEvent};
 use secuscan_exec::{execute_task, LimitVerdict, PluginLimiter};
 use sqlx::SqlitePool;
@@ -23,6 +23,17 @@ pub struct SseFrame {
     pub payload_json: String,
 }
 
+/// Everything needed to finalize a task, bundled to keep signatures small.
+struct FinishOutcome<'a> {
+    status: TaskStatus,
+    exit_code: Option<i64>,
+    error: Option<&'a str>,
+    findings: &'a [secuscan_core::models::Finding],
+    output: &'a str,
+    output_truncated: bool,
+    stats_json: String,
+}
+
 pub struct TaskManager {
     pub pool: SqlitePool,
     pub limiter: Arc<PluginLimiter>,
@@ -32,6 +43,20 @@ pub struct TaskManager {
     running: Mutex<HashMap<String, CancellationToken>>,
     /// Global running-task cap.
     global: tokio::sync::Semaphore,
+}
+
+impl<'a> FinishOutcome<'a> {
+    fn cancelled(reason: &'a str) -> Self {
+        FinishOutcome {
+            status: TaskStatus::Cancelled,
+            exit_code: None,
+            error: Some(reason),
+            findings: &[],
+            output: "",
+            output_truncated: false,
+            stats_json: String::new(),
+        }
+    }
 }
 
 impl TaskManager {
@@ -82,7 +107,10 @@ impl TaskManager {
         let mgr = Arc::clone(self);
         let task_id = task.id.clone();
         let cancel = CancellationToken::new();
-        self.running.lock().await.insert(task_id.clone(), cancel.clone());
+        self.running
+            .lock()
+            .await
+            .insert(task_id.clone(), cancel.clone());
         let sink = EventSink::new(
             uuid::Uuid::parse_str(&task_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
             self.events_tx.clone(),
@@ -90,37 +118,39 @@ impl TaskManager {
         tokio::spawn(async move {
             let started = std::time::Instant::now();
             // Wait for the global slot and the plugin slot, cancellably.
-            let _global_permit = loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        mgr.finish_task(
-                            &task, TaskStatus::Cancelled, None, None, &[], "", false, "cancelled before start",
-                        ).await;
-                        mgr.cleanup(&task_id).await;
-                        return;
-                    }
-                    permit = mgr.global.acquire() => break permit.expect("global semaphore never closes"),
+            let _global_permit = tokio::select! {
+                _ = cancel.cancelled() => {
+                    mgr.finish_task(&task, FinishOutcome::cancelled("cancelled before start")).await;
+                    mgr.cleanup(&task_id).await;
+                    return;
                 }
+                permit = mgr.global.acquire() => permit.expect("global semaphore never closes"),
             };
-            let verdict = loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => {
-                        mgr.finish_task(
-                            &task, TaskStatus::Cancelled, None, None, &[], "", false, "cancelled while queued",
-                        ).await;
-                        mgr.limiter.release_hourly(&manifest.plugin.id);
-                        mgr.cleanup(&task_id).await;
-                        return;
-                    }
-                    v = mgr.limiter.acquire(&manifest) => break v,
+            let verdict = tokio::select! {
+                _ = cancel.cancelled() => {
+                    mgr.finish_task(&task, FinishOutcome::cancelled("cancelled while queued")).await;
+                    mgr.limiter.release_hourly(&manifest.plugin.id);
+                    mgr.cleanup(&task_id).await;
+                    return;
                 }
+                v = mgr.limiter.acquire(&manifest) => v,
             };
             let _permit = match verdict {
                 LimitVerdict::Acquired(p) => p,
                 LimitVerdict::Rejected { reason } => {
                     mgr.finish_task(
-                        &task, TaskStatus::Failed, None, None, &[], "", false, &reason,
-                    ).await;
+                        &task,
+                        FinishOutcome {
+                            status: TaskStatus::Failed,
+                            error: Some(reason.as_str()),
+                            findings: &[],
+                            output: "",
+                            output_truncated: false,
+                            exit_code: None,
+                            stats_json: String::new(),
+                        },
+                    )
+                    .await;
                     mgr.limiter.release_hourly(&manifest.plugin.id);
                     mgr.cleanup(&task_id).await;
                     return;
@@ -133,49 +163,43 @@ impl TaskManager {
 
             mgr.finish_task(
                 &task,
-                outcome.status,
-                outcome.exit_code.map(|c| c as i64),
-                outcome.error.as_deref(),
-                &outcome.findings,
-                &outcome.output,
-                outcome.output_truncated,
-                &serde_json::json!({
-                    "findings": outcome.findings.len(),
-                    "duration_ms": outcome.duration_ms,
-                    "tool_exit_nonzero": outcome.tool_exit_nonzero,
-                })
-                .to_string(),
+                FinishOutcome {
+                    status: outcome.status,
+                    exit_code: outcome.exit_code.map(|c| c as i64),
+                    error: outcome.error.as_deref(),
+                    findings: &outcome.findings,
+                    output: &outcome.output,
+                    output_truncated: outcome.output_truncated,
+                    stats_json: serde_json::json!({
+                        "findings": outcome.findings.len(),
+                        "duration_ms": outcome.duration_ms,
+                        "tool_exit_nonzero": outcome.tool_exit_nonzero,
+                    })
+                    .to_string(),
+                },
             )
             .await;
             mgr.cleanup(&task_id).await;
         });
     }
 
-    async fn finish_task(
-        &self,
-        task: &TaskRow,
-        status: TaskStatus,
-        exit_code: Option<i64>,
-        error: Option<&str>,
-        findings: &[secuscan_core::models::Finding],
-        output: &str,
-        output_truncated: bool,
-        stats_json: &str,
-    ) {
+    async fn finish_task(&self, task: &TaskRow, o: FinishOutcome<'_>) {
         if let Err(e) =
-            repo::findings::insert_many(&self.pool, &task.id, &task.plugin_id, findings).await
+            repo::findings::insert_many(&self.pool, &task.id, &task.plugin_id, o.findings).await
         {
             tracing::error!("failed to persist findings for task {}: {e}", task.id);
         }
         if let Err(e) = repo::tasks::finish(
             &self.pool,
             &task.id,
-            status,
-            exit_code,
-            error,
-            stats_json,
-            output,
-            output_truncated,
+            repo::tasks::FinishTask {
+                status: o.status,
+                exit_code: o.exit_code,
+                error: o.error,
+                stats_json: &o.stats_json,
+                output: o.output,
+                output_truncated: o.output_truncated,
+            },
         )
         .await
         {
@@ -201,7 +225,7 @@ async fn recorder(
         let res = sqlx::query(
             "INSERT INTO task_events (task_id, ts, level, payload_json) VALUES (?1, ?2, ?3, ?4)",
         )
-        .bind(&env.task_id.to_string())
+        .bind(env.task_id.to_string())
         .bind(&env.ts)
         .bind(level)
         .bind(&payload_json)

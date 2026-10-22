@@ -24,8 +24,9 @@ pub mod validate;
 pub use error::{CoreError, CoreResult};
 pub use loader::{LoadIssue, PluginRegistry};
 pub use manifest::{
-    DepsSpec, EngineSpec, FieldOption, FieldSpec, FieldType, JsonFindingTemplate, LineFindingTemplate,
-    ParserSpec, PluginManifest, PluginMeta, SafetyLevel, SafetySpec, SeverityRule, StaticRule,
+    DepsSpec, EngineSpec, FieldOption, FieldSpec, FieldType, JsonFindingTemplate,
+    LineFindingTemplate, ParserSpec, PluginManifest, PluginMeta, SafetyLevel, SafetySpec,
+    SeverityRule, StaticRule,
 };
 pub use models::{AnalystStatus, Finding, FindingKind, Phase, Severity, TaskStatus};
 pub use parser_engine::parse_output;

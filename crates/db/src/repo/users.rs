@@ -23,7 +23,9 @@ pub async fn create(
         .fetch_one(pool)
         .await?;
     if existing > 0 {
-        return Err(DbError::Conflict(format!("email `{email}` is already registered")));
+        return Err(DbError::Conflict(format!(
+            "email `{email}` is already registered"
+        )));
     }
     let row = UserRow {
         id: new_id(),

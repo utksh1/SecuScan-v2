@@ -42,5 +42,6 @@ pub fn build_app(state: SharedState) -> axum::Router {
     }
 
     let frontend_dir = state.config.frontend_dir.clone();
-    app.with_state(state).merge(static_files::spa_service(&frontend_dir))
+    app.with_state(state)
+        .merge(static_files::spa_service(&frontend_dir))
 }

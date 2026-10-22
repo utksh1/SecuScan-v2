@@ -22,7 +22,10 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/workflows/:id", axum::routing::delete(delete))
         .route("/workflows/:id/run", axum::routing::post(run))
         .route("/workflows/:id/runs", axum::routing::get(list_runs))
-        .route("/workflows/runs/:run_id/cancel", axum::routing::post(cancel_run))
+        .route(
+            "/workflows/runs/:run_id/cancel",
+            axum::routing::post(cancel_run),
+        )
 }
 
 #[derive(Deserialize)]
@@ -47,7 +50,9 @@ struct CreateWorkflowRequest {
 
 async fn validate_steps(state: &SharedState, steps: &[WorkflowStepDto]) -> ApiResult<()> {
     if steps.is_empty() || steps.len() > 32 {
-        return Err(ApiError::BadRequest("workflows must have 1..=32 steps".into()));
+        return Err(ApiError::BadRequest(
+            "workflows must have 1..=32 steps".into(),
+        ));
     }
     let registry = state.registry.read().await;
     for (i, s) in steps.iter().enumerate() {
@@ -86,7 +91,9 @@ async fn create(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     if req.name.trim().is_empty() || req.name.len() > 120 {
-        return Err(ApiError::BadRequest("name must be 1..=120 characters".into()));
+        return Err(ApiError::BadRequest(
+            "name must be 1..=120 characters".into(),
+        ));
     }
     validate_steps(&state, &req.steps).await?;
     let row = repo::workflows::create(
@@ -112,10 +119,7 @@ fn workflow_to_json(w: &secuscan_db::models::WorkflowRow) -> Value {
     })
 }
 
-async fn list(
-    State(state): State<SharedState>,
-    _user: CurrentUser,
-) -> ApiResult<Json<Value>> {
+async fn list(State(state): State<SharedState>, _user: CurrentUser) -> ApiResult<Json<Value>> {
     let rows = repo::workflows::list(&state.db).await?;
     Ok(Json(json!({
         "items": rows.iter().map(workflow_to_json).collect::<Vec<_>>(),
@@ -157,10 +161,19 @@ async fn update(
     // Only the creator or an admin may edit.
     let existing = repo::workflows::get(&state.db, &id).await?;
     if !user.is_admin() && existing.created_by != user.0.id {
-        return Err(ApiError::Forbidden("only the creator or an admin can edit".into()));
+        return Err(ApiError::Forbidden(
+            "only the creator or an admin can edit".into(),
+        ));
     }
     validate_steps(&state, &req.steps).await?;
-    repo::workflows::update(&state.db, &id, &req.name, &req.description, &steps_to_json(&req.steps)).await?;
+    repo::workflows::update(
+        &state.db,
+        &id,
+        &req.name,
+        &req.description,
+        &steps_to_json(&req.steps),
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -171,7 +184,9 @@ async fn delete(
 ) -> ApiResult<StatusCode> {
     let existing = repo::workflows::get(&state.db, &id).await?;
     if !user.is_admin() && existing.created_by != user.0.id {
-        return Err(ApiError::Forbidden("only the creator or an admin can delete".into()));
+        return Err(ApiError::Forbidden(
+            "only the creator or an admin can delete".into(),
+        ));
     }
     repo::workflows::delete(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -184,8 +199,8 @@ async fn run(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let wf = repo::workflows::get(&state.db, &id).await?;
-    let steps: Vec<WorkflowStepDto> =
-        serde_json::from_str(&wf.steps_json).map_err(|_| ApiError::Internal("corrupt workflow steps".into()))?;
+    let steps: Vec<WorkflowStepDto> = serde_json::from_str(&wf.steps_json)
+        .map_err(|_| ApiError::Internal("corrupt workflow steps".into()))?;
     let run_row = repo::workflows::create_run(&state.db, &id).await?;
     let run_id_spawn = run_row.id.clone();
 
@@ -193,7 +208,13 @@ async fn run(
     tokio::spawn(async move {
         if let Err(e) = run_workflow(&state2, &user, &steps, &run_id_spawn).await {
             tracing::error!("workflow run {} failed: {e}", run_id_spawn);
-            let _ = repo::workflows::finish_run(&state2.db, &run_id_spawn, TaskStatus::Failed, Some(&e)).await;
+            let _ = repo::workflows::finish_run(
+                &state2.db,
+                &run_id_spawn,
+                TaskStatus::Failed,
+                Some(&e),
+            )
+            .await;
         }
     });
 
@@ -219,10 +240,9 @@ async fn run_workflow(
             // Starting a workflow implies consent for its steps.
             consent_granted: true,
         };
-        let (task, manifest, inputs) =
-            validate_and_create_task(state, user, &req, Some(run_id))
-                .await
-                .map_err(|e| format!("step {} ({}) rejected: {e}", i + 1, step.plugin_id))?;
+        let (task, manifest, inputs) = validate_and_create_task(state, user, &req, Some(run_id))
+            .await
+            .map_err(|e| format!("step {} ({}) rejected: {e}", i + 1, step.plugin_id))?;
         repo::workflows::append_run_task(&state.db, run_id, &task.id)
             .await
             .map_err(|e| e.to_string())?;
@@ -248,7 +268,11 @@ async fn run_workflow(
             }
             if std::time::Instant::now() >= deadline {
                 state.tasks.cancel(&task.id).await;
-                return Err(format!("step {} ({}) exceeded the 24h execution bound", i + 1, step.plugin_id));
+                return Err(format!(
+                    "step {} ({}) exceeded the 24h execution bound",
+                    i + 1,
+                    step.plugin_id
+                ));
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
@@ -290,7 +314,9 @@ async fn cancel_run(
     }
     let wf = owner.ok_or_else(|| ApiError::NotFound(format!("workflow run {run_id}")))?;
     if !user.is_admin() && wf.created_by != user.0.id {
-        return Err(ApiError::Forbidden("only the creator or an admin can cancel".into()));
+        return Err(ApiError::Forbidden(
+            "only the creator or an admin can cancel".into(),
+        ));
     }
     // Cancel every task of this run that is still active.
     let tasks = repo::tasks::list(

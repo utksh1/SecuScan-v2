@@ -48,7 +48,11 @@ pub async fn validate_and_create_task(
     user: &CurrentUser,
     req: &StartTaskRequest,
     workflow_run_id: Option<&str>,
-) -> ApiResult<(TaskRow, Arc<secuscan_core::manifest::PluginManifest>, BTreeMap<String, Value>)> {
+) -> ApiResult<(
+    TaskRow,
+    Arc<secuscan_core::manifest::PluginManifest>,
+    BTreeMap<String, Value>,
+)> {
     // 1) plugin exists
     let manifest = {
         let registry = state.registry.read().await;
@@ -96,9 +100,10 @@ pub async fn validate_and_create_task(
     // 5) inputs (+ preset merge)
     let mut inputs = req.inputs.clone();
     if let Some(preset_name) = &req.preset {
-        let preset = manifest.presets.get(preset_name).ok_or_else(|| {
-            ApiError::BadRequest(format!("unknown preset `{preset_name}`"))
-        })?;
+        let preset = manifest
+            .presets
+            .get(preset_name)
+            .ok_or_else(|| ApiError::BadRequest(format!("unknown preset `{preset_name}`")))?;
         for (k, v) in preset {
             inputs.entry(k.clone()).or_insert_with(|| v.clone());
         }
@@ -237,7 +242,11 @@ async fn list(
         }
     }
     let filters = repo::tasks::TaskListFilters {
-        user_id: if user.is_admin() { None } else { Some(user.0.id.clone()) },
+        user_id: if user.is_admin() {
+            None
+        } else {
+            Some(user.0.id.clone())
+        },
         status: q.status,
         plugin_id: q.plugin_id,
         workflow_run_id: q.workflow_run_id,
@@ -283,7 +292,9 @@ async fn delete(
 ) -> ApiResult<StatusCode> {
     let t = load_task_for_user(&state, &user, &id).await?;
     if t.status() == secuscan_core::models::TaskStatus::Running {
-        return Err(ApiError::Conflict("cancel the task before deleting it".into()));
+        return Err(ApiError::Conflict(
+            "cancel the task before deleting it".into(),
+        ));
     }
     repo::tasks::delete(&state.db, &t.id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -322,12 +333,14 @@ async fn retry(
     let original = load_task_for_user(&state, &user, &id).await?;
     let inputs: BTreeMap<String, Value> =
         serde_json::from_str(&original.inputs_json).unwrap_or_default();
-    let options: Value =
-        serde_json::from_str(&original.options_json).unwrap_or(json!({}));
+    let options: Value = serde_json::from_str(&original.options_json).unwrap_or(json!({}));
     let req = StartTaskRequest {
         plugin_id: original.plugin_id.clone(),
         inputs,
-        preset: options.get("preset").and_then(|v| v.as_str()).map(str::to_string),
+        preset: options
+            .get("preset")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
         consent_granted: true, // consent was granted for the original task
     };
     let (row, manifest, inputs) = validate_and_create_task(&state, &user, &req, None).await?;

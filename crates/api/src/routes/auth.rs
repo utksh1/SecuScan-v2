@@ -104,7 +104,11 @@ async fn login(
     headers: HeaderMap,
     Json(req): Json<LoginRequest>,
 ) -> ApiResult<(HeaderMap, Json<serde_json::Value>)> {
-    check_login_rate(&format!("{}|{}", client_ip(&headers), req.email.to_ascii_lowercase()))?;
+    check_login_rate(&format!(
+        "{}|{}",
+        client_ip(&headers),
+        req.email.to_ascii_lowercase()
+    ))?;
     let user = repo::users::find_by_email(&state.db, &req.email)
         .await?
         .ok_or_else(|| ApiError::Unauthorized("invalid email or password".into()))?;
@@ -195,16 +199,16 @@ fn extract_refresh_cookie(headers: &HeaderMap) -> Option<String> {
         let mut it = pair.trim().splitn(2, '=');
         let name = it.next()?.trim();
         if name == REFRESH_COOKIE {
-            return it.next().map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+            return it
+                .next()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
         }
     }
     None
 }
 
-async fn logout(
-    State(state): State<SharedState>,
-    headers: HeaderMap,
-) -> ApiResult<StatusCode> {
+async fn logout(State(state): State<SharedState>, headers: HeaderMap) -> ApiResult<StatusCode> {
     if let Some(raw) = extract_refresh_cookie(&headers) {
         repo::users::delete_refresh_token(&state.db, &sha256_hex(&raw)).await?;
     }
@@ -235,7 +239,9 @@ async fn register(
         ));
     }
     if req.name.trim().is_empty() || req.name.len() > 100 {
-        return Err(ApiError::BadRequest("name must be 1..=100 characters".into()));
+        return Err(ApiError::BadRequest(
+            "name must be 1..=100 characters".into(),
+        ));
     }
     let hash = hash_password(&req.password)?;
     let user = repo::users::create(&state.db, &req.email, &req.name, &hash, "scanner").await?;
@@ -255,7 +261,9 @@ async fn create_api_key(
     Json(req): Json<CreateApiKeyRequest>,
 ) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
     if req.name.trim().is_empty() || req.name.len() > 100 {
-        return Err(ApiError::BadRequest("name must be 1..=100 characters".into()));
+        return Err(ApiError::BadRequest(
+            "name must be 1..=100 characters".into(),
+        ));
     }
     let created = repo::api_keys::create(&state.db, &user.id, &req.name).await?;
     Ok((
@@ -317,7 +325,9 @@ async fn change_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> ApiResult<StatusCode> {
     if !verify_password(&req.current_password, &user.password_hash) {
-        return Err(ApiError::Unauthorized("current password is incorrect".into()));
+        return Err(ApiError::Unauthorized(
+            "current password is incorrect".into(),
+        ));
     }
     let hash = hash_password(&req.new_password)?;
     repo::users::update_password(&state.db, &user.id, &hash).await?;

@@ -17,23 +17,31 @@ async fn user_lifecycle() {
         .await
         .unwrap();
     assert_eq!(u.email, "admin@example.com"); // normalized
-    // duplicate email
-    assert!(repo::users::create(&pool, "admin@example.com", "X", "h", "viewer")
-        .await
-        .is_err());
+                                              // duplicate email
+    assert!(
+        repo::users::create(&pool, "admin@example.com", "X", "h", "viewer")
+            .await
+            .is_err()
+    );
     assert!(repo::users::find_by_email(&pool, "ADMIN@example.com")
         .await
         .unwrap()
         .is_some());
-    assert!(repo::users::update_role(&pool, &u.id, "scanner").await.is_ok());
-    assert!(repo::users::update_role(&pool, &u.id, "superuser").await.is_err());
+    assert!(repo::users::update_role(&pool, &u.id, "scanner")
+        .await
+        .is_ok());
+    assert!(repo::users::update_role(&pool, &u.id, "superuser")
+        .await
+        .is_err());
     assert_eq!(repo::users::count(&pool).await.unwrap(), 1);
 }
 
 #[tokio::test]
 async fn refresh_tokens_expire() {
     let (_d, pool) = test_db().await;
-    let u = repo::users::create(&pool, "a@b.c", "A", "h", "viewer").await.unwrap();
+    let u = repo::users::create(&pool, "a@b.c", "A", "h", "viewer")
+        .await
+        .unwrap();
     let past = "2020-01-01T00:00:00.000Z";
     let future = "2099-01-01T00:00:00.000Z";
     repo::users::insert_refresh_token(&pool, "t1", &u.id, &sha256_hex("tok1"), past)
@@ -50,15 +58,21 @@ async fn refresh_tokens_expire() {
         .await
         .unwrap()
         .is_some());
-    let removed = repo::users::delete_expired_refresh_tokens(&pool).await.unwrap();
+    let removed = repo::users::delete_expired_refresh_tokens(&pool)
+        .await
+        .unwrap();
     assert_eq!(removed, 1);
 }
 
 #[tokio::test]
 async fn api_key_roundtrip() {
     let (_d, pool) = test_db().await;
-    let u = repo::users::create(&pool, "a@b.c", "A", "h", "scanner").await.unwrap();
-    let created = repo::api_keys::create(&pool, &u.id, "ci-key").await.unwrap();
+    let u = repo::users::create(&pool, "a@b.c", "A", "h", "scanner")
+        .await
+        .unwrap();
+    let created = repo::api_keys::create(&pool, &u.id, "ci-key")
+        .await
+        .unwrap();
     assert!(created.raw.starts_with("scsk_"));
     assert_ne!(created.row.key_hash, created.raw); // hashed
     let verified = repo::api_keys::verify(&pool, &created.raw)
@@ -67,15 +81,25 @@ async fn api_key_roundtrip() {
         .expect("key verifies");
     assert_eq!(verified.user_id, u.id);
     assert!(verified.last_used_at.is_some());
-    assert!(repo::api_keys::verify(&pool, "scsk_wrong").await.unwrap().is_none());
-    assert!(repo::api_keys::revoke(&pool, &created.row.id, &u.id).await.unwrap());
-    assert!(repo::api_keys::verify(&pool, &created.raw).await.unwrap().is_none()); // revoked
+    assert!(repo::api_keys::verify(&pool, "scsk_wrong")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(repo::api_keys::revoke(&pool, &created.row.id, &u.id)
+        .await
+        .unwrap());
+    assert!(repo::api_keys::verify(&pool, &created.raw)
+        .await
+        .unwrap()
+        .is_none()); // revoked
 }
 
 #[tokio::test]
 async fn task_and_findings_flow() {
     let (_d, pool) = test_db().await;
-    let u = repo::users::create(&pool, "a@b.c", "A", "h", "scanner").await.unwrap();
+    let u = repo::users::create(&pool, "a@b.c", "A", "h", "scanner")
+        .await
+        .unwrap();
     let t = repo::tasks::create(
         &pool,
         repo::tasks::NewTask {
@@ -96,12 +120,22 @@ async fn task_and_findings_flow() {
 
     let findings = vec![
         {
-            let mut f = Finding::new("Open port 80", "Network Service", Severity::High, FindingKind::Observation);
+            let mut f = Finding::new(
+                "Open port 80",
+                "Network Service",
+                Severity::High,
+                FindingKind::Observation,
+            );
             f.description = "d".into();
             f
         },
         {
-            let mut f = Finding::new("Open port 22", "Network Service", Severity::Info, FindingKind::Observation);
+            let mut f = Finding::new(
+                "Open port 22",
+                "Network Service",
+                Severity::Info,
+                FindingKind::Observation,
+            );
             f.description = "d2".into();
             f
         },
@@ -115,12 +149,14 @@ async fn task_and_findings_flow() {
     repo::tasks::finish(
         &pool,
         &t.id,
-        TaskStatus::Completed,
-        Some(0),
-        None,
-        stats,
-        "raw output here",
-        false,
+        repo::tasks::FinishTask {
+            status: TaskStatus::Completed,
+            exit_code: Some(0),
+            error: None,
+            stats_json: stats,
+            output: "raw output here",
+            output_truncated: false,
+        },
     )
     .await
     .unwrap();
@@ -179,7 +215,9 @@ async fn task_and_findings_flow() {
     .unwrap();
     let evs = repo::misc::list_events(&pool, &t.id, 0, 100).await.unwrap();
     assert_eq!(evs.len(), 1);
-    let evs2 = repo::misc::list_events(&pool, &t.id, evs[0].id, 100).await.unwrap();
+    let evs2 = repo::misc::list_events(&pool, &t.id, evs[0].id, 100)
+        .await
+        .unwrap();
     assert!(evs2.is_empty()); // cursor works
 
     // delete cascades
@@ -213,10 +251,14 @@ async fn settings_and_policy() {
     let got = repo::misc::get_network_policy(&pool).await.unwrap();
     assert_eq!(got, pol);
 
-    repo::misc::set_plugin_enabled(&pool, "nmap", false).await.unwrap();
+    repo::misc::set_plugin_enabled(&pool, "nmap", false)
+        .await
+        .unwrap();
     let m = repo::misc::enabled_map(&pool).await.unwrap();
     assert_eq!(m.get("nmap"), Some(&false));
-    repo::misc::set_plugin_enabled(&pool, "nmap", true).await.unwrap();
+    repo::misc::set_plugin_enabled(&pool, "nmap", true)
+        .await
+        .unwrap();
     let m = repo::misc::enabled_map(&pool).await.unwrap();
     assert_eq!(m.get("nmap"), Some(&true));
 
@@ -228,7 +270,9 @@ async fn settings_and_policy() {
         secuscan_core::policy::DenyLayer::GlobalAllow,
         "127.0.0.1",
     );
-    repo::misc::insert_policy_audit(&pool, &entry).await.unwrap();
+    repo::misc::insert_policy_audit(&pool, &entry)
+        .await
+        .unwrap();
     let audit = repo::misc::list_policy_audit(&pool, 10).await.unwrap();
     assert_eq!(audit.len(), 1);
     assert_eq!(audit[0].target, "8.8.8.8");
@@ -237,7 +281,9 @@ async fn settings_and_policy() {
 #[tokio::test]
 async fn workflow_runs() {
     let (_d, pool) = test_db().await;
-    let u = repo::users::create(&pool, "a@b.c", "A", "h", "admin").await.unwrap();
+    let u = repo::users::create(&pool, "a@b.c", "A", "h", "admin")
+        .await
+        .unwrap();
     let steps = r#"[{"plugin_id":"port-scanner","inputs":{"target":"127.0.0.1"}}]"#;
     let w = repo::workflows::create(&pool, "recon-chain", "chain", steps, &u.id)
         .await
@@ -263,13 +309,18 @@ async fn workflow_runs() {
         .is_ok());
     assert_eq!(repo::workflows::count_workflows(&pool).await.unwrap(), 1);
     assert!(repo::workflows::delete(&pool, &w.id).await.unwrap());
-    assert!(repo::workflows::list_runs(&pool, &w.id).await.unwrap().is_empty()); // cascade
+    assert!(repo::workflows::list_runs(&pool, &w.id)
+        .await
+        .unwrap()
+        .is_empty()); // cascade
 }
 
 #[tokio::test]
 async fn dashboard_counters() {
     let (_d, pool) = test_db().await;
-    let u = repo::users::create(&pool, "a@b.c", "A", "h", "admin").await.unwrap();
+    let u = repo::users::create(&pool, "a@b.c", "A", "h", "admin")
+        .await
+        .unwrap();
     let t = repo::tasks::create(
         &pool,
         repo::tasks::NewTask {
@@ -286,7 +337,9 @@ async fn dashboard_counters() {
     .unwrap();
     let mut f = Finding::new("x", "c", Severity::Critical, FindingKind::Observation);
     f.description = "d".into();
-    repo::findings::insert_many(&pool, &t.id, "p", &[f]).await.unwrap();
+    repo::findings::insert_many(&pool, &t.id, "p", &[f])
+        .await
+        .unwrap();
     let s = repo::misc::dashboard_summary(&pool).await.unwrap();
     assert_eq!(s.tasks_total, 1);
     assert_eq!(s.tasks_queued, 1);

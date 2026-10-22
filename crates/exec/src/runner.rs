@@ -81,7 +81,10 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("HOME", std::env::var("HOME").unwrap_or_default())
-        .env("LANG", std::env::var("LANG").unwrap_or_else(|_| "C.UTF-8".into()))
+        .env(
+            "LANG",
+            std::env::var("LANG").unwrap_or_else(|_| "C.UTF-8".into()),
+        )
         .env(
             "TMPDIR",
             std::env::var("TMPDIR").unwrap_or_else(|_| "/tmp".into()),
@@ -95,7 +98,8 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
         cmd.env(k, v);
     }
 
-    sink.emit(TaskEvent::Info(format!("$ {}", argv.join(" ")))).await;
+    sink.emit(TaskEvent::Info(format!("$ {}", argv.join(" "))))
+        .await;
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -121,29 +125,37 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
     // never blocked by an unfinished process.
     let buf_out = SharedBuffer::new(opts.max_output_bytes);
     let buf_err = SharedBuffer::new(opts.max_output_bytes);
-    let pump_out = tokio::spawn(pump(stdout, StreamKind::Stdout, sink.clone(), buf_out.clone()));
-    let pump_err = tokio::spawn(pump(stderr, StreamKind::Stderr, sink.clone(), buf_err.clone()));
+    let pump_out = tokio::spawn(pump(
+        stdout,
+        StreamKind::Stdout,
+        sink.clone(),
+        buf_out.clone(),
+    ));
+    let pump_err = tokio::spawn(pump(
+        stderr,
+        StreamKind::Stderr,
+        sink.clone(),
+        buf_err.clone(),
+    ));
 
     // Wait for exit, timeout, or cancellation.
-    let wait_result = loop {
-        tokio::select! {
-            _ = opts.cancel.cancelled() => {
-                let _ = child.kill().await;
-                let _ = child.wait().await; // reap
-                break WaitResult::Cancelled;
-            }
-            _ = tokio::time::sleep(opts.timeout) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await; // reap
-                break WaitResult::Timeout;
-            }
-            status = child.wait() => {
-                break match status {
-                    Ok(s) => WaitResult::Exited(
-                        s.code().or_else(|| if s.success() { Some(0) } else { Some(-1) }),
-                    ),
-                    Err(e) => WaitResult::SpawnErr(e),
-                };
+    let wait_result = tokio::select! {
+        _ = opts.cancel.cancelled() => {
+            let _ = child.kill().await;
+            let _ = child.wait().await; // reap
+            WaitResult::Cancelled
+        }
+        _ = tokio::time::sleep(opts.timeout) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await; // reap
+            WaitResult::Timeout
+        }
+        status = child.wait() => {
+            match status {
+                Ok(s) => WaitResult::Exited(
+                    s.code().or_else(|| if s.success() { Some(0) } else { Some(-1) }),
+                ),
+                Err(e) => WaitResult::SpawnErr(e),
             }
         }
     };
@@ -318,7 +330,12 @@ mod tests {
     #[tokio::test]
     async fn nonzero_exit_still_completes() {
         let (s, _rx) = sink();
-        let out = run_cli(&argv("sh", &["-c", "echo x; exit 3"]), RunOpts::default(), &s).await;
+        let out = run_cli(
+            &argv("sh", &["-c", "echo x; exit 3"]),
+            RunOpts::default(),
+            &s,
+        )
+        .await;
         assert_eq!(out.status, TaskStatus::Completed);
         assert_eq!(out.exit_code, Some(3));
     }
@@ -392,12 +409,22 @@ mod tests {
     async fn env_is_scrubbed() {
         let (s, _rx) = sink();
         let out = run_cli(
-            &argv("sh", &["-c", "echo \"SECRET=$SECRET\"; echo \"PATH_SET=${PATH:+yes}\""]),
+            &argv(
+                "sh",
+                &[
+                    "-c",
+                    "echo \"SECRET=$SECRET\"; echo \"PATH_SET=${PATH:+yes}\"",
+                ],
+            ),
             RunOpts::default(),
             &s,
         )
         .await;
-        assert!(out.output.contains("SECRET="), "secret must not leak: {}", out.output);
+        assert!(
+            out.output.contains("SECRET="),
+            "secret must not leak: {}",
+            out.output
+        );
         assert!(out.output.contains("PATH_SET=yes"));
     }
 

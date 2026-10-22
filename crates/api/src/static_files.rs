@@ -36,7 +36,10 @@ pub fn spa_service(dist_dir: &std::path::Path) -> axum::Router {
         axum::Router::new().fallback(axum::routing::get(|| async {
             (
                 StatusCode::OK,
-                [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+                [(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/html; charset=utf-8"),
+                )],
                 NOT_BUILT,
             )
         }))
@@ -47,13 +50,19 @@ async fn serve_file_or_notice(path: &std::path::Path) -> impl IntoResponse {
     match tokio::fs::read(path).await {
         Ok(bytes) => (
             StatusCode::OK,
-            [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            )],
             bytes,
         )
             .into_response(),
         Err(_) => (
             StatusCode::OK,
-            [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            )],
             NOT_BUILT.as_bytes().to_vec(),
         )
             .into_response(),

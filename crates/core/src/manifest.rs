@@ -8,9 +8,9 @@
 //!
 //! Engines come in two flavours:
 //! - `cli`    — wraps an external binary. The command is an **argv template**;
-//!              it is rendered to an argv vector and executed without a shell.
+//!   it is rendered to an argv vector and executed without a shell.
 //! - `native` — runs an in-process Rust scanner registered under a well-known
-//!              native id (see `secuscan-exec`).
+//!   native id (see `secuscan-exec`).
 
 use serde::Deserialize;
 use std::collections::BTreeMap;

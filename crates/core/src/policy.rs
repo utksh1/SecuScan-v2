@@ -162,9 +162,7 @@ pub fn extract_host(raw: &str) -> String {
 }
 
 fn host_from_authority(s: &str) -> String {
-    let end = s
-        .find(['/', '?', '#'])
-        .unwrap_or(s.len());
+    let end = s.find(['/', '?', '#']).unwrap_or(s.len());
     let auth = &s[..end];
     // strip userinfo
     let host_port = match auth.rfind('@') {
@@ -179,7 +177,10 @@ fn host_from_authority(s: &str) -> String {
         return host_port.to_string();
     }
     match host_port.rfind(':') {
-        Some(i) if host_port[i + 1..].chars().all(|c| c.is_ascii_digit()) && !host_port[i + 1..].is_empty() => {
+        Some(i)
+            if host_port[i + 1..].chars().all(|c| c.is_ascii_digit())
+                && !host_port[i + 1..].is_empty() =>
+        {
             host_port[..i].to_string()
         }
         _ => host_port.to_string(),
@@ -334,9 +335,15 @@ mod tests {
         };
         assert!(matches!(
             evaluate_target(Some("169.254.1.1"), &[], &global),
-            TargetVerdict::Denied { layer: DenyLayer::GlobalDeny, .. }
+            TargetVerdict::Denied {
+                layer: DenyLayer::GlobalDeny,
+                ..
+            }
         ));
-        assert_eq!(evaluate_target(Some("8.8.8.8"), &[], &global), TargetVerdict::Allowed);
+        assert_eq!(
+            evaluate_target(Some("8.8.8.8"), &[], &global),
+            TargetVerdict::Allowed
+        );
 
         let global_allow = NetworkPolicy {
             allow: vec!["127.0.0.1".into(), "192.168.*.*".into()],
@@ -344,21 +351,36 @@ mod tests {
         };
         assert!(matches!(
             evaluate_target(Some("8.8.8.8"), &[], &global_allow),
-            TargetVerdict::Denied { layer: DenyLayer::GlobalAllow, .. }
+            TargetVerdict::Denied {
+                layer: DenyLayer::GlobalAllow,
+                ..
+            }
         ));
-        assert_eq!(evaluate_target(Some("192.168.0.9"), &[], &global_allow), TargetVerdict::Allowed);
+        assert_eq!(
+            evaluate_target(Some("192.168.0.9"), &[], &global_allow),
+            TargetVerdict::Allowed
+        );
 
         let plugin = vec!["127.0.0.1".to_string()];
         assert!(matches!(
             evaluate_target(Some("8.8.8.8"), &plugin, &NetworkPolicy::default()),
-            TargetVerdict::Denied { layer: DenyLayer::Plugin, .. }
+            TargetVerdict::Denied {
+                layer: DenyLayer::Plugin,
+                ..
+            }
         ));
-        assert_eq!(evaluate_target(Some("127.0.0.1"), &plugin, &NetworkPolicy::default()), TargetVerdict::Allowed);
+        assert_eq!(
+            evaluate_target(Some("127.0.0.1"), &plugin, &NetworkPolicy::default()),
+            TargetVerdict::Allowed
+        );
     }
 
     #[test]
     fn no_target_is_reported() {
-        assert_eq!(evaluate_target(None, &[], &NetworkPolicy::default()), TargetVerdict::NoTarget);
+        assert_eq!(
+            evaluate_target(None, &[], &NetworkPolicy::default()),
+            TargetVerdict::NoTarget
+        );
         assert_eq!(
             evaluate_target(Some("   "), &[], &NetworkPolicy::default()),
             TargetVerdict::NoTarget
@@ -373,8 +395,14 @@ mod tests {
         };
         assert!(matches!(
             evaluate_target(Some("10.66.6.6"), &[], &global),
-            TargetVerdict::Denied { layer: DenyLayer::GlobalDeny, .. }
+            TargetVerdict::Denied {
+                layer: DenyLayer::GlobalDeny,
+                ..
+            }
         ));
-        assert_eq!(evaluate_target(Some("10.1.1.1"), &[], &global), TargetVerdict::Allowed);
+        assert_eq!(
+            evaluate_target(Some("10.1.1.1"), &[], &global),
+            TargetVerdict::Allowed
+        );
     }
 }

@@ -63,7 +63,11 @@ pub fn build_argv(
     Ok(out)
 }
 
-fn push_substituted(out: &mut Vec<String>, tok: &str, inputs: &BTreeMap<String, Value>) -> CoreResult<()> {
+fn push_substituted(
+    out: &mut Vec<String>,
+    tok: &str,
+    inputs: &BTreeMap<String, Value>,
+) -> CoreResult<()> {
     // Fast path: literal token with no placeholders.
     if !tok.contains('{') {
         out.push(tok.to_string());
@@ -101,7 +105,9 @@ fn push_substituted(out: &mut Vec<String>, tok: &str, inputs: &BTreeMap<String, 
 
 fn value_to_string(field: &str, inputs: &BTreeMap<String, Value>) -> CoreResult<String> {
     let v = inputs.get(field).ok_or_else(|| {
-        CoreError::Template(format!("placeholder `{field}` has no value (missing default?)"))
+        CoreError::Template(format!(
+            "placeholder `{field}` has no value (missing default?)"
+        ))
     })?;
     let s = match v {
         Value::String(s) => s.clone(),
@@ -130,7 +136,11 @@ fn is_truthy(field: &str, inputs: &BTreeMap<String, Value>) -> bool {
         Some(Value::Bool(b)) => *b,
         Some(Value::String(s)) => {
             let t = s.trim();
-            !t.is_empty() && !matches!(t.to_ascii_lowercase().as_str(), "false" | "0" | "no" | "off")
+            !t.is_empty()
+                && !matches!(
+                    t.to_ascii_lowercase().as_str(),
+                    "false" | "0" | "no" | "off"
+                )
         }
         Some(Value::Number(n)) => n.as_f64().map(|f| f != 0.0).unwrap_or(false),
         _ => false,
@@ -185,7 +195,10 @@ mod tests {
     fn plain_substitution() {
         let e = cli_engine(&["nmap", "-p", "{ports}", "{target}"]);
         let i = inputs(&[("ports", json!("80,443")), ("target", json!("127.0.0.1"))]);
-        assert_eq!(build_argv(&e, &i).unwrap(), vec!["nmap", "-p", "80,443", "127.0.0.1"]);
+        assert_eq!(
+            build_argv(&e, &i).unwrap(),
+            vec!["nmap", "-p", "80,443", "127.0.0.1"]
+        );
     }
 
     #[test]
@@ -219,11 +232,17 @@ mod tests {
             ("verbose", json!(true)),
             ("ports", json!("8080")),
         ]);
-        assert_eq!(build_argv(&e, &i).unwrap(), vec!["gobuster", "-p", "8080", "example.com"]);
+        assert_eq!(
+            build_argv(&e, &i).unwrap(),
+            vec!["gobuster", "-p", "8080", "example.com"]
+        );
 
         let i2 = inputs(&[("target", json!("example.com")), ("verbose", json!(false))]);
         // No else on the flag token → element is skipped entirely.
-        assert_eq!(build_argv(&e, &i2).unwrap(), vec!["gobuster", "80", "example.com"]);
+        assert_eq!(
+            build_argv(&e, &i2).unwrap(),
+            vec!["gobuster", "80", "example.com"]
+        );
     }
 
     #[test]
@@ -278,10 +297,7 @@ mod tests {
             "--if:ports:then:{ports}:else:100",
             "{target}",
         ]);
-        let with_ports = inputs(&[
-            ("target", json!("127.0.0.1")),
-            ("ports", json!("80,443")),
-        ]);
+        let with_ports = inputs(&[("target", json!("127.0.0.1")), ("ports", json!("80,443"))]);
         assert_eq!(
             build_argv(&e, &with_ports).unwrap(),
             vec!["nmap", "-p", "80,443", "127.0.0.1"]
@@ -302,7 +318,12 @@ mod tests {
 
     #[test]
     fn integer_condition_nonzero() {
-        let e = cli_engine(&["tool", "--if:threads:then:-t", "--if:threads:then:{threads}", "{target}"]);
+        let e = cli_engine(&[
+            "tool",
+            "--if:threads:then:-t",
+            "--if:threads:then:{threads}",
+            "{target}",
+        ]);
         let i = inputs(&[("target", json!("h")), ("threads", json!(8))]);
         assert_eq!(build_argv(&e, &i).unwrap(), vec!["tool", "-t", "8", "h"]);
         let i0 = inputs(&[("target", json!("h")), ("threads", json!(0))]);

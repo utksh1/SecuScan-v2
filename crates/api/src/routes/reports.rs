@@ -71,7 +71,12 @@ async fn export(
 }
 
 fn report_filename(task: &TaskRow, ext: &str) -> String {
-    format!("secuscan-{}-{}.{}", task.plugin_id, &task.id[..8.min(task.id.len())], ext)
+    format!(
+        "secuscan-{}-{}.{}",
+        task.plugin_id,
+        &task.id[..8.min(task.id.len())],
+        ext
+    )
 }
 
 fn text_response(body: String, content_type: &str, filename: &str) -> Response {
@@ -114,7 +119,12 @@ fn markdown_report(task: &TaskRow, findings: &[FindingRow]) -> String {
     }
     md.push_str("\n## Details\n\n");
     for (i, f) in findings.iter().enumerate() {
-        md.push_str(&format!("### {}. [{}] {}\n\n", i + 1, f.severity.to_uppercase(), f.title));
+        md.push_str(&format!(
+            "### {}. [{}] {}\n\n",
+            i + 1,
+            f.severity.to_uppercase(),
+            f.title
+        ));
         if !f.description.is_empty() {
             md.push_str(&format!("{}\n\n", f.description));
         }
@@ -133,7 +143,9 @@ fn markdown_report(task: &TaskRow, findings: &[FindingRow]) -> String {
 }
 
 fn csv_report(findings: &[FindingRow]) -> String {
-    let mut csv = String::from("severity,kind,analyst_status,category,title,description,remediation,proof,url\n");
+    let mut csv = String::from(
+        "severity,kind,analyst_status,category,title,description,remediation,proof,url\n",
+    );
     for f in findings {
         let mut row = vec![
             f.severity.clone(),
@@ -288,7 +300,13 @@ fn sarif_level(severity: &str) -> &'static str {
 
 fn slug(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect::<String>()
         .trim_matches('-')
         .to_string()

@@ -39,7 +39,10 @@ pub fn manifest_to_json(m: &PluginManifest, enabled: bool) -> Value {
                 secuscan_core::manifest::OutputFormat::JsonLines => "json_lines",
             },
         }),
-        EngineSpec::Native { native, timeout_seconds } => json!({
+        EngineSpec::Native {
+            native,
+            timeout_seconds,
+        } => json!({
             "type": "native",
             "native": native,
             "timeout_seconds": timeout_seconds,
@@ -112,10 +115,7 @@ async fn enabled_map(state: &SharedState) -> BTreeMap<String, bool> {
         .collect()
 }
 
-async fn list(
-    State(state): State<SharedState>,
-    _user: CurrentUser,
-) -> ApiResult<Json<Value>> {
+async fn list(State(state): State<SharedState>, _user: CurrentUser) -> ApiResult<Json<Value>> {
     let enabled = enabled_map(&state).await;
     let registry = state.registry.read().await;
     let items: Vec<Value> = registry
@@ -143,8 +143,13 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let enabled = enabled_map(&state).await;
     let registry = state.registry.read().await;
-    let m = registry.get(&id).ok_or_else(|| ApiError::NotFound(format!("plugin {id}")))?;
-    Ok(Json(manifest_to_json(m, *enabled.get(&id).unwrap_or(&true))))
+    let m = registry
+        .get(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("plugin {id}")))?;
+    Ok(Json(manifest_to_json(
+        m,
+        *enabled.get(&id).unwrap_or(&true),
+    )))
 }
 
 async fn schema(
@@ -153,7 +158,9 @@ async fn schema(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let registry = state.registry.read().await;
-    let m = registry.get(&id).ok_or_else(|| ApiError::NotFound(format!("plugin {id}")))?;
+    let m = registry
+        .get(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("plugin {id}")))?;
     Ok(Json(json!({
         "id": m.plugin.id,
         "fields": m.fields.iter().map(field_to_json).collect::<Vec<_>>(),

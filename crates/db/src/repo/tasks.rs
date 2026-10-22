@@ -139,26 +139,26 @@ pub async fn mark_running(pool: &SqlitePool, id: &str) -> DbResult<()> {
     Ok(())
 }
 
-pub async fn finish(
-    pool: &SqlitePool,
-    id: &str,
-    status: TaskStatus,
-    exit_code: Option<i64>,
-    error: Option<&str>,
-    stats_json: &str,
-    output: &str,
-    output_truncated: bool,
-) -> DbResult<()> {
+pub struct FinishTask<'a> {
+    pub status: TaskStatus,
+    pub exit_code: Option<i64>,
+    pub error: Option<&'a str>,
+    pub stats_json: &'a str,
+    pub output: &'a str,
+    pub output_truncated: bool,
+}
+
+pub async fn finish(pool: &SqlitePool, id: &str, f: FinishTask<'_>) -> DbResult<()> {
     let res = sqlx::query(
         "UPDATE tasks SET status = ?1, exit_code = ?2, error = ?3, stats_json = ?4, \
          output = ?5, output_truncated = ?6, finished_at = ?7 WHERE id = ?8",
     )
-    .bind(status.label())
-    .bind(exit_code)
-    .bind(error)
-    .bind(stats_json)
-    .bind(output)
-    .bind(output_truncated)
+    .bind(f.status.label())
+    .bind(f.exit_code)
+    .bind(f.error)
+    .bind(f.stats_json)
+    .bind(f.output)
+    .bind(f.output_truncated)
     .bind(now())
     .bind(id)
     .execute(pool)
@@ -178,7 +178,11 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> DbResult<bool> {
 }
 
 /// Recent tasks for the dashboard (no output column).
-pub async fn recent(pool: &SqlitePool, user_id: Option<&str>, limit: i64) -> DbResult<Vec<TaskRow>> {
+pub async fn recent(
+    pool: &SqlitePool,
+    user_id: Option<&str>,
+    limit: i64,
+) -> DbResult<Vec<TaskRow>> {
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
@@ -195,7 +199,12 @@ pub async fn recent(pool: &SqlitePool, user_id: Option<&str>, limit: i64) -> DbR
 
 /// Live in-memory raw-output update for running tasks (so the UI can show
 /// partial output before completion).
-pub async fn update_output(pool: &SqlitePool, id: &str, output: &str, truncated: bool) -> DbResult<()> {
+pub async fn update_output(
+    pool: &SqlitePool,
+    id: &str,
+    output: &str,
+    truncated: bool,
+) -> DbResult<()> {
     sqlx::query("UPDATE tasks SET output = ?1, output_truncated = ?2 WHERE id = ?3")
         .bind(output)
         .bind(truncated)

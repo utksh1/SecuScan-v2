@@ -60,18 +60,21 @@ pub async fn count_events(pool: &SqlitePool, task_id: &str) -> DbResult<i64> {
 // --- settings (typed accessors) ---------------------------------------------
 
 pub async fn get_setting_json(pool: &SqlitePool, key: &str) -> DbResult<Option<serde_json::Value>> {
-    let row: Option<String> =
-        sqlx::query_scalar("SELECT value_json FROM settings WHERE key = ?1")
-            .bind(key)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<String> = sqlx::query_scalar("SELECT value_json FROM settings WHERE key = ?1")
+        .bind(key)
+        .fetch_optional(pool)
+        .await?;
     match row {
         Some(s) => Ok(serde_json::from_str(&s).ok()),
         None => Ok(None),
     }
 }
 
-pub async fn set_setting_json(pool: &SqlitePool, key: &str, value: &serde_json::Value) -> DbResult<()> {
+pub async fn set_setting_json(
+    pool: &SqlitePool,
+    key: &str,
+    value: &serde_json::Value,
+) -> DbResult<()> {
     sqlx::query(
         "INSERT INTO settings (key, value_json) VALUES (?1, ?2) \
          ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
@@ -88,8 +91,10 @@ pub async fn get_network_policy(
     pool: &SqlitePool,
 ) -> DbResult<secuscan_core::policy::NetworkPolicy> {
     let v = get_setting_json(pool, "network_policy").await?;
-    Ok(serde_json::from_value(v.unwrap_or(serde_json::json!({"allow": [], "deny": []})))
-        .unwrap_or_default())
+    Ok(
+        serde_json::from_value(v.unwrap_or(serde_json::json!({"allow": [], "deny": []})))
+            .unwrap_or_default(),
+    )
 }
 
 pub async fn set_network_policy(
@@ -135,22 +140,19 @@ pub async fn insert_policy_audit(pool: &SqlitePool, entry: &PolicyAuditEntry) ->
 }
 
 pub async fn list_policy_audit(pool: &SqlitePool, limit: i64) -> DbResult<Vec<PolicyAuditRow>> {
-    sqlx::query_as::<_, PolicyAuditRow>(
-        "SELECT * FROM policy_audit ORDER BY id DESC LIMIT ?1",
-    )
-    .bind(limit.clamp(1, 500))
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+    sqlx::query_as::<_, PolicyAuditRow>("SELECT * FROM policy_audit ORDER BY id DESC LIMIT ?1")
+        .bind(limit.clamp(1, 500))
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
 }
 
 // --- plugin states -----------------------------------------------------------
 
 pub async fn enabled_map(pool: &SqlitePool) -> DbResult<std::collections::HashMap<String, bool>> {
-    let rows: Vec<(String, bool)> =
-        sqlx::query_as("SELECT plugin_id, enabled FROM plugin_states")
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<(String, bool)> = sqlx::query_as("SELECT plugin_id, enabled FROM plugin_states")
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().collect())
 }
 

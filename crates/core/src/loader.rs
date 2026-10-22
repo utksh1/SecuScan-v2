@@ -90,8 +90,8 @@ impl PluginRegistry {
     fn load_one(path: &Path) -> CoreResult<PluginManifest> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| CoreError::Load(format!("cannot read {}: {e}", path.display())))?;
-        let manifest: PluginManifest = toml::from_str(&raw)
-            .map_err(|e| CoreError::Load(format!("TOML parse error: {e}")))?;
+        let manifest: PluginManifest =
+            toml::from_str(&raw).map_err(|e| CoreError::Load(format!("TOML parse error: {e}")))?;
         Ok(manifest)
     }
 
@@ -215,7 +215,7 @@ allowed_targets = ["127.0.0.1"]
     #[test]
     fn loads_valid_manifest_and_checks_binaries() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path(), "demo.toml", VALID);
+        write(tmp.path(), "demo.toml", VALID);
         let reg = PluginRegistry::load_dir(tmp.path());
         assert!(reg.issues().is_empty(), "{:?}", reg.issues());
         assert_eq!(reg.len(), 1);
@@ -229,7 +229,7 @@ allowed_targets = ["127.0.0.1"]
         let tmp = tempfile::tempdir().unwrap();
         // references unknown field in argv → cross-validation error
         let bad = VALID.replacen("\"cat\", \"{file}\"", "\"cat\", \"{nonexistent}\"", 1);
-        write(&tmp.path(), "bad.toml", &bad);
+        write(tmp.path(), "bad.toml", &bad);
         let reg = PluginRegistry::load_dir(tmp.path());
         assert_eq!(reg.len(), 0);
         assert_eq!(reg.issues().len(), 1);
@@ -239,8 +239,8 @@ allowed_targets = ["127.0.0.1"]
     #[test]
     fn duplicate_ids_rejected() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path(), "a.toml", VALID);
-        write(&tmp.path(), "b.toml", VALID);
+        write(tmp.path(), "a.toml", VALID);
+        write(tmp.path(), "b.toml", VALID);
         let reg = PluginRegistry::load_dir(tmp.path());
         assert_eq!(reg.len(), 1);
         assert!(reg.issues().iter().any(|i| i.error.contains("duplicate")));
@@ -250,12 +250,15 @@ allowed_targets = ["127.0.0.1"]
     fn missing_binary_marks_unavailable() {
         let tmp = tempfile::tempdir().unwrap();
         let missing = VALID
-            .replace("binary = \"cat\"", "binary = \"definitely-not-a-real-tool-xyz\"")
+            .replace(
+                "binary = \"cat\"",
+                "binary = \"definitely-not-a-real-tool-xyz\"",
+            )
             .replace(
                 "argv = [\"cat\", \"{file}\"]",
                 "argv = [\"definitely-not-a-real-tool-xyz\", \"{file}\"]",
             );
-        write(&tmp.path(), "demo.toml", &missing);
+        write(tmp.path(), "demo.toml", &missing);
         let reg = PluginRegistry::load_dir(tmp.path());
         assert!(reg.issues().is_empty(), "{:?}", reg.issues());
         let p = reg.get("demo").unwrap();
@@ -280,7 +283,7 @@ allowed_targets = ["127.0.0.1"]
     #[test]
     fn non_toml_files_ignored() {
         let tmp = tempfile::tempdir().unwrap();
-        write(&tmp.path(), "notes.txt", "hello");
+        write(tmp.path(), "notes.txt", "hello");
         let reg = PluginRegistry::load_dir(tmp.path());
         assert!(reg.is_empty());
         assert!(reg.issues().is_empty());

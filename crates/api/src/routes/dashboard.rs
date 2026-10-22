@@ -26,16 +26,19 @@ fn json_health() -> Json<Value> {
     }))
 }
 
-async fn summary(
-    State(state): State<SharedState>,
-    user: CurrentUser,
-) -> ApiResult<Json<Value>> {
+async fn summary(State(state): State<SharedState>, user: CurrentUser) -> ApiResult<Json<Value>> {
     let s = repo::misc::dashboard_summary(&state.db).await?;
-    let scope_user = if user.is_admin() { None } else { Some(user.0.id.as_str()) };
+    let scope_user = if user.is_admin() {
+        None
+    } else {
+        Some(user.0.id.as_str())
+    };
     let recent = repo::tasks::recent(&state.db, scope_user, 10).await?;
     let registry = state.registry.read().await;
     let available = registry.all().iter().filter(|p| p.available).count();
-    let enabled = secuscan_db::repo::misc::enabled_map(&state.db).await.unwrap_or_default();
+    let enabled = secuscan_db::repo::misc::enabled_map(&state.db)
+        .await
+        .unwrap_or_default();
     let enabled_count = registry
         .all()
         .iter()

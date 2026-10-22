@@ -66,17 +66,15 @@ impl EventSink {
             ts: now_iso(),
         };
         // Never let a stalled recorder block or kill the scan.
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            self.tx.send(env),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), self.tx.send(env)).await;
     }
 }
 
 impl std::fmt::Debug for EventSink {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("EventSink").field("task_id", &self.task_id).finish()
+        f.debug_struct("EventSink")
+            .field("task_id", &self.task_id)
+            .finish()
     }
 }
 
