@@ -11,6 +11,8 @@ pub struct Config {
     /// Built frontend bundle served as the SPA.
     pub frontend_dir: std::path::PathBuf,
     pub data_dir: std::path::PathBuf,
+    /// Where async report-job artifacts are written.
+    pub reports_dir: std::path::PathBuf,
     pub admin_email: String,
     pub admin_password: Option<String>,
     /// Capabilities that no plugin may require (e.g. `docker,cloud`).
@@ -34,6 +36,11 @@ fn env_or(key: &str, default: &str) -> String {
 impl Config {
     pub fn from_env() -> Config {
         let data_dir = std::path::PathBuf::from(env_or("SECUSCAN_DATA_DIR", "./data"));
+        let reports_dir = std::env::var("SECUSCAN_REPORTS_DIR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| data_dir.join("reports"));
         let db_url = env_or(
             "SECUSCAN_DB_URL",
             &format!(
@@ -64,6 +71,7 @@ impl Config {
                 "./frontend/dist",
             )),
             data_dir,
+            reports_dir,
             admin_email: env_or("SECUSCAN_ADMIN_EMAIL", "admin@secuscan.local"),
             admin_password: std::env::var("SECUSCAN_ADMIN_PASSWORD")
                 .ok()

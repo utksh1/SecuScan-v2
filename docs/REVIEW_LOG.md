@@ -176,3 +176,57 @@ Found and fixed during the cycle:
 
 Verified totals after the cycle: 95 backend + 50 frontend tests green, clippy and
 rustfmt clean, tsc clean, production build OK, E2E smoke (11 steps) green.
+
+## Cycle 9 — async report jobs + webhooks + new formats (line-by-line)
+
+Scope: migration 0003, `repo/reports.rs`, `reports_render.rs`, `report_jobs.rs`,
+`routes/reports.rs`, config/main/tasks-deletion changes, the new frontend surface,
+and their tests.
+
+**Verified during the cycle (no changes needed)**
+
+- **Artifact integrity**: write-to-`.tmp` + atomic rename means downloads never
+  observe a half-written file; `file_bytes` cross-checked at download (mismatch
+  logged, not fatal — the rename guarantees a consistent file).
+- **Arbitrary-file-read hardening**: `download_job` canonicalizes both the stored
+  path and the configured reports dir and requires `starts_with` containment, so a
+  tampered/restored DB row cannot turn the endpoint into a file reader. Paths are
+  `<job uuid>.<ext>` — no user-controlled components.
+- **Deleted-mid-run jobs**: `finish()` reports rows-affected; 0 rows (job deleted
+  while rendering) triggers artifact removal instead of an orphaned file. Task
+  deletion removes artifacts before the cascade drops the rows that locate them.
+- **Webhook signature correctness**: RFC 4231 HMAC-SHA256 test vector; the
+  integration test recomputes the HMAC independently (never the server's own
+  function) over the raw body received by a real HTTP receiver.
+- **Webhook failure isolation**: a dead endpoint cannot fail the job; retries
+  (3 attempts, 1s/4s backoff) are recorded in `webhook_attempts`; verified by
+  polling the counter to 3 while the job stays `finished`.
+- **Crash recovery**: `fail_interrupted` marks `waiting`/`in_progress` jobs failed
+  at boot (mirrors the task orphan sweep); the reports dir is created before serve.
+- **Panics in renderers**: CJK/emoji/control-character findings render through all
+  8 formats without panicking (genpdf substitutes missing glyphs; `pdf_safe`
+  normalizes control chars and tabs; DOCX/XLSX are XML-safe by construction).
+- **XLSX formula injection**: cells are written as shared strings (explicit cell
+  types), so spreadsheet apps cannot evaluate them — the CSV prefix guard is not
+  needed there and the difference is documented.
+- **Isolation**: job detail/download/delete 404 for foreign users; the job list is
+  caller-scoped; creation requires scanner role (viewers 403) and a visible task.
+
+**Found & fixed during the cycle**
+
+1. **Backward-compat regression (self-caught)**: the first cut rejected the
+   historical `markdown` alias on the sync export route (the old handler accepted
+   it), and the new DB CHECK constraint only stores canonical ids — fixed with a
+   `canonical_format()` normalizer used by both surfaces, plus regression tests
+   on both paths.
+2. Borrow error from `&&str` in `export_sync` after the normalizer change
+   (`render(.., format)` instead of `&format`).
+3. Test-quality: `break`-with-value inside a `for` loop, `StatusCode` scope,
+   `reqwest::Response` move-before-header-read, and jsdom's missing
+   `URL.createObjectURL` stubbed in tests (download flow).
+4. A mangled edit (`vec!eader]`) introduced during refactoring was caught by the
+   compiler and rebuilt cleanly — noted here because it is exactly the class of
+   accident line-by-line review exists to catch.
+
+Verified totals after the cycle: 108 backend + 58 frontend tests green, clippy and
+rustfmt clean, tsc clean, production build OK, E2E smoke (12 steps) green.

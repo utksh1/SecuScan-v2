@@ -214,6 +214,7 @@ max_per_hour = 0
         plugins_dir: plugins_dir.path().to_path_buf(),
         frontend_dir: db_dir.path().join("no-such-frontend"), // API-only mode
         data_dir: db_dir.path().to_path_buf(),
+        reports_dir: db_dir.path().join("reports"),
         admin_email: "admin@test.local".to_string(),
         admin_password: Some("admin-password-123".to_string()),
         denied_capabilities: vec![],
@@ -1705,4 +1706,535 @@ async fn scan_diff_respects_user_isolation() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 404); // not found, not 403 — existence hidden
+}
+
+// ===========================================================================
+// Async report jobs (waiting → in_progress → finished, webhooks, downloads)
+// ===========================================================================
+
+async fn wait_report_terminal(
+    c: &reqwest::Client,
+    base: &str,
+    token: &str,
+    id: &str,
+) -> serde_json::Value {
+    for _ in 0..150 {
+        let resp = c
+            .get(format!("{base}/reports/{id}"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let j: serde_json::Value = resp.json().await.unwrap();
+        let status = j["status"].as_str().unwrap().to_string();
+        if matches!(status.as_str(), "finished" | "failed") {
+            return j;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("report job {id} did not reach a terminal state in time");
+}
+
+async fn sevtest_task(c: &reqwest::Client, base: &str, token: &str) -> String {
+    let resp = c
+        .post(format!("{base}/tasks"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest",
+            "inputs": {"target": "reports.example.com"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let t: serde_json::Value = resp.json().await.unwrap();
+    let id = t["id"].as_str().unwrap().to_string();
+    let done = wait_terminal(c, base, token, &id).await;
+    assert_eq!(done["status"], "completed", "sevtest failed: {done}");
+    id
+}
+
+#[tokio::test]
+async fn report_job_lifecycle_downloads_every_format() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let task = sevtest_task(&c, &s.base, &token).await;
+
+    for fmt in ["md", "csv", "html", "sarif", "json", "pdf", "docx", "xlsx"] {
+        let resp = c
+            .post(format!("{}/tasks/{task}/reports", s.base))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "format": fmt }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 202, "create {fmt}: {}", resp.status());
+        let job: serde_json::Value = resp.json().await.unwrap();
+        let id = job["id"].as_str().unwrap().to_string();
+        assert_eq!(job["format"], serde_json::json!(fmt));
+        // The secret-free representation never leaks internal fields.
+        assert!(job.get("webhook_secret").is_none());
+
+        let done = wait_report_terminal(&c, &s.base, &token, &id).await;
+        assert_eq!(done["status"], "finished", "{fmt} job failed: {done}");
+        assert!(
+            done["file_bytes"].as_i64().unwrap() > 0,
+            "{fmt} artifact empty"
+        );
+        assert!(done["download_path"].as_str().is_some());
+
+        let resp = c
+            .get(format!("{}/reports/{id}/download", s.base))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "{fmt} download failed");
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let disp = resp
+            .headers()
+            .get("content-disposition")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        let bytes = resp.bytes().await.unwrap();
+        assert!(!bytes.is_empty());
+        match fmt {
+            "pdf" => assert_eq!(&bytes[..5], b"%PDF-"),
+            "docx" | "xlsx" => assert_eq!(&bytes[..2], b"PK"),
+            "json" => assert_eq!(&bytes[..1], b"{"),
+            "csv" => assert!(bytes.starts_with(b"severity,")),
+            _ => {}
+        }
+        match fmt {
+            "pdf" => assert!(ctype.starts_with("application/pdf")),
+            "docx" => assert!(ctype.contains("wordprocessingml")),
+            "xlsx" => assert!(ctype.contains("spreadsheetml")),
+            _ => {}
+        }
+        assert!(disp.contains(&format!(".{fmt}\"")), "filename {disp}");
+    }
+
+    // Listing is filtered by task and ordered (newest first by created_at).
+    let resp = c
+        .get(format!("{}/reports?task_id={task}", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(list["total"], serde_json::json!(8));
+    assert_eq!(list["items"].as_array().unwrap().len(), 8);
+    assert!(list["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|j| j["task_id"] == serde_json::json!(task)));
+
+    // Deleting a job removes the artifact (download 404 afterwards).
+    let some_id = list["items"][0]["id"].as_str().unwrap().to_string();
+    let resp = c
+        .delete(format!("{}/reports/{some_id}", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    let resp = c
+        .get(format!("{}/reports/{some_id}/download", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+/// Captures (headers, raw body) of a webhook POST for assertions.
+type Received = std::sync::Arc<std::sync::Mutex<Option<(axum::http::HeaderMap, Vec<u8>)>>>;
+
+async fn webhook_receiver(
+    axum::extract::State(rx): axum::extract::State<Received>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::http::StatusCode {
+    *rx.lock().unwrap() = Some((headers, body.to_vec()));
+    axum::http::StatusCode::OK
+}
+
+#[tokio::test]
+async fn report_job_webhook_delivery_is_signed() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let task = sevtest_task(&c, &s.base, &token).await;
+
+    // Stand up a local receiver that captures headers + raw body.
+    let received: Received = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let rx = received.clone();
+    let app: axum::Router = axum::Router::new()
+        .route("/hook", axum::routing::post(webhook_receiver))
+        .with_state(rx);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let resp = c
+        .post(format!("{}/tasks/{task}/reports", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "format": "json",
+            "webhook_url": format!("http://{addr}/hook"),
+            "webhook_secret": "whsec_test_123",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let job: serde_json::Value = resp.json().await.unwrap();
+    let id = job["id"].as_str().unwrap().to_string();
+
+    let done = wait_report_terminal(&c, &s.base, &token, &id).await;
+    assert_eq!(done["status"], "finished");
+
+    // Wait for the callback (delivery starts right after the job finishes).
+    let mut captured = None;
+    for _ in 0..100 {
+        if let Some(got) = received.lock().unwrap().take() {
+            captured = Some(got);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let (headers, body) = captured.expect("webhook never delivered");
+
+    assert_eq!(
+        headers
+            .get("x-secuscan-event")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default(),
+        "report.finished"
+    );
+    assert_eq!(
+        headers
+            .get("x-secuscan-delivery")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default(),
+        id
+    );
+
+    // Independent HMAC verification (not calling the server's own code).
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(b"whsec_test_123").unwrap();
+    mac.update(&body);
+    let expected = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+    let got = headers
+        .get("x-secuscan-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(got, expected, "signature mismatch");
+
+    let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(payload["event"], serde_json::json!("report.finished"));
+    assert_eq!(payload["report"]["id"], serde_json::json!(id));
+    assert_eq!(payload["report"]["status"], serde_json::json!("finished"));
+    assert!(payload["report"]["download_path"].as_str().is_some());
+    // The secret must never appear in the callback payload.
+    let body_str = String::from_utf8_lossy(&body);
+    assert!(!body_str.contains("whsec_test_123"));
+
+    // First-attempt success recorded.
+    let j = wait_report_terminal(&c, &s.base, &token, &id).await;
+    assert_eq!(j["webhook_attempts"], serde_json::json!(1));
+}
+
+#[tokio::test]
+async fn report_job_webhook_failures_do_not_fail_the_job() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let task = sevtest_task(&c, &s.base, &token).await;
+
+    // Port 1 on loopback: connection refused, nothing listens there.
+    let resp = c
+        .post(format!("{}/tasks/{task}/reports", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "format": "md",
+            "webhook_url": "http://127.0.0.1:1/hook",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let job: serde_json::Value = resp.json().await.unwrap();
+    let id = job["id"].as_str().unwrap().to_string();
+
+    let done = wait_report_terminal(&c, &s.base, &token, &id).await;
+    assert_eq!(
+        done["status"], "finished",
+        "delivery failure must not fail the job"
+    );
+
+    // Retries: 3 attempts with backoff (1s, 4s) — poll until recorded.
+    let mut attempts = 0i64;
+    for _ in 0..200 {
+        let resp = c
+            .get(format!("{}/reports/{id}", s.base))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        let j: serde_json::Value = resp.json().await.unwrap();
+        attempts = j["webhook_attempts"].as_i64().unwrap_or(0);
+        if attempts >= 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(attempts, 3, "expected 3 recorded delivery attempts");
+}
+
+#[tokio::test]
+async fn report_job_isolation_and_validation() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    let task = sevtest_task(&c, &s.base, &token).await;
+
+    // A second scanner user.
+    let resp = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "scanner2@test.local", "name": "Scanner Two",
+            "password": "scanner2-pass-123", "role": "scanner"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({
+            "email": "scanner2@test.local", "password": "scanner2-pass-123"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let t2body: serde_json::Value = resp.json().await.unwrap();
+    let t2 = t2body["access_token"].as_str().unwrap().to_string();
+
+    // Admin creates a job.
+    let resp = auth(
+        c.post(format!("{}/tasks/{task}/reports", s.base))
+            .json(&serde_json::json!({ "format": "pdf" })),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 202);
+    let job: serde_json::Value = resp.json().await.unwrap();
+    let id = job["id"].as_str().unwrap().to_string();
+
+    // Foreign user: existence hidden for job detail, download, delete.
+    for (method, path) in [
+        ("GET", format!("/reports/{id}")),
+        ("GET", format!("/reports/{id}/download")),
+        ("DELETE", format!("/reports/{id}")),
+    ] {
+        let resp = c
+            .request(
+                reqwest::Method::from_bytes(method.as_bytes()).unwrap(),
+                format!("{}{}", s.base, path),
+            )
+            .bearer_auth(&t2)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404, "{method} foreign job must 404");
+    }
+
+    // Foreign user sees an empty list, cannot create a job on a foreign task.
+    let resp = c
+        .get(format!("{}/reports", s.base))
+        .bearer_auth(&t2)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(list["total"], serde_json::json!(0));
+
+    let resp = c
+        .post(format!("{}/tasks/{task}/reports", s.base))
+        .bearer_auth(&t2)
+        .json(&serde_json::json!({ "format": "pdf" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404); // foreign task, not 403
+
+    // Viewer role is read-only.
+    let resp = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "viewer2@test.local", "name": "Viewer Two",
+            "password": "viewer2-pass-123", "role": "viewer"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({
+            "email": "viewer2@test.local", "password": "viewer2-pass-123"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let vt: serde_json::Value = resp.json().await.unwrap();
+    let vt = vt["access_token"].as_str().unwrap().to_string();
+    let resp = c
+        .post(format!("{}/tasks/{task}/reports", s.base))
+        .bearer_auth(&vt)
+        .json(&serde_json::json!({ "format": "pdf" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Validation errors.
+    let cases = [
+        serde_json::json!({ "format": "exe" }),
+        serde_json::json!({ "format": "md", "severity": "ultra" }),
+        serde_json::json!({ "format": "md", "webhook_url": "ftp://example.com/hook" }),
+        serde_json::json!({ "format": "md", "webhook_url": "not a url" }),
+    ];
+    for body in cases {
+        let resp = auth(
+            c.post(format!("{}/tasks/{task}/reports", s.base))
+                .json(&body),
+        )
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), 400, "body {body} should be rejected");
+    }
+
+    // Unknown task.
+    let resp = auth(
+        c.post(format!(
+            "{}/tasks/00000000-0000-0000-0000-000000000000/reports",
+            s.base
+        ))
+        .json(&serde_json::json!({ "format": "md" })),
+    )
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Deleting the task cascades its jobs (and their files).
+    let done = wait_report_terminal(&c, &s.base, &token, &id).await;
+    assert_eq!(done["status"], "finished");
+    let resp = auth(c.delete(format!("{}/tasks/{task}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    let resp = auth(c.get(format!("{}/reports/{id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn report_job_severity_filter_and_sync_parity() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let task = sevtest_task(&c, &s.base, &token).await; // critical+high+medium
+
+    let resp = c
+        .post(format!("{}/tasks/{task}/reports", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "format": "csv", "severity": "high" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let job: serde_json::Value = resp.json().await.unwrap();
+    let id = job["id"].as_str().unwrap().to_string();
+    assert_eq!(job["severity_filter"], serde_json::json!("high"));
+
+    let done = wait_report_terminal(&c, &s.base, &token, &id).await;
+    assert_eq!(done["status"], "finished");
+
+    let resp = c
+        .get(format!("{}/reports/{id}/download", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    let csv = String::from_utf8(resp.bytes().await.unwrap().to_vec()).unwrap();
+    let rows = csv.lines().filter(|l| !l.is_empty()).count();
+    assert_eq!(rows, 3, "header + critical + high, got: {csv}");
+    assert!(csv.contains("Critical test finding"));
+    assert!(csv.contains("High test finding"));
+    assert!(!csv.contains("Medium test finding"));
+
+    // The synchronous endpoint honors the same filter (back-compat parity).
+    let resp = c
+        .get(format!("{}/tasks/{task}/report/csv?severity=high", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let csv = String::from_utf8(resp.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(csv.contains("Critical test finding"));
+    assert!(!csv.contains("Medium test finding"));
+
+    // And an unknown severity on the sync route is a 400, not a silent pass.
+    let resp = c
+        .get(format!("{}/tasks/{task}/report/csv?severity=nope", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // The historical `markdown` alias still works on both surfaces and is
+    // canonicalized to `md` for storage (the DB CHECK only knows `md`).
+    let resp = c
+        .get(format!("{}/tasks/{task}/report/markdown", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(String::from_utf8(resp.bytes().await.unwrap().to_vec())
+        .unwrap()
+        .starts_with("# SecuScan Report"));
+
+    let resp = c
+        .post(format!("{}/tasks/{task}/reports", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "format": "markdown" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 202);
+    let job: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(job["format"], serde_json::json!("md"));
+    let id = job["id"].as_str().unwrap().to_string();
+    let done = wait_report_terminal(&c, &s.base, &token, &id).await;
+    assert_eq!(done["status"], "finished");
 }

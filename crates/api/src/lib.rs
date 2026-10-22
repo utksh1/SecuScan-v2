@@ -4,6 +4,8 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod manager;
+pub mod report_jobs;
+pub mod reports_render;
 pub mod routes;
 pub mod seed;
 pub mod state;

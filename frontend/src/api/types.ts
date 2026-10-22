@@ -227,3 +227,38 @@ export interface ScanTarget {
 export interface ApiErrorShape {
   error: { code: number; message: string }
 }
+
+export type ReportFormat =
+  | 'md'
+  | 'csv'
+  | 'html'
+  | 'sarif'
+  | 'json'
+  | 'pdf'
+  | 'docx'
+  | 'xlsx'
+
+export type ReportJobStatus = 'waiting' | 'in_progress' | 'finished' | 'failed'
+
+export interface ReportJob {
+  id: string
+  task_id: string
+  format: ReportFormat
+  severity_filter: string | null
+  status: ReportJobStatus
+  error: string | null
+  file_bytes: number | null
+  webhook_url: string | null
+  webhook_attempts: number
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  download_path: string | null
+}
+
+export interface ReportJobList {
+  items: ReportJob[]
+  total: number
+  limit: number
+  offset: number
+}

@@ -32,7 +32,7 @@ analyst triage workflow, report exports, multi-user access control, and client/p
 | Scanning | external tools only | external tools **+ 4 built-in native Rust scanners** |
 | Auth | single API key | JWT + rotating refresh cookies + argon2 + roles + API keys |
 | Output streaming | SSE | SSE with DB replay + cursor-based reconnection |
-| Reports | csv/html/pdf/sarif | md/csv/html/sarif/json |
+| Reports | csv/html/pdf/sarif | md/csv/html/sarif/json **+ pdf/docx/xlsx**, min-severity filter, **async report jobs with signed webhooks** |
 | Safety | consent, network policy | consent, network policy **with host canonicalization + audit log**, per-plugin concurrency/hourly limits, argv hardening |
 | Organization | flat task list | **workspaces + first-class targets** (per-client/project scoping of tasks, findings and dashboard) |
 | Run comparison | none | **scan diff**: new / fixed / regressed / improved / unchanged between runs |

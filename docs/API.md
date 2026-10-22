@@ -52,7 +52,7 @@ TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login \
 | GET | `/tasks/:id/result` | task + findings + severity counts |
 | GET | `/tasks/:id/output` | raw captured output + truncation flag |
 | GET | `/tasks/:id/stream` | **SSE** live console; `?after=<event id>` resumes |
-| GET | `/tasks/:id/report/{md\|csv\|html\|sarif\|json}` | report download |
+| GET | `/tasks/:id/report/{md\|csv\|html\|sarif\|json\|pdf\|docx\|xlsx}` | synchronous report download (optional `?severity=low..critical` min-severity filter) |
 
 ### Starting a task
 
@@ -96,6 +96,51 @@ data: {"ts":"2026-10-22T20:52:09.123Z","event":{"type":"log_line","stream":"stdo
 
 Event types: `phase`, `log_line`, `info`, `warn`, `error`, `progress`, `finished`.
 Frames carry their DB row id — replay with `?after=` for gap-free reconnection.
+
+### Async report jobs
+
+Reports can also be generated in the background — the request returns `202`
+immediately and the job transitions `waiting` → `in_progress` → `finished` /
+`failed`. Artifacts are written under the reports dir (`SECUSCAN_REPORTS_DIR`,
+default `<data>/reports`) and served by the download endpoint.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/tasks/:id/reports` | queue a job; body `{format, severity?, webhook_url?, webhook_secret?}` → `202` + job |
+| GET | `/reports` | list the caller's jobs (admins see all); `?task_id=&limit=&offset=` |
+| GET | `/reports/:id` | job status |
+| GET | `/reports/:id/download` | the artifact (finished jobs only) |
+| DELETE | `/reports/:id` | delete the job and its artifact |
+
+Formats: `md`, `csv`, `html`, `sarif`, `json`, `pdf`, `docx`, `xlsx` (the
+historical `markdown` alias is accepted and canonicalized to `md`). The
+severity filter is a minimum threshold (`low|medium|high|critical`); `pdf`,
+`docx` and `xlsx` wrap finding details plus a summary; `xlsx` adds a frozen,
+filterable sheet per finding and a metadata/severity-breakdown sheet.
+
+Guards and limits: 20 concurrent active jobs per user (429 beyond), the most
+recent 100 finished jobs are retained per user, jobs are visible only to
+their owner (or admins), and jobs interrupted by a restart are marked
+`failed` at boot.
+
+**Webhooks.** When `webhook_url` is set, a callback is POSTed after the job
+reaches a terminal state:
+
+```
+POST <webhook_url>
+content-type: application/json
+x-secuscan-event: report.finished
+x-secuscan-delivery: <report job id>
+x-secuscan-signature: sha256=<hex hmac-sha256 of the raw body, keyed by webhook_secret>
+
+{"event":"report.finished","report":{ ...same shape as GET /reports/:id... }}
+```
+
+The signature scheme matches GitHub's webhook signatures (verify with
+`HMAC-SHA256(secret, raw_body)`), so existing verifiers port directly.
+Delivery retries up to 3 attempts (1s / 4s backoff, 10s timeout); failures
+are recorded in `webhook_attempts` but never fail the job. Webhook URLs must
+be absolute `http(s)://` URLs.
 
 ## Findings
 

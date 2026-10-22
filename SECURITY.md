@@ -38,8 +38,17 @@ the consent state is recorded with every task.
 4. **Local tooling is not a sandbox.** For untrusted plugin manifests, review them
    before dropping them into `plugins/` (they cannot execute code, but they can invoke
    any binary on PATH with constructed arguments).
-5. **SQLite file permissions** protect the database (including hashed tokens); host the
-   data directory accordingly.
+5. **SQLite file permissions** protect the database (including hashed tokens and
+   report-job webhook secrets — the secrets must be stored verbatim to compute
+   HMAC signatures, so they are not hashed like auth tokens); host the data
+   directory accordingly.
+6. **Webhook URLs are outbound requests made by the server.** Any scanner-role
+   user can register an `http(s)://` callback and observe delivery results —
+   treat the role with the same trust as scan targets (which already allow
+   arbitrary network probing). Only absolute `http(s)://` URLs are accepted;
+   no SSRF egress filtering is applied by design (self-hosted model).
+7. **Report artifacts are stored unencrypted** on disk under the reports dir.
+   They contain the same finding data as the API; protect the data directory.
 
 ## Reporting a vulnerability
 

@@ -1,28 +1,61 @@
-//! Report exports: JSON, Markdown, CSV, standalone HTML, SARIF 2.1.0.
+//! Report exports and async report jobs.
+//!
+//! Two surfaces:
+//! * `GET /tasks/:id/report/:format` — synchronous one-shot export kept for
+//!   scripts and backward compatibility (streams the rendered body).
+//! * `POST /tasks/:id/reports` + `GET/DELETE /reports...` — the async job
+//!   pipeline (waiting → in_progress → finished/failed) with artifact
+//!   downloads and optional signed webhooks.
 
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
-use crate::routes::findings::finding_to_json;
+use crate::report_jobs::{
+    job_to_json, spawn_job, MAX_ACTIVE_JOBS_PER_USER, RETAINED_FINISHED_JOBS,
+};
+use crate::reports_render::{self, FORMATS, SEVERITY_THRESHOLDS};
+use crate::routes::tasks::load_task_for_user;
 use crate::state::SharedState;
-use axum::extract::{Path, State};
-use axum::http::{header, HeaderMap};
+use axum::extract::{Path, Query, State};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use secuscan_db::models::{FindingRow, TaskRow};
+use axum::Json;
 use secuscan_db::repo;
+use serde::Deserialize;
 use serde_json::json;
+use std::path::PathBuf;
 
 pub fn router() -> axum::Router<SharedState> {
-    axum::Router::new().route("/tasks/:id/report/:format", axum::routing::get(export))
+    axum::Router::new()
+        .route("/tasks/:id/report/:format", axum::routing::get(export_sync))
+        .route("/tasks/:id/reports", axum::routing::post(create_job))
+        .route("/reports", axum::routing::get(list_jobs))
+        .route(
+            "/reports/:id",
+            axum::routing::get(get_job).delete(delete_job),
+        )
+        .route("/reports/:id/download", axum::routing::get(download_job))
 }
 
-async fn export(
+// ---------------------------------------------------------------------------
+// Synchronous export (back-compat)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ExportQuery {
+    /// Minimum severity to include (low|medium|high|critical).
+    severity: Option<String>,
+}
+
+async fn export_sync(
     State(state): State<SharedState>,
     user: CurrentUser,
     Path((id, format)): Path<(String, String)>,
+    Query(q): Query<ExportQuery>,
 ) -> ApiResult<Response> {
-    let task = repo::tasks::get(&state.db, &id).await?;
-    if !user.is_admin() && task.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("task {id}")));
+    let task = load_task_for_user(&state, &user, &id).await?;
+    let format = canonical_format(&format)?;
+    if let Some(sev) = &q.severity {
+        validate_severity(sev)?;
     }
     let findings = repo::findings::list(
         &state.db,
@@ -33,53 +66,308 @@ async fn export(
         },
     )
     .await?;
+    let filtered = reports_render::filter_min_severity(&findings, q.severity.as_deref());
+    let owned: Vec<_> = filtered.into_iter().cloned().collect();
 
-    match format.as_str() {
-        "json" => Ok((
-            [(header::CONTENT_TYPE, "application/json")],
-            serde_json::to_string_pretty(&json!({
-                "task": crate::routes::tasks::task_to_json(&task, false),
-                "findings": findings.iter().map(finding_to_json).collect::<Vec<_>>(),
-            }))
-            .unwrap_or_default(),
-        )
-            .into_response()),
-        "md" | "markdown" => Ok(text_response(
-            markdown_report(&task, &findings),
-            "text/markdown; charset=utf-8",
-            &report_filename(&task, "md"),
-        )),
-        "csv" => Ok(text_response(
-            csv_report(&findings),
-            "text/csv; charset=utf-8",
-            &report_filename(&task, "csv"),
-        )),
-        "html" => Ok(text_response(
-            html_report(&task, &findings),
-            "text/html; charset=utf-8",
-            &report_filename(&task, "html"),
-        )),
-        "sarif" => Ok(text_response(
-            sarif_report(&task, &findings),
-            "application/json; charset=utf-8",
-            &report_filename(&task, "sarif"),
-        )),
-        other => Err(ApiError::BadRequest(format!(
-            "unknown report format `{other}` (use json|md|csv|html|sarif)"
-        ))),
+    let rendered = reports_render::render(&task, &owned, format).map_err(ApiError::BadRequest)?;
+    Ok(text_response(
+        rendered.bytes,
+        rendered.content_type,
+        &reports_render::report_filename(&task, rendered.ext),
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// Async report jobs
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct CreateJobRequest {
+    format: String,
+    #[serde(default)]
+    severity: Option<String>,
+    #[serde(default)]
+    webhook_url: Option<String>,
+    #[serde(default)]
+    webhook_secret: Option<String>,
+}
+
+async fn create_job(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(body): Json<CreateJobRequest>,
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
+    user.require_scanner()?;
+    let format = canonical_format(&body.format)?;
+    if let Some(sev) = &body.severity {
+        validate_severity(sev)?;
+    }
+    let webhook_url = match &body.webhook_url {
+        Some(u) => Some(validate_webhook_url(u)?),
+        None => None,
+    };
+    if let Some(secret) = &body.webhook_secret {
+        if secret.len() > 256 {
+            return Err(ApiError::BadRequest(
+                "webhook_secret exceeds 256 bytes".into(),
+            ));
+        }
+    }
+    // Task must exist and be visible to this user (owner or admin).
+    load_task_for_user(&state, &user, &id).await?;
+
+    // Admission cap: bound how many jobs one user can have in flight.
+    let active = repo::reports::count_active_for_user(&state.db, &user.0.id).await?;
+    if active >= MAX_ACTIVE_JOBS_PER_USER {
+        return Err(ApiError::TooManyRequests(format!(
+            "too many report jobs in flight ({active}); wait for them to finish"
+        )));
+    }
+
+    let job = repo::reports::create(
+        &state.db,
+        repo::reports::NewReportJob {
+            task_id: &id,
+            user_id: &user.0.id,
+            format,
+            severity_filter: body.severity.as_deref(),
+            webhook_url: webhook_url.as_deref(),
+            webhook_secret: body.webhook_secret.as_deref(),
+        },
+    )
+    .await?;
+
+    // Retention sweep happens off the hot path but before we hand the id
+    // back — the freshly created job is never pruned (it is `waiting`, and
+    // only *finished* jobs are eligible).
+    let user_id = user.0.id.clone();
+    let sweep_state = state.clone();
+    tokio::spawn(async move {
+        match repo::reports::prune_finished(&sweep_state.db, &user_id, RETAINED_FINISHED_JOBS).await
+        {
+            Ok(files) => {
+                for f in files {
+                    let _ = std::fs::remove_file(&f);
+                }
+            }
+            Err(e) => tracing::warn!("report retention sweep failed: {e}"),
+        }
+    });
+
+    spawn_job(state.clone(), job.clone());
+    Ok((StatusCode::ACCEPTED, Json(job_to_json(&job))))
+}
+
+#[derive(Deserialize)]
+struct ListQuery {
+    task_id: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn list_jobs(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 100);
+    let offset = q.offset.unwrap_or(0).max(0);
+    let filters = repo::reports::ReportJobListFilters {
+        user_id: if user.is_admin() {
+            None
+        } else {
+            Some(user.0.id.clone())
+        },
+        task_id: q.task_id,
+        limit,
+        offset,
+    };
+    let items = repo::reports::list(&state.db, &filters).await?;
+    let total = repo::reports::count(&state.db, &filters).await?;
+    Ok(Json(json!({
+        "items": items.iter().map(job_to_json).collect::<Vec<_>>(),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+    })))
+}
+
+async fn get_job(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let job = load_job_for_user(&state, &user, &id).await?;
+    Ok(Json(job_to_json(&job)))
+}
+
+async fn download_job(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let job = load_job_for_user(&state, &user, &id).await?;
+    if job.status != "finished" {
+        return Err(ApiError::BadRequest(format!(
+            "report job is {} — only finished jobs can be downloaded",
+            job.status
+        )));
+    }
+    let file_path = job
+        .file_path
+        .clone()
+        .ok_or_else(|| ApiError::NotFound(format!("report job {id} has no artifact")))?;
+
+    // Path containment: file_path is server-generated, but a tampered or
+    // restored-from-backup row must not turn the download endpoint into an
+    // arbitrary file reader.
+    let path = PathBuf::from(&file_path);
+    let contained = path
+        .canonicalize()
+        .ok()
+        .and_then(|p| {
+            state
+                .config
+                .reports_dir
+                .canonicalize()
+                .ok()
+                .map(|dir| p.starts_with(dir))
+        })
+        .unwrap_or(false);
+    if !contained {
+        tracing::error!("report job {id}: artifact path escapes reports dir, refusing");
+        return Err(ApiError::NotFound(format!("report job {id}")));
+    }
+
+    let bytes = std::fs::read(&path).map_err(|e| {
+        tracing::error!("report job {id}: artifact unreadable: {e}");
+        ApiError::NotFound(format!("report job {id} artifact is missing"))
+    })?;
+    // A size mismatch means the file changed under us — serve what exists
+    // (it was written atomically), but log for the operator.
+    if let Some(expected) = job.file_bytes {
+        if expected != bytes.len() as i64 {
+            tracing::warn!(
+                "report job {id}: size mismatch (db {expected}, disk {})",
+                bytes.len()
+            );
+        }
+    }
+
+    // Filename mirrors the task, not the internal job id.
+    let task = repo::tasks::get(&state.db, &job.task_id).await.ok();
+    let filename = match task {
+        Some(t) => reports_render::report_filename(&t, ext_for(&job.format)),
+        None => format!(
+            "secuscan-report-{}.{}",
+            &job.id[..8.min(job.id.len())],
+            ext_for(&job.format)
+        ),
+    };
+    let content_type = content_type_for(&job.format);
+    Ok(text_response(bytes, content_type, &filename))
+}
+
+/// Canonical file extension for a format id ("markdown" normalizes to "md").
+fn ext_for(format: &str) -> &str {
+    match format {
+        "markdown" => "md",
+        other => other,
     }
 }
 
-fn report_filename(task: &TaskRow, ext: &str) -> String {
-    format!(
-        "secuscan-{}-{}.{}",
-        task.plugin_id,
-        &task.id[..8.min(task.id.len())],
-        ext
-    )
+async fn delete_job(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    let job = load_job_for_user(&state, &user, &id).await?;
+    let row = repo::reports::delete(&state.db, &job.id).await?;
+    if let Some(row) = row {
+        if let Some(path) = &row.file_path {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
-fn text_response(body: String, content_type: &str, filename: &str) -> Response {
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async fn load_job_for_user(
+    state: &SharedState,
+    user: &CurrentUser,
+    id: &str,
+) -> ApiResult<secuscan_db::models::ReportJobRow> {
+    let job = repo::reports::get(&state.db, id).await?;
+    if !user.is_admin() && job.user_id != user.0.id {
+        return Err(ApiError::NotFound(format!("report job {id}")));
+    }
+    Ok(job)
+}
+
+/// Accept every known format id plus the historical `markdown` alias,
+/// returning the canonical id that is stored in the DB (whose CHECK
+/// constraint only knows canonical ids).
+fn canonical_format(format: &str) -> ApiResult<&'static str> {
+    match format {
+        "markdown" => Ok("md"),
+        _ => match FORMATS.iter().find(|f| **f == format) {
+            Some(f) => Ok(f),
+            None => Err(ApiError::BadRequest(format!(
+                "unknown report format `{format}` (use {})",
+                FORMATS.join("|")
+            ))),
+        },
+    }
+}
+
+fn validate_severity(sev: &str) -> ApiResult<()> {
+    if SEVERITY_THRESHOLDS.contains(&sev) {
+        Ok(())
+    } else {
+        Err(ApiError::BadRequest(format!(
+            "unknown severity filter `{sev}` (use {} or omit for all findings)",
+            SEVERITY_THRESHOLDS.join("|")
+        )))
+    }
+}
+
+/// Webhook URLs must be absolute http(s) URLs. This is a scheme guard, not
+/// an SSRF egress policy — see SECURITY.md for the threat model (self-hosted
+/// instances trust their scanner-role users with outbound calls, exactly as
+/// they already trust them with scan targets).
+fn validate_webhook_url(url: &str) -> ApiResult<String> {
+    if url.len() > 2048 {
+        return Err(ApiError::BadRequest(
+            "webhook_url exceeds 2048 bytes".into(),
+        ));
+    }
+    match url::Url::parse(url) {
+        Ok(u) if u.scheme() == "http" || u.scheme() == "https" => Ok(u.to_string()),
+        _ => Err(ApiError::BadRequest(
+            "webhook_url must be an absolute http(s) URL".into(),
+        )),
+    }
+}
+
+fn content_type_for(format: &str) -> &'static str {
+    match format {
+        "json" => "application/json; charset=utf-8",
+        "md" | "markdown" => "text/markdown; charset=utf-8",
+        "csv" => "text/csv; charset=utf-8",
+        "html" => "text/html; charset=utf-8",
+        "sarif" => "application/json; charset=utf-8",
+        "pdf" => "application/pdf",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream",
+    }
+}
+
+fn text_response(body: Vec<u8>, content_type: &str, filename: &str) -> Response {
     let mut headers = HeaderMap::new();
     if let Ok(v) = header::HeaderValue::from_str(content_type) {
         headers.insert(header::CONTENT_TYPE, v);
@@ -88,237 +376,4 @@ fn text_response(body: String, content_type: &str, filename: &str) -> Response {
         headers.insert(header::CONTENT_DISPOSITION, v);
     }
     (headers, body).into_response()
-}
-
-fn escape_md(s: &str) -> String {
-    s.replace('|', "\\|").replace('\n', " ")
-}
-
-fn markdown_report(task: &TaskRow, findings: &[FindingRow]) -> String {
-    let mut md = String::new();
-    md.push_str(&format!("# SecuScan Report — {}\n\n", task.plugin_name));
-    md.push_str(&format!(
-        "- **Task ID:** {}\n- **Plugin:** `{}`\n- **Target:** `{}`\n- **Status:** {}\n- **Created:** {}\n- **Finished:** {}\n\n",
-        task.id,
-        task.plugin_id,
-        task.target.as_deref().unwrap_or("—"),
-        task.status,
-        task.created_at,
-        task.finished_at.as_deref().unwrap_or("—"),
-    ));
-    md.push_str(&format!("## Findings ({})\n\n", findings.len()));
-    md.push_str("| Severity | Title | Category | Status |\n|---|---|---|---|\n");
-    for f in findings {
-        md.push_str(&format!(
-            "| {} | {} | {} | {} |\n",
-            f.severity,
-            escape_md(&f.title),
-            escape_md(&f.category),
-            f.analyst_status,
-        ));
-    }
-    md.push_str("\n## Details\n\n");
-    for (i, f) in findings.iter().enumerate() {
-        md.push_str(&format!(
-            "### {}. [{}] {}\n\n",
-            i + 1,
-            f.severity.to_uppercase(),
-            f.title
-        ));
-        if !f.description.is_empty() {
-            md.push_str(&format!("{}\n\n", f.description));
-        }
-        if !f.proof.is_empty() {
-            md.push_str(&format!("**Evidence:** `{}`\n\n", escape_md(&f.proof)));
-        }
-        if let Some(url) = &f.url {
-            md.push_str(&format!("**URL:** {url}\n\n"));
-        }
-        if !f.remediation.is_empty() {
-            md.push_str(&format!("**Remediation:** {}\n\n", f.remediation));
-        }
-    }
-    md.push_str("\n> Generated by SecuScan v2. Automated findings require manual validation.\n");
-    md
-}
-
-fn csv_report(findings: &[FindingRow]) -> String {
-    let mut csv = String::from(
-        "severity,kind,analyst_status,category,title,description,remediation,proof,url\n",
-    );
-    for f in findings {
-        let mut row = vec![
-            f.severity.clone(),
-            f.kind.clone(),
-            f.analyst_status.clone(),
-            f.category.clone(),
-            f.title.clone(),
-            f.description.clone(),
-            f.remediation.clone(),
-            f.proof.clone(),
-            f.url.clone().unwrap_or_default(),
-        ];
-        for cell in &mut row {
-            *cell = csv_escape(cell);
-        }
-        csv.push_str(&row.join(","));
-        csv.push('\n');
-    }
-    csv
-}
-
-fn csv_escape(s: &str) -> String {
-    // Formula-injection guard: cells that begin with =, +, -, @ or tab are
-    // prefixed with a single quote so spreadsheet apps do not execute them.
-    let guard = matches!(
-        s.as_bytes().first(),
-        Some(b'=') | Some(b'+') | Some(b'-') | Some(b'@') | Some(b'\t')
-    );
-    let body = if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        format!("\"{}\"", s.replace('"', "\"\""))
-    } else {
-        s.to_string()
-    };
-    if guard {
-        format!("'{body}")
-    } else {
-        body
-    }
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-fn html_report(task: &TaskRow, findings: &[FindingRow]) -> String {
-    let sev_color = |s: &str| {
-        match s {
-            "critical" => "#dc2626",
-            "high" => "#ea580c",
-            "medium" => "#d97706",
-            "low" => "#2563eb",
-            _ => "#6b7280",
-        }
-        .to_string()
-    };
-    let rows = findings
-        .iter()
-        .map(|f| {
-            format!(
-                "<tr><td><span class=\"badge\" style=\"background:{color}\">{sev}</span></td>\
-                 <td>{title}</td><td>{cat}</td><td>{status}</td></tr>\n\
-                 <tr class=\"detail\"><td colspan=\"4\"><b>Evidence:</b> <code>{proof}</code><br/>{desc}<br/><b>Fix:</b> {rem}</td></tr>",
-                color = sev_color(&f.severity),
-                sev = html_escape(&f.severity),
-                title = html_escape(&f.title),
-                cat = html_escape(&f.category),
-                status = html_escape(&f.analyst_status),
-                proof = html_escape(&f.proof),
-                desc = html_escape(&f.description),
-                rem = html_escape(&f.remediation),
-            )
-        })
-        .collect::<String>();
-    format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><title>SecuScan Report {id}</title>
-<style>
- body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #111827; background: #f9fafb; }}
- .card {{ background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 1.5rem; max-width: 60rem; margin: auto; }}
- h1 {{ font-size: 1.5rem; }} table {{ border-collapse: collapse; width: 100%; margin-top: 1rem; }}
- td, th {{ padding: .5rem .75rem; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: .9rem; }}
- .badge {{ color: #fff; border-radius: 999px; padding: .15rem .6rem; font-size: .75rem; text-transform: uppercase; }}
- .detail td {{ background: #f9fafb; font-size: .85rem; }}
- @media print {{ body {{ background: #fff; }} }}
-</style></head><body><div class="card">
-<h1>SecuScan Report — {plugin}</h1>
-<p>Task <code>{id}</code> · Target <code>{target}</code> · Status <b>{status}</b> · Created {created}</p>
-<table><thead><tr><th>Severity</th><th>Title</th><th>Category</th><th>Triage</th></tr></thead>
-<tbody>{rows}</tbody></table>
-<p style="color:#6b7280;font-size:.8rem;margin-top:2rem">Generated by SecuScan v2. Automated findings require manual validation.</p>
-</div></body></html>"#,
-        id = html_escape(&task.id),
-        plugin = html_escape(&task.plugin_name),
-        target = html_escape(task.target.as_deref().unwrap_or("—")),
-        status = html_escape(&task.status),
-        created = html_escape(&task.created_at),
-        rows = rows,
-    )
-}
-
-fn sarif_report(task: &TaskRow, findings: &[FindingRow]) -> String {
-    let results: Vec<serde_json::Value> = findings
-        .iter()
-        .map(|f| {
-            json!({
-                "ruleId": format!("secuscan.{}/{}", task.plugin_id, slug(&f.category)),
-                "level": sarif_level(&f.severity),
-                "message": { "text": if f.description.is_empty() { f.title.clone() } else { f.description.clone() } },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": f.url.clone().unwrap_or_else(|| task.target.clone().unwrap_or_default()) }
-                    }
-                }],
-                "properties": {
-                    "severity": f.severity,
-                    "kind": f.kind,
-                    "analyst_status": f.analyst_status,
-                    "proof": f.proof,
-                    "remediation": f.remediation,
-                }
-            })
-        })
-        .collect();
-    let rules: Vec<serde_json::Value> = findings
-        .iter()
-        .map(|f| {
-            json!({
-                "id": format!("secuscan.{}/{}", task.plugin_id, slug(&f.category)),
-                "shortDescription": { "text": f.title },
-                "properties": { "tags": [task.plugin_id, f.category] }
-            })
-        })
-        .collect();
-    let sarif = json!({
-        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
-        "version": "2.1.0",
-        "runs": [{
-            "tool": {
-                "driver": {
-                    "name": "SecuScan",
-                    "informationUri": "https://github.com/utksh1/SecuScan-v2",
-                    "version": env!("CARGO_PKG_VERSION"),
-                    "rules": rules,
-                }
-            },
-            "properties": { "taskId": task.id, "target": task.target, "plugin": task.plugin_id },
-            "results": results,
-        }]
-    });
-    serde_json::to_string_pretty(&sarif).unwrap_or_default()
-}
-
-fn sarif_level(severity: &str) -> &'static str {
-    match severity {
-        "critical" | "high" => "error",
-        "medium" | "low" => "warning",
-        _ => "note",
-    }
-}
-
-fn slug(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
 }

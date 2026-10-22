@@ -314,6 +314,12 @@ async fn delete(
         let _ = state.tasks.cancel(&t.id).await;
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
+    // Report artifacts outlive their jobs (the DB rows cascade with the
+    // task) — remove the files first, while the rows still tell us where
+    // they are.
+    for path in repo::reports::file_paths_for_task(&state.db, &t.id).await? {
+        let _ = std::fs::remove_file(&path);
+    }
     repo::tasks::delete(&state.db, &t.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

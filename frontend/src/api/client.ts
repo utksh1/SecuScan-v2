@@ -176,3 +176,24 @@ export const workspaceApi = {
     request<ScanTarget>(`/targets/${id}`, { method: 'PATCH', body: patch }),
   removeTarget: (id: string) => request<void>(`/targets/${id}`, { method: 'DELETE' }),
 }
+
+// --- async report jobs ---------------------------------------------------------
+
+import type { ReportJob, ReportJobList } from './types'
+
+export const reportApi = {
+  list: (params?: { task_id?: string }) => {
+    const q = params?.task_id ? `?task_id=${encodeURIComponent(params.task_id)}` : ''
+    return request<ReportJobList>(`/reports${q}`)
+  },
+  create: (
+    taskId: string,
+    body: {
+      format: string
+      severity?: string
+      webhook_url?: string
+      webhook_secret?: string
+    },
+  ) => request<ReportJob>(`/tasks/${taskId}/reports`, { method: 'POST', body }),
+  remove: (id: string) => request<void>(`/reports/${id}`, { method: 'DELETE' }),
+}

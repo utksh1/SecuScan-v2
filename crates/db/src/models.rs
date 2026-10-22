@@ -179,3 +179,32 @@ pub struct DashboardSummary {
     pub users_total: i64,
     pub workflows_total: i64,
 }
+
+/// Async report generation job (see migration 0003 for the model rationale).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ReportJobRow {
+    pub id: String,
+    pub task_id: String,
+    pub user_id: String,
+    pub format: String,
+    /// Minimum-severity threshold; NULL = include everything.
+    pub severity_filter: Option<String>,
+    /// `waiting` | `in_progress` | `finished` | `failed`.
+    pub status: String,
+    pub error: Option<String>,
+    pub file_path: Option<String>,
+    pub file_bytes: Option<i64>,
+    pub webhook_url: Option<String>,
+    pub webhook_secret: Option<String>,
+    pub webhook_attempts: i64,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+}
+
+impl ReportJobRow {
+    /// True while the job may still transition states.
+    pub fn is_active(&self) -> bool {
+        self.status == "waiting" || self.status == "in_progress"
+    }
+}

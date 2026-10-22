@@ -53,6 +53,25 @@ async fn main() {
         Err(e) => tracing::error!("orphan sweep failed: {e}"),
     }
 
+    // Same recovery for async report jobs, plus the artifacts dir.
+    if let Err(e) = std::fs::create_dir_all(&config.reports_dir) {
+        tracing::error!(
+            "cannot create reports dir {}: {e}",
+            config.reports_dir.display()
+        );
+        std::process::exit(1);
+    }
+    match secuscan_db::repo::reports::fail_interrupted(
+        &db,
+        "server restarted while the report job was queued or rendering",
+    )
+    .await
+    {
+        Ok(n) if n > 0 => tracing::warn!("marked {n} interrupted report job(s) as failed"),
+        Ok(_) => {}
+        Err(e) => tracing::error!("report job recovery failed: {e}"),
+    }
+
     let registry = PluginRegistry::load_dir(&config.plugins_dir);
     for issue in registry.issues() {
         tracing::warn!("plugin load issue [{}]: {}", issue.file, issue.error);

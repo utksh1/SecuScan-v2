@@ -10,6 +10,7 @@
 | `SECUSCAN_PLUGINS_DIR` | `./plugins` | Plugin manifest directory. |
 | `SECUSCAN_FRONTEND_DIR` | `./frontend/dist` | Built SPA served by the API. |
 | `SECUSCAN_DATA_DIR` | `./data` | Default data root. |
+| `SECUSCAN_REPORTS_DIR` | `<data>/reports` | Where async report-job artifacts are written. |
 | `SECUSCAN_ADMIN_EMAIL` | `admin@secuscan.local` | First-run admin email. |
 | `SECUSCAN_ADMIN_PASSWORD` | *random, printed once* | First-run admin password. |
 | `SECUSCAN_ALLOW_REGISTER` | `false` | Public registration toggle. |

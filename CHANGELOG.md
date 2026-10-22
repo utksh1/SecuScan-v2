@@ -3,6 +3,42 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.3.0 — async report jobs, webhooks, PDF/DOCX/XLSX
+
+Background report generation with signed callbacks (pentest-tools.com gaps #6 + #7):
+
+- `POST /tasks/:id/reports` queues a job (`waiting` → `in_progress` → `finished` /
+  `failed`) and returns `202`; `GET /reports[/:id]`, `GET /reports/:id/download`,
+  `DELETE /reports/:id` manage the lifecycle. Jobs are owner-scoped (admins see all).
+- New artifact formats: **PDF** (genpdf + embedded DejaVu Sans, tables + per-finding
+  detail, control characters normalized, exotic glyphs substituted not panicked),
+  **DOCX** (docx-rs, summary table + details) and **XLSX** (rust_xlsxwriter, frozen
+  header + autofilter on the findings sheet, metadata + severity-breakdown sheet).
+  The synchronous export endpoint serves all 8 formats too, with a new
+  `?severity=` min-severity filter shared by both surfaces.
+- **Webhooks**: HMAC-SHA256 signed callbacks (`x-secuscan-signature: sha256=…`,
+  GitHub-compatible scheme), `x-secuscan-event` / `x-secuscan-delivery` headers,
+  3 attempts with 1s/4s backoff, 10s timeout; delivery failures recorded in
+  `webhook_attempts` but never fail the job. Secrets never appear in any API
+  response or callback payload.
+- Guards: 20 active jobs per user, 100 finished jobs retained (oldest pruned with
+  their files), absolute http(s) URLs only, path-containment check on download,
+  atomic write-then-rename artifacts, startup recovery marks interrupted jobs
+  failed, task deletion cascades jobs and removes files.
+- UI: global **Reports** page (live-polling job table with status/format/severity/
+  size/webhook columns, download + delete) and a per-task **Reports** tab (instant
+  downloads for all 8 formats, background generation form with severity filter and
+  webhook fields, job history).
+- Renderers extracted to a shared module; the historical `markdown` alias is
+  canonicalized to `md` on both surfaces (DB CHECK stores canonical ids only).
+- Tests: 6 renderer/filter unit tests (magic bytes for every format, severity
+  ordering, CSV formula guard, exotic-glyph PDF safety, HMAC RFC 4231 vector) and
+  5 integration tests (full lifecycle across all formats with download verification,
+  webhook signature verified against an independent HMAC computation, delivery-failure
+  isolation with retry accounting, 3-user isolation + viewer RBAC + validation
+  matrix + task-deletion cascade, severity filter parity between sync and async
+  surfaces + markdown alias), 8 frontend tests, E2E step 12.
+
 ## 2.2.0 — scan diff
 
 Proof-of-progress between runs (pentest-tools.com gap #3):

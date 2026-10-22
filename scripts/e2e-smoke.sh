@@ -187,6 +187,51 @@ assert d['auto_baseline'] is False and d['baseline']['id'] == '$TASK2'
 print('explicit against= diff OK')
 "
 
+echo "=== 12. async report jobs ==="
+# Queue a PDF job on the completed scan and poll it to `finished`.
+REPORT=$(curl -sf -X POST http://127.0.0.1:8099/api/v1/tasks/$TASK2/reports \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"format":"pdf"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+for i in $(seq 1 40); do
+  RSTATUS=$(curl -sf "http://127.0.0.1:8099/api/v1/reports/$REPORT" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  if [ "$RSTATUS" = "finished" ] || [ "$RSTATUS" = "failed" ]; then break; fi
+  sleep 0.3
+done
+[ "$RSTATUS" = "finished" ] || { echo "REPORT JOB DID NOT FINISH"; exit 1; }
+echo "report job lifecycle OK (waiting -> finished)"
+
+# The artifact is a real PDF and the list endpoint sees it.
+curl -sf "http://127.0.0.1:8099/api/v1/reports/$REPORT/download" -H "authorization: Bearer $TOKEN" -o /tmp/secuscan-e2e-report.pdf
+head -c 5 /tmp/secuscan-e2e-report.pdf | grep -q '%PDF-' || { echo "PDF MAGIC MISSING"; exit 1; }
+curl -sf "http://127.0.0.1:8099/api/v1/reports" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+r = json.load(sys.stdin)
+assert r['total'] >= 1, 'expected at least one report job in the list'
+job = [j for j in r['items'] if j['id'] == '$REPORT'][0]
+assert job['status'] == 'finished' and job['file_bytes'] > 0
+print('report listing + artifact OK')
+"
+# Severity-filtered XLSX job: port-scanner findings are info-severity, so a
+# `critical` filter must produce an (empty but valid) workbook.
+XLSX=$(curl -sf -X POST http://127.0.0.1:8099/api/v1/tasks/$TASK2/reports \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"format":"xlsx","severity":"critical"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+for i in $(seq 1 40); do
+  XSTATUS=$(curl -sf "http://127.0.0.1:8099/api/v1/reports/$XLSX" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  if [ "$XSTATUS" = "finished" ] || [ "$XSTATUS" = "failed" ]; then break; fi
+  sleep 0.3
+done
+[ "$XSTATUS" = "finished" ] || { echo "XLSX JOB DID NOT FINISH"; exit 1; }
+curl -sf "http://127.0.0.1:8099/api/v1/reports/$XLSX/download" -H "authorization: Bearer $TOKEN" -o /tmp/secuscan-e2e-report.xlsx
+head -c 2 /tmp/secuscan-e2e-report.xlsx | grep -q 'PK' || { echo "XLSX MAGIC MISSING"; exit 1; }
+echo "severity-filtered xlsx job OK"
+# Bad format is rejected with 400.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8099/api/v1/tasks/$TASK2/reports \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"format":"exe"}')
+[ "$CODE" = "400" ] && echo "invalid report format -> 400 OK"
+
 echo ""
 echo "╔════════════════════════════════════════╗"
 echo "║  E2E SMOKE TEST: ALL STEPS PASSED      ║"

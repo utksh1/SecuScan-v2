@@ -22,10 +22,11 @@ import type { Task, Finding, Severity } from '@/api/types'
 import { StatusBadge } from '@/components/StatusBadge'
 import { SeverityBadge } from '@/components/SeverityBadge'
 import { Spinner, ErrorNote } from '@/components/ui'
+import { TaskReportsPanel } from '@/pages/TaskDetailReports'
 import { formatDate, formatDuration, cn } from '@/utils/format'
 import { useAuth } from '@/auth/AuthContext'
 
-type Tab = 'console' | 'findings' | 'diff' | 'output'
+type Tab = 'console' | 'findings' | 'diff' | 'output' | 'reports'
 
 type DiffStatus = 'new' | 'fixed' | 'regressed' | 'improved' | 'unchanged'
 
@@ -191,7 +192,7 @@ export function TaskDetailPage() {
                 <Download className="h-4 w-4" /> Report
               </button>
               <div className="invisible absolute right-0 z-10 mt-1 w-36 rounded-lg border border-slate-200 bg-white py-1 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100">
-                {['md', 'html', 'csv', 'sarif', 'json'].map((f) => (
+                {['md', 'html', 'csv', 'sarif', 'json', 'pdf', 'docx', 'xlsx'].map((f) => (
                   <button
                     key={f}
                     className="block w-full px-4 py-1.5 text-left text-sm text-slate-600 hover:bg-slate-50"
@@ -236,6 +237,9 @@ export function TaskDetailPage() {
         )}
         <TabButton active={tab === 'output'} onClick={() => setTab('output')} icon={<FileText className="h-4 w-4" />}>
           Raw output
+        </TabButton>
+        <TabButton active={tab === 'reports'} onClick={() => setTab('reports')} icon={<Download className="h-4 w-4" />}>
+          Reports
         </TabButton>
       </div>
 
@@ -296,6 +300,9 @@ export function TaskDetailPage() {
           )}
         </div>
       )}
+
+      {/* Reports: instant downloads + async jobs */}
+      {tab === 'reports' && <TaskReportsPanel taskId={id} />}
     </div>
   )
 }
