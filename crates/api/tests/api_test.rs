@@ -75,6 +75,96 @@ max_per_hour = 0
     )
     .unwrap();
     std::fs::write(
+        plugins_dir.path().join("difftest.toml"),
+        r#"
+[plugin]
+id = "difftest"
+name = "Diff Test Tool"
+version = "1.0.0"
+description = "emits a controllable finding set so scan diffs are deterministic"
+category = "test"
+
+[engine]
+type = "cli"
+binary = "sh"
+timeout_seconds = 30
+output_format = "text"
+argv = [
+  "sh", "-c",
+  "case \"$1\" in run1) printf 'A CRITICAL\nB HIGH\nD LOW\nE CRITICAL\n';; run2) printf 'B CRITICAL\nC MEDIUM\nD LOW\nE LOW\n';; esac",
+  "sh", "{mode}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+
+[[fields]]
+id = "mode"
+label = "Mode"
+type = "select"
+default = "run1"
+options = [
+  { value = "run1", label = "Run 1" },
+  { value = "run2", label = "Run 2" },
+]
+
+[parser]
+type = "passthrough"
+
+[[static_rules]]
+pattern = "A CRITICAL"
+title = "Finding A"
+severity = "critical"
+category = "Test"
+
+[[static_rules]]
+pattern = "B HIGH"
+title = "Finding B"
+severity = "high"
+category = "Test"
+
+[[static_rules]]
+pattern = "B CRITICAL"
+title = "Finding B"
+severity = "critical"
+category = "Test"
+
+[[static_rules]]
+pattern = "C MEDIUM"
+title = "Finding C"
+severity = "medium"
+category = "Test"
+
+[[static_rules]]
+pattern = "D LOW"
+title = "Finding D"
+severity = "low"
+category = "Test"
+
+[[static_rules]]
+pattern = "E CRITICAL"
+title = "Finding E"
+severity = "critical"
+category = "Test"
+
+[[static_rules]]
+pattern = "E LOW"
+title = "Finding E"
+severity = "low"
+category = "Test"
+
+[safety]
+level = "safe"
+requires_consent = false
+max_concurrent = 2
+max_per_hour = 0
+"#,
+    )
+    .unwrap();
+    std::fs::write(
         plugins_dir.path().join("sleepy.toml"),
         r#"
 [plugin]
@@ -1334,4 +1424,285 @@ async fn multi_severity_filter_returns_correct_results() {
     .unwrap();
     let fl: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(fl["total"], 2);
+}
+
+// ---------------------------------------------------------------------------
+// Scan diff (cycle 8 feature work).
+// ---------------------------------------------------------------------------
+
+/// Start a difftest task with the given mode and wait for completion.
+async fn difftest_run(c: &reqwest::Client, base: &str, token: &str, mode: &str) -> String {
+    let resp = c
+        .post(format!("{base}/tasks"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "plugin_id": "difftest",
+            "inputs": {"target": "diff.example.com", "mode": mode},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let id = task["id"].as_str().unwrap().to_string();
+    let done = wait_terminal(c, base, token, &id).await;
+    assert_eq!(done["status"], "completed", "difftest run failed: {done}");
+    id
+}
+
+#[tokio::test]
+async fn scan_diff_classifies_new_fixed_regressed_improved_unchanged() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // Run 1: A(critical) B(high) D(low) E(critical)
+    let run1 = difftest_run(&c, &s.base, &token, "run1").await;
+    // Run 2: B(critical) C(medium) D(low) E(low)
+    let run2 = difftest_run(&c, &s.base, &token, "run2").await;
+
+    // Auto baseline must pick run1 (same plugin + target, earlier, completed).
+    let resp = c
+        .get(format!("{}/tasks/{run2}/diff", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let d: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(d["auto_baseline"], serde_json::json!(true));
+    assert_eq!(d["baseline"]["id"], serde_json::json!(run1));
+    assert_eq!(
+        d["summary"].to_string(),
+        serde_json::json!({
+            "new": 1, "fixed": 1, "regressed": 1, "improved": 1, "unchanged": 1
+        })
+        .to_string()
+    );
+
+    let status_of = |title: &str| -> String {
+        d["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| {
+                let f = if i["finding"].is_null() {
+                    &i["previous_finding"]
+                } else {
+                    &i["finding"]
+                };
+                f["title"] == serde_json::json!(title)
+            })
+            .unwrap_or_else(|| panic!("no diff item titled {title}: {d}"))["status"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(status_of("Finding A"), "fixed");
+    assert_eq!(status_of("Finding B"), "regressed");
+    assert_eq!(status_of("Finding C"), "new");
+    assert_eq!(status_of("Finding D"), "unchanged");
+    assert_eq!(status_of("Finding E"), "improved");
+
+    // Regressed item carries both severities for the UI arrow.
+    let b = d["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["finding"]["title"] == serde_json::json!("Finding B"))
+        .unwrap();
+    assert_eq!(b["previous_severity"], serde_json::json!("high"));
+    assert_eq!(b["finding"]["severity"], serde_json::json!("critical"));
+
+    // Fixed item carries only the previous finding.
+    let a = d["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["status"] == serde_json::json!("fixed"))
+        .unwrap();
+    assert!(a["finding"].is_null());
+    assert_eq!(
+        a["previous_finding"]["title"],
+        serde_json::json!("Finding A")
+    );
+
+    // Explicit against= works (reverse direction: run1 vs run2).
+    let resp = c
+        .get(format!("{}/tasks/{run1}/diff?against={run2}", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let d: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(d["auto_baseline"], serde_json::json!(false));
+    assert_eq!(d["baseline"]["id"], serde_json::json!(run2));
+    // Reversed: A new, B improved, C fixed, D unchanged, E regressed.
+    assert_eq!(d["summary"]["new"], 1);
+    assert_eq!(d["summary"]["fixed"], 1);
+    assert_eq!(d["summary"]["regressed"], 1);
+    assert_eq!(d["summary"]["improved"], 1);
+    assert_eq!(d["summary"]["unchanged"], 1);
+
+    // Diffing run1 (the earliest) has no baseline -> 404 with guidance.
+    let resp = c
+        .get(format!("{}/tasks/{run1}/diff", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(body["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no earlier completed run"));
+
+    // A different target never becomes the baseline.
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "difftest",
+            "inputs": {"target": "other.example.com", "mode": "run1"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let other: serde_json::Value = resp.json().await.unwrap();
+    let _ = wait_terminal(&c, &s.base, &token, other["id"].as_str().unwrap()).await;
+    let resp = c
+        .get(format!(
+            "{}/tasks/{}/diff",
+            s.base,
+            other["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404); // diff.example.com runs are not its baseline
+
+    // Non-completed task -> 400 (findings only exist at completion).
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "sleepy",
+            "inputs": {"target": "127.0.0.1"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let sleepy: serde_json::Value = resp.json().await.unwrap();
+    let sleepy_id = sleepy["id"].as_str().unwrap().to_string();
+    let resp = c
+        .get(format!("{}/tasks/{sleepy_id}/diff", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    // Cleanup: cancel the sleepy task so the test server can shut down.
+    let _ = c
+        .post(format!("{}/tasks/{sleepy_id}/cancel", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn scan_diff_respects_user_isolation() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // Scanner user runs difftest twice.
+    let _ = c
+        .post(format!("{}/admin/users", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "email": "scanner2@test.local", "name": "Scanner2",
+            "password": "scanner2-pass-123", "role": "scanner"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "scanner2@test.local", "password": "scanner2-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let stoken = body["access_token"].as_str().unwrap().to_string();
+
+    let run1 = difftest_run(&c, &s.base, &stoken, "run1").await;
+    let run2 = difftest_run(&c, &s.base, &stoken, "run2").await;
+
+    // Scanner sees their own baseline.
+    let resp = c
+        .get(format!("{}/tasks/{run2}/diff", s.base))
+        .bearer_auth(&stoken)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let d: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(d["baseline"]["id"], serde_json::json!(run1));
+
+    // Admin (global scope) also finds it.
+    let resp = c
+        .get(format!("{}/tasks/{run2}/diff", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let admin_diff: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(admin_diff["baseline"]["id"], serde_json::json!(run1));
+
+    // Another user cannot use scanner's task as an explicit baseline…
+    let _ = c
+        .post(format!("{}/admin/users", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "email": "scanner3@test.local", "name": "Scanner3",
+            "password": "scanner3-pass-123", "role": "scanner"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "scanner3@test.local", "password": "scanner3-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let t3 = body["access_token"].as_str().unwrap().to_string();
+
+    // …and their own difftest run has no baseline (run1/run2 belong to scanner2).
+    let run3 = difftest_run(&c, &s.base, &t3, "run1").await;
+    let resp = c
+        .get(format!("{}/tasks/{run3}/diff", s.base))
+        .bearer_auth(&t3)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Direct IDOR check on the diff of a foreign task.
+    let resp = c
+        .get(format!("{}/tasks/{run2}/diff", s.base))
+        .bearer_auth(&t3)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404); // not found, not 403 — existence hidden
 }

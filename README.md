@@ -35,6 +35,7 @@ analyst triage workflow, report exports, multi-user access control, and client/p
 | Reports | csv/html/pdf/sarif | md/csv/html/sarif/json |
 | Safety | consent, network policy | consent, network policy **with host canonicalization + audit log**, per-plugin concurrency/hourly limits, argv hardening |
 | Organization | flat task list | **workspaces + first-class targets** (per-client/project scoping of tasks, findings and dashboard) |
+| Run comparison | none | **scan diff**: new / fixed / regressed / improved / unchanged between runs |
 
 ## Architecture
 

@@ -289,7 +289,7 @@ async fn get_one(
     Ok(Json(task_to_json(&t, false)))
 }
 
-async fn load_task_for_user(
+pub async fn load_task_for_user(
     state: &SharedState,
     user: &CurrentUser,
     id: &str,

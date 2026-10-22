@@ -9,17 +9,46 @@ import {
   ShieldAlert,
   FileText,
   ChevronRight,
+  GitCompareArrows,
+  ArrowUpRight,
+  ArrowDownRight,
+  Plus,
+  Check,
+  Minus,
 } from 'lucide-react'
 import { request, downloadFile } from '@/api/client'
 import { streamTaskEvents, type TaskStreamEvent } from '@/api/sse'
-import type { Task, Finding } from '@/api/types'
+import type { Task, Finding, Severity } from '@/api/types'
 import { StatusBadge } from '@/components/StatusBadge'
 import { SeverityBadge } from '@/components/SeverityBadge'
 import { Spinner, ErrorNote } from '@/components/ui'
 import { formatDate, formatDuration, cn } from '@/utils/format'
 import { useAuth } from '@/auth/AuthContext'
 
-type Tab = 'console' | 'findings' | 'output'
+type Tab = 'console' | 'findings' | 'diff' | 'output'
+
+type DiffStatus = 'new' | 'fixed' | 'regressed' | 'improved' | 'unchanged'
+
+interface ScanDiff {
+  task: { id: string; plugin_id: string; plugin_name: string; target?: string; created_at: string }
+  baseline: {
+    id: string
+    created_at: string
+    finished_at?: string
+    plugin_id: string
+    plugin_name: string
+    target?: string
+    status: string
+  }
+  auto_baseline: boolean
+  summary: Record<DiffStatus, number>
+  items: {
+    status: DiffStatus
+    finding?: Finding
+    previous_finding?: Finding
+    previous_severity?: Severity
+  }[]
+}
 
 export function TaskDetailPage() {
   const { id = '' } = useParams()
@@ -50,6 +79,15 @@ export function TaskDetailPage() {
     enabled: tab === 'output',
   })
 
+  // Scan diff vs the previous run (fetched only when the tab is opened on a
+  // completed task — the API rejects non-completed tasks with 400).
+  const diffQuery = useQuery({
+    queryKey: ['task-diff', id],
+    queryFn: () => request<ScanDiff>(`/tasks/${id}/diff`),
+    enabled: tab === 'diff' && task?.status === 'completed',
+    retry: false,
+  })
+
   // Live SSE console (with cursor-based reconnection).
   const taskStatus = task?.status
   useEffect(() => {
@@ -64,6 +102,7 @@ export function TaskDetailPage() {
         qc.invalidateQueries({ queryKey: ['task', id] })
         qc.invalidateQueries({ queryKey: ['task-findings', id] })
         qc.invalidateQueries({ queryKey: ['findings'] })
+        qc.invalidateQueries({ queryKey: ['task-diff', id] })
       },
       () => {
         // The SSE reader polls this to decide whether to reconnect.
@@ -190,6 +229,11 @@ export function TaskDetailPage() {
         >
           Findings {findings && <span className="text-xs text-slate-400">({findings.items.length})</span>}
         </TabButton>
+        {task.status === 'completed' && (
+          <TabButton active={tab === 'diff'} onClick={() => setTab('diff')} icon={<GitCompareArrows className="h-4 w-4" />}>
+            Diff vs previous run
+          </TabButton>
+        )}
         <TabButton active={tab === 'output'} onClick={() => setTab('output')} icon={<FileText className="h-4 w-4" />}>
           Raw output
         </TabButton>
@@ -235,6 +279,9 @@ export function TaskDetailPage() {
           )}
         </div>
       )}
+
+      {/* Diff vs previous run */}
+      {tab === 'diff' && <DiffPanel diff={diffQuery.data} isLoading={diffQuery.isLoading} error={diffQuery.error} />}
 
       {/* Raw output */}
       {tab === 'output' && (
@@ -384,6 +431,160 @@ export function FindingRow({ finding: f }: { finding: Finding }) {
               <p className="text-slate-600">{f.remediation}</p>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// --- Scan diff panel -----------------------------------------------------------
+
+const DIFF_META: Record<DiffStatus, { label: string; icon: typeof Plus; chip: string; tone: string }> = {
+  new: {
+    label: 'New',
+    icon: Plus,
+    chip: 'bg-red-50 text-red-700 ring-red-200',
+    tone: 'text-red-600',
+  },
+  regressed: {
+    label: 'Regressed',
+    icon: ArrowUpRight,
+    chip: 'bg-orange-50 text-orange-700 ring-orange-200',
+    tone: 'text-orange-600',
+  },
+  fixed: {
+    label: 'Fixed',
+    icon: Check,
+    chip: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    tone: 'text-emerald-600',
+  },
+  improved: {
+    label: 'Improved',
+    icon: ArrowDownRight,
+    chip: 'bg-sky-50 text-sky-700 ring-sky-200',
+    tone: 'text-sky-600',
+  },
+  unchanged: {
+    label: 'Unchanged',
+    icon: Minus,
+    chip: 'bg-slate-100 text-slate-600 ring-slate-200',
+    tone: 'text-slate-400',
+  },
+}
+
+function DiffPanel({
+  diff,
+  isLoading,
+  error,
+}: {
+  diff: ScanDiff | undefined
+  isLoading: boolean
+  error: unknown
+}) {
+  if (isLoading) return <Spinner label="Computing diff…" />
+
+  if (error) {
+    // 404 = no baseline run exists yet; anything else is unexpected.
+    const message = error instanceof Error ? error.message : 'diff failed'
+    return (
+      <div className="card p-8 text-center text-sm text-slate-400">
+        {/no earlier completed run/i.test(message) ? (
+          <>
+            No earlier completed run of this scanner against the same target — run it again to
+            start tracking changes between runs.
+          </>
+        ) : (
+          message
+        )}
+      </div>
+    )
+  }
+  if (!diff) return null
+
+  const summaryOrder: DiffStatus[] = ['new', 'regressed', 'fixed', 'improved', 'unchanged']
+
+  return (
+    <div className="space-y-4">
+      {/* Baseline header */}
+      <div className="card flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="text-sm text-slate-600">
+          Compared against{' '}
+          <Link to={`/tasks/${diff.baseline.id}`} className="font-medium text-brand-600 hover:underline">
+            run from {formatDate(diff.baseline.created_at)}
+          </Link>
+          {diff.auto_baseline ? (
+            <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">
+              auto-selected
+            </span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {summaryOrder.map((s) => {
+            const ChipIcon = DIFF_META[s].icon
+            return diff.summary[s] > 0 ? (
+              <span
+                key={s}
+                className={cn('inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ring-1', DIFF_META[s].chip)}
+              >
+                <ChipIcon className="h-3 w-3" />
+                {diff.summary[s]} {DIFF_META[s].label.toLowerCase()}
+              </span>
+            ) : null
+          })}
+        </div>
+      </div>
+
+      {/* Items */}
+      {diff.items.length === 0 ? (
+        <div className="card p-8 text-center text-sm text-slate-400">
+          Both runs produced no findings — nothing to compare.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {diff.items.map((item, i) => {
+            const meta = DIFF_META[item.status]
+            const ItemIcon = meta.icon
+            const finding = item.finding ?? item.previous_finding
+            return (
+              <div key={(finding?.id ?? i) + '-' + item.status} className="card flex items-start gap-3 p-4">
+                <span className={cn('mt-0.5 rounded-lg p-1.5 ring-1', meta.chip)}>
+                  <ItemIcon className={cn('h-3.5 w-3.5', meta.tone)} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={cn('text-xs font-semibold uppercase tracking-wide', meta.tone)}>
+                      {meta.label}
+                    </span>
+                    <span className="text-sm font-medium text-slate-800">
+                      {finding?.title ?? '(untitled)'}
+                    </span>
+                    <SeverityBadge severity={(item.finding ?? item.previous_finding)!.severity} />
+                    {item.status === 'regressed' && item.previous_severity && (
+                      <span className="text-xs text-slate-400">
+                        was <SeverityBadge severity={item.previous_severity} />
+                      </span>
+                    )}
+                    {item.status === 'improved' && item.previous_severity && (
+                      <span className="text-xs text-slate-400">
+                        was <SeverityBadge severity={item.previous_severity} />
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {finding?.category}
+                    {item.status === 'fixed' && (
+                      <span className="ml-2 text-slate-400">
+                        present in the baseline run, absent now
+                      </span>
+                    )}
+                    {item.status === 'new' && (
+                      <span className="ml-2 text-slate-400">not present in the baseline run</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>

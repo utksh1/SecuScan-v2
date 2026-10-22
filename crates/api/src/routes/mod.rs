@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod auth;
 pub mod dashboard;
+pub mod diff;
 pub mod findings;
 pub mod plugins;
 pub mod reports;
@@ -26,6 +27,7 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(reports::router())
         .merge(workflows::router())
         .merge(workspaces::router())
+        .merge(diff::router())
         .merge(dashboard::router())
         .merge(admin::router())
         .fallback(fallback_404)

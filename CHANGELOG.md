@@ -3,6 +3,27 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.2.0 — scan diff
+
+Proof-of-progress between runs (pentest-tools.com gap #3):
+
+- `GET /tasks/:id/diff` — findings of a completed task classified as
+  new / fixed / regressed / improved / unchanged against a baseline run.
+- Baseline auto-selection: latest other completed run of the same plugin against
+  the same target visible to the caller (NULL targets match via `IS`); explicit
+  `?against=<task_id>` for arbitrary comparisons. User isolation enforced on both
+  sides (foreign tasks 404).
+- Cross-run identity: (plugin_id, category, title); severity tracked separately so
+  a severity change reports as regressed/improved rather than fixed+new.
+- UI: "Diff vs previous run" tab on completed tasks — summary chips, attention
+  ordering (new → regressed → fixed → improved → unchanged), severity arrows for
+  changed findings, link to the baseline run, friendly empty state when no
+  baseline exists yet.
+- Tests: 3 diff-engine unit tests, 2 integration tests (full classification matrix
+  over a deterministic `difftest` fixture plugin with a mode switch, reverse diff,
+  user isolation across three users, error paths), frontend tab tests, E2E step
+  (identical runs → all unchanged, auto + explicit baseline).
+
 ## 2.1.0 — workspaces & first-class targets
 
 Client/project scoping modeled after commercial scanning platforms (pentest-tools.com):

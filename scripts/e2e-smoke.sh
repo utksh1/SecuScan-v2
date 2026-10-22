@@ -155,6 +155,38 @@ print('workspace dashboard scoping OK')
 CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8099/api/v1/tasks?workspace_id=nope" -H "authorization: Bearer $TOKEN")
 [ "$CODE" = "404" ] && echo "unknown workspace filter -> 404 OK"
 
+echo "=== 11. scan diff ==="
+# A second identical port-scanner run gives an auto-baseline diff that must
+# be entirely "unchanged" (deterministic tool, same target, same ports).
+TASK2=$(curl -sf -X POST http://127.0.0.1:8099/api/v1/tasks \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"plugin_id":"port-scanner","inputs":{"target":"127.0.0.1","ports":"9933"},"consent_granted":true}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+for i in $(seq 1 40); do
+  STATUS=$(curl -sf "http://127.0.0.1:8099/api/v1/tasks/$TASK2" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then break; fi
+  sleep 0.3
+done
+[ "$STATUS" = "completed" ] || { echo "DIFF RUN DID NOT COMPLETE"; exit 1; }
+
+curl -sf "http://127.0.0.1:8099/api/v1/tasks/$TASK2/diff" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['auto_baseline'] is True, 'expected auto-selected baseline'
+assert d['baseline']['id'] != d['task']['id'], 'baseline must not be the task itself'
+s = d['summary']
+assert s['new'] == 0 and s['fixed'] == 0 and s['regressed'] == 0 and s['improved'] == 0, f'unexpected changes: {s}'
+assert s['unchanged'] >= 1, 'expected at least one unchanged finding'
+print('diff vs auto-baseline OK:', s['unchanged'], 'unchanged, 0 new/fixed/regressed')
+"
+# Explicit reverse diff works too.
+curl -sf "http://127.0.0.1:8099/api/v1/tasks/$TASK_ID/diff?against=$TASK2" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+assert d['auto_baseline'] is False and d['baseline']['id'] == '$TASK2'
+print('explicit against= diff OK')
+"
+
 echo ""
 echo "╔════════════════════════════════════════╗"
 echo "║  E2E SMOKE TEST: ALL STEPS PASSED      ║"

@@ -263,3 +263,35 @@ pub async fn update_output(
         .await?;
     Ok(())
 }
+
+/// Automatic diff baseline: the latest *other* completed run of the same
+/// plugin against the same target, created no later than the reference
+/// task, visible to `user_id` (None = admin / global). NULL targets match
+/// via `IS` so target-less plugins still diff.
+pub async fn find_previous_run(
+    pool: &SqlitePool,
+    user_id: Option<&str>,
+    plugin_id: &str,
+    target: Option<&str>,
+    before_created_at: &str,
+    exclude_id: &str,
+) -> DbResult<Option<TaskRow>> {
+    sqlx::query_as::<_, TaskRow>(
+        "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
+         exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
+         workspace_id, created_at, started_at, finished_at \
+         FROM tasks \
+         WHERE plugin_id = ?1 AND target IS ?2 AND status = 'completed' \
+           AND id != ?3 AND created_at <= ?4 \
+           AND (?5 IS NULL OR user_id = ?5) \
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(plugin_id)
+    .bind(target)
+    .bind(exclude_id)
+    .bind(before_created_at)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(Into::into)
+}

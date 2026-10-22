@@ -137,3 +137,42 @@ WorkspaceProvider falls back to Personal when the stored selection disappears.
 
 Totals after this cycle: 90 backend + 48 frontend tests, E2E smoke extended with the
 workspace flow, clippy/fmt clean.
+
+
+## Review cycle 8 — scan diff feature audit
+
+Scope: `routes/diff.rs` (engine + route), `repo/findings.rs::list_all_for_task`,
+`repo/tasks.rs::find_previous_run`, the TaskDetail diff tab, both test additions,
+E2E step 11.
+
+Audited specifically:
+
+- **Fingerprint collisions**: identity is (plugin_id, category, title) joined with
+  U+001F unit separators — concatenated-field collisions impossible; verified a
+  same-title/different-category pair classifies as new+fixed, not unchanged (unit
+  test).
+- **Auto-baseline ordering**: `created_at` has millisecond resolution and the query
+  excludes the task itself (`id != ?`), so self-selection is impossible; the
+  same-millisecond ambiguity between two *other* runs is benign and `?against=`
+  exists as the escape hatch.
+- **NULL targets**: `target IS ?` (NULL-safe equality) so target-less plugins diff
+  correctly.
+- **User isolation**: `load_task_for_user` on both the task and the explicit
+  baseline (foreign tasks 404, existence hidden); auto-baseline query is scoped to
+  the caller unless admin. Covered by a three-user integration test.
+- **Non-completed tasks**: 400 on both sides (findings only persist at completion —
+  diffing a running task would have reported everything as fixed).
+- **`list_all_for_task`**: no user filter needed (task ownership already checked at
+  the route); bounded by the 5 000-per-task insert cap; severity-ordered.
+
+Found and fixed during the cycle:
+
+1. Double `fingerprint()` computation per current finding (perf nit, now computed
+   once and reused for the status match and the previous-finding attachment).
+2. E2E script: f-string with nested double quotes broke the bash `python3 -c`
+   quoting (SyntaxError) — rewritten as a plain print.
+3. Test-quality fixes from clippy: `then().unwrap_or()` → `if/else`, an unused
+   binding, and the admin diff assertion now also verifies the baseline id.
+
+Verified totals after the cycle: 95 backend + 50 frontend tests green, clippy and
+rustfmt clean, tsc clean, production build OK, E2E smoke (11 steps) green.

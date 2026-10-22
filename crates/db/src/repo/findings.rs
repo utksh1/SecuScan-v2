@@ -211,3 +211,18 @@ pub async fn severity_counts_for_task(
     .await
     .map_err(Into::into)
 }
+
+/// All findings of one task without the list-endpoint clamp (bounded by the
+/// 5 000-per-task insert cap). Used by the diff engine.
+pub async fn list_all_for_task(pool: &SqlitePool, task_id: &str) -> DbResult<Vec<FindingRow>> {
+    sqlx::query_as::<_, FindingRow>(
+        "SELECT * FROM findings WHERE task_id = ?1 \
+         ORDER BY CASE severity \
+            WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 \
+            WHEN 'low' THEN 3 ELSE 4 END, created_at",
+    )
+    .bind(task_id)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}

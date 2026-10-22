@@ -70,6 +70,21 @@ Admission pipeline (in order): plugin exists → available → enabled → capab
 denied → inputs valid (+preset merge) → consent → target policy (denials audited).
 Rejections: 404/400/403 with a specific message.
 
+### Scan diff
+
+`GET /tasks/:id/diff` compares the task's findings against a baseline run and classifies
+every finding as `new` / `fixed` / `regressed` (severity worsened) / `improved` /
+`unchanged`. Identity across runs is (plugin_id, category, title) — the declarative
+parser templates produce stable titles for deterministic tools.
+
+- Baseline: auto-selected as the latest *other* completed run of the same plugin against
+  the same target visible to the caller; or explicit via `?against=<task_id>`.
+- Both tasks must be `completed` (findings are only recorded at completion) — else `400`.
+- No baseline exists → `404` with guidance.
+- Response: `{task, baseline, auto_baseline, summary{new,fixed,regressed,improved,unchanged}, items[]}`
+  where each item carries `finding` (current) and/or `previous_finding` (+ `previous_severity`
+  for regressed/improved/unchanged).
+
 ### SSE stream format
 
 ```
