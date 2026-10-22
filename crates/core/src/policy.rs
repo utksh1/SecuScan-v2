@@ -269,7 +269,13 @@ fn canonicalize_host(raw: &str) -> String {
 }
 
 fn u32_to_ipv4(n: u32) -> String {
-    format!("{}.{}.{}.{}", (n >> 24) & 0xff, (n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff)
+    format!(
+        "{}.{}.{}.{}",
+        (n >> 24) & 0xff,
+        (n >> 16) & 0xff,
+        (n >> 8) & 0xff,
+        n & 0xff
+    )
 }
 
 /// True when a glob pattern is *IPv4-shaped*: every dot-separated segment is
@@ -320,7 +326,6 @@ pub fn matches_target(host: &str, pattern: &str) -> bool {
     }
     glob_match(&pattern, &host)
 }
-
 
 /// Case-insensitive glob with `*` (any run) and `?` (single char).
 pub fn glob_match(pattern: &str, text: &str) -> bool {

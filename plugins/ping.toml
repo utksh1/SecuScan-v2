@@ -34,7 +34,7 @@ label = "Target"
 type = "string"
 required = true
 placeholder = "192.168.1.1 or example.com"
-pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*$'
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*$'
 message = "Must be a hostname or IP"
 
 [[fields]]

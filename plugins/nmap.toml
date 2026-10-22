@@ -39,7 +39,7 @@ label = "Target"
 type = "string"
 required = true
 placeholder = "192.168.1.1, lab.local, or 10.0.0.0/24"
-pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*(/\d{1,2})?$'
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
 message = "Must be an IP, hostname, or CIDR range"
 
 [[fields]]

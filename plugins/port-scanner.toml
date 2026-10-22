@@ -28,7 +28,7 @@ label = "Target"
 type = "string"
 required = true
 placeholder = "127.0.0.1, lab.local, or 192.168.1.0/24"
-pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*(/\d{1,2})?$'
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
 message = "Must be an IP, hostname, or CIDR range"
 help = "Host, IP, or CIDR range (max 1024 hosts)."
 

@@ -3,8 +3,7 @@
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, RawQuery, State};
 use axum::Json;
 use secuscan_core::models::AnalystStatus;
 use secuscan_db::models::FindingRow;
@@ -38,52 +37,45 @@ pub fn finding_to_json(f: &FindingRow) -> Value {
     })
 }
 
-/// Accepts `?severity=high` (single) and `?severity=critical&severity=high`
-/// (repeated) alike, normalizing both to a Vec.
-fn deserialize_multi<'de, D>(d: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    struct V;
-    impl<'de> serde::de::Visitor<'de> for V {
-        type Value = Vec<String>;
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("a string or a sequence of strings")
-        }
-        fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            Ok(vec![v.to_string()])
-        }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(
-            self,
-            mut seq: A,
-        ) -> Result<Self::Value, A::Error> {
-            let mut out = Vec::new();
-            while let Some(x) = seq.next_element::<String>()? {
-                out.push(x);
-            }
-            Ok(out)
-        }
-    }
-    d.deserialize_any(V)
-}
-
-#[derive(Deserialize, Default)]
+/// Parsed query string supporting repeated keys (e.g.
+/// `?severity=critical&severity=high`). serde_urlencoded rejects duplicate
+/// keys for struct fields, so we parse the raw query ourselves.
+#[derive(Default)]
 struct ListQuery {
     task_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_multi")]
     severity: Vec<String>,
     kind: Option<String>,
     analyst_status: Option<String>,
     category: Option<String>,
     search: Option<String>,
-    #[serde(default = "default_limit")]
     limit: i64,
-    #[serde(default)]
     offset: i64,
 }
 
-fn default_limit() -> i64 {
-    100
+impl ListQuery {
+    fn parse(raw: Option<&str>) -> Self {
+        let mut q = ListQuery {
+            limit: 100,
+            ..Default::default()
+        };
+        if let Some(raw) = raw {
+            for (k, v) in url::form_urlencoded::parse(raw.as_bytes()) {
+                let v = v.to_string();
+                match k.as_ref() {
+                    "task_id" => q.task_id = Some(v),
+                    "severity" => q.severity.push(v),
+                    "kind" => q.kind = Some(v),
+                    "analyst_status" => q.analyst_status = Some(v),
+                    "category" => q.category = Some(v),
+                    "search" => q.search = Some(v),
+                    "limit" => q.limit = v.parse().unwrap_or(100),
+                    "offset" => q.offset = v.parse().unwrap_or(0),
+                    _ => {}
+                }
+            }
+        }
+        q
+    }
 }
 
 fn validate_enums(q: &ListQuery) -> ApiResult<()> {
@@ -110,8 +102,9 @@ fn validate_enums(q: &ListQuery) -> ApiResult<()> {
 async fn list(
     State(state): State<SharedState>,
     user: CurrentUser,
-    Query(q): Query<ListQuery>,
+    RawQuery(raw): RawQuery,
 ) -> ApiResult<Json<Value>> {
+    let q = ListQuery::parse(raw.as_deref());
     validate_enums(&q)?;
     // Access control: non-admins are scoped to their own tasks via the join.
     let filters = repo::findings::FindingFilters {
@@ -180,7 +173,3 @@ async fn triage(
     let updated = repo::findings::update_analyst_status(&state.db, &id, status).await?;
     Ok(Json(finding_to_json(&updated)))
 }
-
-// Silence unused import warning for StatusCode when only used in some builds.
-#[allow(unused)]
-fn _status_code_used(_: StatusCode) {}

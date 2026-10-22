@@ -67,7 +67,10 @@ impl FindingFilters {
             .map(|i| format!("?{}", start_idx + i))
             .collect();
         (
-            format!(" AND (f.severity = {})", placeholders.join(" OR f.severity = ")),
+            format!(
+                " AND (f.severity = {})",
+                placeholders.join(" OR f.severity = ")
+            ),
             self.severity.clone(),
         )
     }

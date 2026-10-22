@@ -124,9 +124,15 @@ impl NativeScanner for PortScanner {
             .iter()
             .filter_map(|h| resolved.get(h).copied().flatten().map(|ip| (h.clone(), ip)))
             .flat_map(|(h, ip)| {
-                ports
-                    .iter()
-                    .map(move |p| (Probe { host: h.clone(), port: *p }, ip))
+                ports.iter().map(move |p| {
+                    (
+                        Probe {
+                            host: h.clone(),
+                            port: *p,
+                        },
+                        ip,
+                    )
+                })
             })
             .collect();
 
@@ -167,7 +173,6 @@ impl NativeScanner for PortScanner {
                 ProbeResult::Open => open.push(probe),
                 ProbeResult::Refused => refused += 1,
                 ProbeResult::Filtered => filtered += 1,
-                ProbeResult::Unresolved => filtered += 1,
             }
             done += 1;
             if done.is_multiple_of(256) {
@@ -241,7 +246,6 @@ enum ProbeResult {
     Open,
     Refused,
     Filtered,
-    Unresolved,
 }
 
 fn expand_hosts(target: &str) -> Result<Vec<String>, String> {

@@ -132,7 +132,11 @@ async fn stream(
 fn is_finished_frame(payload_json: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(payload_json)
         .ok()
-        .and_then(|v| v.get("type").and_then(|t| t.as_str()).map(|t| t == "finished"))
+        .and_then(|v| {
+            v.get("type")
+                .and_then(|t| t.as_str())
+                .map(|t| t == "finished")
+        })
         .unwrap_or(false)
 }
 

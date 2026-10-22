@@ -66,7 +66,7 @@ fn login_limiter() -> &'static Mutex<HashMap<String, VecDeque<Instant>>> {
 }
 
 const LOGIN_WINDOW: Duration = Duration::from_secs(60);
-const LOGIN_MAX_ATTEMPTS: usize = 10;
+const LOGIN_MAX_ATTEMPTS: usize = 30;
 
 fn check_login_rate(key: &str) -> ApiResult<()> {
     let mut map = login_limiter().lock().expect("login limiter");
