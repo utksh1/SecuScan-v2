@@ -1,0 +1,115 @@
+//! Native (in-process Rust) scanners.
+//!
+//! Native plugins make SecuScan v2 useful with zero external tooling. They
+//! implement the same contract as CLI wrappers — validated inputs in,
+//! [`Finding`]s and live events out — with strict timeouts and cancellation.
+
+pub mod http_headers;
+pub mod http_recon;
+pub mod port_scanner;
+pub mod tls_check;
+
+use crate::events::EventSink;
+use async_trait::async_trait;
+use secuscan_core::models::Finding;
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
+use tokio_util::sync::CancellationToken;
+
+/// Execution context handed to native scanners.
+#[derive(Clone)]
+pub struct NativeCtx {
+    pub sink: EventSink,
+    pub cancel: CancellationToken,
+    pub timeout: std::time::Duration,
+}
+
+impl std::fmt::Debug for NativeCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeCtx")
+            .field("timeout", &self.timeout)
+            .finish()
+    }
+}
+
+/// A native scanner registered under a well-known id.
+#[async_trait]
+pub trait NativeScanner: Send + Sync {
+    fn id(&self) -> &'static str;
+    fn name(&self) -> &'static str;
+    /// Human description shown in the plugin catalog.
+    fn description(&self) -> &'static str;
+    async fn run(
+        &self,
+        inputs: &BTreeMap<String, serde_json::Value>,
+        ctx: &NativeCtx,
+    ) -> Result<Vec<Finding>, String>;
+}
+
+/// Static registry of native scanners.
+pub struct NativeRegistry {
+    scanners: Vec<&'static dyn NativeScanner>,
+}
+
+impl NativeRegistry {
+    pub fn lookup(&self, id: &str) -> Option<&'static dyn NativeScanner> {
+        self.scanners.iter().copied().find(|s| s.id() == id)
+    }
+
+    pub fn all(&self) -> &[&'static dyn NativeScanner] {
+        &self.scanners
+    }
+}
+
+pub fn registry() -> &'static NativeRegistry {
+    static REGISTRY: OnceLock<NativeRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(|| NativeRegistry {
+        scanners: vec![
+            &port_scanner::PortScanner,
+            &http_headers::HttpHeadersScanner,
+            &http_recon::HttpReconScanner,
+            &tls_check::TlsCheckScanner,
+        ],
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Input helpers shared by native scanners
+// ---------------------------------------------------------------------------
+
+pub(crate) fn get_str<'a>(
+    inputs: &'a BTreeMap<String, serde_json::Value>,
+    key: &str,
+) -> Result<&'a str, String> {
+    inputs
+        .get(key)
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("missing string field `{key}`"))
+}
+
+pub(crate) fn get_str_or<'a>(
+    inputs: &'a BTreeMap<String, serde_json::Value>,
+    key: &str,
+    default: &'a str,
+) -> &'a str {
+    inputs.get(key).and_then(|v| v.as_str()).unwrap_or(default)
+}
+
+pub(crate) fn get_bool_or(
+    inputs: &BTreeMap<String, serde_json::Value>,
+    key: &str,
+    default: bool,
+) -> bool {
+    inputs
+        .get(key)
+        .and_then(|v| v.as_bool())
+        .unwrap_or(default)
+}
+
+pub(crate) fn get_i64_or(
+    inputs: &BTreeMap<String, serde_json::Value>,
+    key: &str,
+    default: i64,
+) -> i64 {
+    inputs.get(key).and_then(|v| v.as_i64()).unwrap_or(default)
+}

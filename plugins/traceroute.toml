@@ -1,0 +1,79 @@
+# traceroute wrapper — network path discovery.
+[plugin]
+id = "traceroute"
+name = "Route Trace (traceroute)"
+version = "2.0.0"
+description = "Trace the network path to a target"
+long_description = """
+Wraps traceroute to map the layer-3 path toward the target. Each hop becomes
+an observation with host, IP and round-trip times — useful to understand
+network segmentation and unexpected routing.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "route"
+difficulty = "beginner"
+tags = ["network", "routing", "recon"]
+
+[engine]
+type = "cli"
+binary = "traceroute"
+timeout_seconds = 300
+output_format = "text"
+argv = [
+  "traceroute",
+  "-w", "2",
+  "-q", "1",
+  "-m", "{max_hops}",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "example.com or 192.168.1.1"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*$'
+message = "Must be a hostname or IP"
+
+[[fields]]
+id = "max_hops"
+label = "Max hops"
+type = "integer"
+default = 20
+min = 1
+max = 64
+
+[parser]
+type = "line_regex"
+pattern = '^\s*(?P<hop>\d+)\s+(?P<host>\S+)\s+(?P<rtt>.*(?:ms|ms\s*$).*)$'
+
+metadata_fields = ["hop", "host"]
+
+[parser.finding]
+title = "Hop {hop}: {host}"
+description = "Hop {hop} is {host} ({rtt})."
+remediation = "Review the path for unexpected segments or hosts."
+proof = "{hop} {host} {rtt}"
+category = "Network Path"
+severity = "info"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Sends ICMP/UDP probe packets toward the target."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["traceroute"]

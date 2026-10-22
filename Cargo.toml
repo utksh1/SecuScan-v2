@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/exec",
+    "crates/db",
+    "crates/api",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/utksh1/SecuScan-v2"
+authors = ["SecuScan Contributors"]
+
+[workspace.dependencies]
+tokio = { version = "1.41", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.5" }
+tower-http = { version = "0.6", features = ["trace", "cors", "fs", "timeout", "limit"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+async-trait = "0.1"
+regex = "1"
+jsonwebtoken = "9"
+argon2 = "0.5"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "2"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+rand = "0.8"
+sha2 = "0.10"
+hex = "0.4"
+
+[profile.release]
+lto = "thin"
+strip = true

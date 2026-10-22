@@ -1,0 +1,78 @@
+# ping wrapper — ICMP reachability check.
+[plugin]
+id = "ping"
+name = "Host Reachability (ping)"
+version = "2.0.0"
+description = "ICMP echo reachability and round-trip latency"
+long_description = """
+Wraps the system ping utility to check whether a host is reachable and
+measure round-trip latency. Each reply becomes an observation; total packet
+loss is visible in the raw output.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "activity"
+difficulty = "beginner"
+tags = ["icmp", "network", "recon"]
+
+[engine]
+type = "cli"
+binary = "ping"
+timeout_seconds = 120
+output_format = "text"
+argv = [
+  "ping",
+  "-c", "{count}",
+  "-w", "10",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "192.168.1.1 or example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*$'
+message = "Must be a hostname or IP"
+
+[[fields]]
+id = "count"
+label = "Packets"
+type = "integer"
+default = 4
+min = 1
+max = 20
+
+[parser]
+type = "line_regex"
+pattern = '^(?P<bytes>\d+) bytes from (?P<ip>[0-9a-fA-F:.]+)[^)]*\):.*time=(?P<time>[\d.]+)\s*ms'
+
+metadata_fields = ["ip", "time"]
+
+[parser.finding]
+title = "Reply from {ip}: {time} ms"
+description = "{bytes} bytes received from {ip} in {time} ms."
+remediation = "No action required; reachability observation."
+proof = "{bytes} bytes from {ip} time={time} ms"
+category = "Reachability"
+severity = "info"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Sends a small number of ICMP echo requests."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 4
+max_per_hour = 60
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["ping"]

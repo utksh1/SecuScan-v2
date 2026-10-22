@@ -1,0 +1,105 @@
+# sqlmap wrapper — SQL injection validation (exploit-level, conservative defaults).
+[plugin]
+id = "sqlmap"
+name = "SQL Injection Check (sqlmap)"
+version = "2.0.0"
+description = "Confirms SQL injection with sqlmap using conservative defaults"
+long_description = """
+Wraps sqlmap in batch mode with conservative level/risk defaults to confirm
+suspected SQL injection. This is an EXPLOIT-LEVEL plugin: it sends
+injection payloads and can extract data from the database. Use only against
+systems you are explicitly authorized to test, and prefer running it after
+a passive/less intrusive check flags a parameter.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "database"
+difficulty = "advanced"
+tags = ["sqli", "injection", "exploit"]
+
+[engine]
+type = "cli"
+binary = "sqlmap"
+timeout_seconds = 3600
+output_format = "text"
+argv = [
+  "sqlmap",
+  "-u", "{target}",
+  "--batch",
+  "--random-agent",
+  "--threads=1",
+  "--level={level}",
+  "--risk={risk}",
+  "--timeout=10",
+  "--retries=2",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL with parameter"
+type = "string"
+required = true
+placeholder = "http://lab.local/item.php?id=1"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~\[\]-]*$'
+message = "Must be a full URL including the parameter to test"
+
+[[fields]]
+id = "level"
+label = "Level"
+type = "select"
+default = "1"
+options = [
+  { value = "1", label = "1 — conservative (default)" },
+  { value = "2", label = "2" },
+  { value = "3", label = "3" },
+  { value = "4", label = "4" },
+  { value = "5", label = "5 — extensive" },
+]
+
+[[fields]]
+id = "risk"
+label = "Risk"
+type = "select"
+default = "1"
+options = [
+  { value = "1", label = "1 — safe (default)" },
+  { value = "2", label = "2" },
+  { value = "3", label = "3 — OR-based payloads" },
+]
+
+[parser]
+type = "passthrough"
+
+[[static_rules]]
+pattern = "(?i)is vulnerable"
+title = "SQL injection confirmed by sqlmap"
+severity = "critical"
+description = "sqlmap confirmed that a parameter in the target URL is injectable. See the raw output for the parameter, technique and back-end DBMS."
+remediation = "Fix the query using parameterized statements / prepared SQL, validate input, and apply least-privilege database permissions immediately."
+category = "Injection"
+
+[[static_rules]]
+pattern = "(?i)back-end DBMS"
+title = "Back-end database identified"
+severity = "info"
+description = "sqlmap identified the back-end DBMS. See raw output for details."
+category = "Reconnaissance"
+
+[[static_rules]]
+pattern = "(?i)all tested parameters do not appear to be injectable"
+title = "No injection found by sqlmap"
+severity = "info"
+description = "sqlmap found no injectable parameters at the configured level/risk. Higher levels test more parameters and edge cases."
+category = "Injection"
+
+[safety]
+level = "exploit"
+requires_consent = true
+consent_message = "EXPLICIT AUTHORIZATION REQUIRED: sqlmap actively exploits SQL injection and may modify or extract data. Use only on systems you own or are contracted to test."
+max_concurrent = 1
+max_per_hour = 4
+capabilities = ["network", "exploit"]
+
+[dependencies]
+binaries = ["sqlmap"]

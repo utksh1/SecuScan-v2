@@ -1,0 +1,76 @@
+# whatweb wrapper — technology fingerprinting.
+[plugin]
+id = "whatweb"
+name = "Tech Fingerprint (whatweb)"
+version = "2.0.0"
+description = "Identify websites' technology stacks and versions"
+long_description = """
+Wraps whatweb to fingerprint the target's technology stack: frameworks,
+servers, CMS, analytics and more. Each recognized technology becomes an
+informational observation useful for later, targeted checks.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "fingerprint"
+difficulty = "beginner"
+tags = ["fingerprint", "recon", "http"]
+
+[engine]
+type = "cli"
+binary = "whatweb"
+timeout_seconds = 600
+output_format = "text"
+argv = [
+  "whatweb",
+  "--color=never",
+  "--no-errors",
+  "-a", "{aggression}",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid URL"
+
+[[fields]]
+id = "aggression"
+label = "Aggression level"
+type = "select"
+default = "1"
+options = [
+  { value = "1", label = "Passive (recommended)" },
+  { value = "2", label = "Polite" },
+  { value = "3", label = "Aggressive" },
+  { value = "4", label = "Heavy" },
+]
+
+[parser]
+type = "line_regex"
+pattern = '^(?P<url>\S+)\s+\[(?P<status>\d+)[^\]]*\]\s*(?P<tech>.*)$'
+
+metadata_fields = ["url", "status"]
+
+[parser.finding]
+title = "Fingerprint for {url}"
+description = "HTTP {status}. Detected: {tech}"
+remediation = "Review disclosed technologies and versions; hide version details where feasible."
+proof = "{tech}"
+category = "Fingerprint"
+severity = "info"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Sends fingerprinting requests to the target."
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["whatweb"]

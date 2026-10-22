@@ -1,0 +1,48 @@
+# Native HTTP reconnaissance scanner.
+[plugin]
+id = "http-recon"
+name = "HTTP Reconnaissance"
+version = "1.0.0"
+description = "Titles, technology hints, allowed methods, robots.txt and sitemap.xml"
+long_description = """
+Passive recon of a web endpoint: page title, generator/CMS meta tag, Server
+and X-Powered-By disclosures, advertised HTTP methods (OPTIONS), and the
+presence of robots.txt / sitemap.xml. Produces informational observations
+that feed target understanding before deeper scanning.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "search"
+difficulty = "beginner"
+tags = ["recon", "http", "fingerprint"]
+
+[engine]
+type = "native"
+native = "http_recon"
+timeout_seconds = 60
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid http(s) URL"
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 10000
+min = 500
+max = 30000
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Sends a handful of benign GET/OPTIONS requests to the target."
+max_concurrent = 4
+max_per_hour = 120
+capabilities = ["network"]

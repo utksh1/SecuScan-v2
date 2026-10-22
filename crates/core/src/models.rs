@@ -1,0 +1,233 @@
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Normalized finding severity, ordered from least to most severe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Severity {
+    Info = 0,
+    Low = 1,
+    Medium = 2,
+    High = 3,
+    Critical = 4,
+}
+
+impl Severity {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "info" | "informational" => Some(Severity::Info),
+            "low" => Some(Severity::Low),
+            "medium" | "moderate" => Some(Severity::Medium),
+            "high" => Some(Severity::High),
+            "critical" => Some(Severity::Critical),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Severity::Info => "info",
+            Severity::Low => "low",
+            Severity::Medium => "medium",
+            Severity::High => "high",
+            Severity::Critical => "critical",
+        }
+    }
+}
+
+impl fmt::Display for Severity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// How far the platform trusts a finding produced by a scanner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingKind {
+    /// Factual observation (open port, discovered header…).
+    Observation,
+    /// Scanner suspects an issue; requires analyst confirmation.
+    SuspectedIssue,
+    /// Scanner validated the issue (controlled proof).
+    ValidatedIssue,
+}
+
+impl FindingKind {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "observation" => Some(FindingKind::Observation),
+            "suspected_issue" => Some(FindingKind::SuspectedIssue),
+            "validated_issue" => Some(FindingKind::ValidatedIssue),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            FindingKind::Observation => "observation",
+            FindingKind::SuspectedIssue => "suspected_issue",
+            FindingKind::ValidatedIssue => "validated_issue",
+        }
+    }
+}
+
+impl fmt::Display for FindingKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// Analyst triage state for a finding (mirrors v1 lifecycle).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalystStatus {
+    New,
+    Confirmed,
+    NeedsReview,
+    FalsePositive,
+    AcceptedRisk,
+    Fixed,
+}
+
+impl AnalystStatus {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "new" => Some(AnalystStatus::New),
+            "confirmed" => Some(AnalystStatus::Confirmed),
+            "needs_review" => Some(AnalystStatus::NeedsReview),
+            "false_positive" => Some(AnalystStatus::FalsePositive),
+            "accepted_risk" => Some(AnalystStatus::AcceptedRisk),
+            "fixed" => Some(AnalystStatus::Fixed),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AnalystStatus::New => "new",
+            AnalystStatus::Confirmed => "confirmed",
+            AnalystStatus::NeedsReview => "needs_review",
+            AnalystStatus::FalsePositive => "false_positive",
+            AnalystStatus::AcceptedRisk => "accepted_risk",
+            AnalystStatus::Fixed => "fixed",
+        }
+    }
+}
+
+/// Task lifecycle status.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl TaskStatus {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "queued" => Some(TaskStatus::Queued),
+            "running" => Some(TaskStatus::Running),
+            "completed" => Some(TaskStatus::Completed),
+            "failed" => Some(TaskStatus::Failed),
+            "cancelled" => Some(TaskStatus::Cancelled),
+            _ => None,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            TaskStatus::Queued => "queued",
+            TaskStatus::Running => "running",
+            TaskStatus::Completed => "completed",
+            TaskStatus::Failed => "failed",
+            TaskStatus::Cancelled => "cancelled",
+        }
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+        )
+    }
+}
+
+/// Granular execution phase, streamed to the UI for progress display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Phase {
+    Queued,
+    Validating,
+    Running,
+    Parsing,
+    Reporting,
+    Finished,
+}
+
+impl Phase {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Phase::Queued => "queued",
+            Phase::Validating => "validating",
+            Phase::Running => "running",
+            Phase::Parsing => "parsing",
+            Phase::Reporting => "reporting",
+            Phase::Finished => "finished",
+        }
+    }
+}
+
+/// Maximum number of findings a single task may produce before truncation.
+pub const MAX_FINDINGS_PER_TASK: usize = 5_000;
+
+/// A normalized finding produced by a scanner (native or CLI plugin).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Finding {
+    pub title: String,
+    pub category: String,
+    pub severity: Severity,
+    pub kind: FindingKind,
+    pub description: String,
+    pub remediation: String,
+    pub proof: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Free-form metadata object (ports, service names, matched values…).
+    #[serde(default = "default_metadata")]
+    pub metadata: serde_json::Value,
+}
+
+fn default_metadata() -> serde_json::Value {
+    serde_json::json!({})
+}
+
+impl Finding {
+    /// Convenience constructor used by native scanners.
+    pub fn new(
+        title: impl Into<String>,
+        category: impl Into<String>,
+        severity: Severity,
+        kind: FindingKind,
+    ) -> Self {
+        Finding {
+            title: title.into(),
+            category: category.into(),
+            severity,
+            kind,
+            description: String::new(),
+            remediation: String::new(),
+            proof: String::new(),
+            url: None,
+            metadata: default_metadata(),
+        }
+    }
+}
+
+/// Current UTC timestamp in RFC 3339 format (used across DB and API layers).
+pub fn now_iso() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}

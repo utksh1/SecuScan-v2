@@ -1,0 +1,89 @@
+# nikto wrapper — web server scanner.
+[plugin]
+id = "nikto"
+name = "Web Server Scan (nikto)"
+version = "2.0.0"
+description = "Well-known web misconfigurations, default files and outdated software"
+long_description = """
+Wraps nikto for classic web-server checks: dangerous files, misconfigured
+CGI, outdated components, and informational disclosures. Findings are parsed
+from nikto's default text output; OSVDB-referenced items are elevated to
+high severity automatically.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "scan-search"
+difficulty = "intermediate"
+tags = ["web", "http", "misconfiguration"]
+
+[engine]
+type = "cli"
+binary = "nikto"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "nikto",
+  "-h", "{target}",
+  "--if:ssl:then:-ssl",
+  "--if:port:then:-p",
+  "--if:port:then:{port}",
+  "-nointeractive",
+]
+
+[[fields]]
+id = "target"
+label = "Target host or URL"
+type = "string"
+required = true
+placeholder = "http://lab.local or 127.0.0.1"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Host or URL"
+
+[[fields]]
+id = "port"
+label = "Port"
+type = "string"
+placeholder = "80, 443, 8080"
+pattern = '^[0-9]*$'
+message = "Numeric port only"
+
+[[fields]]
+id = "ssl"
+label = "Force SSL"
+type = "boolean"
+default = false
+
+[parser]
+type = "line_regex"
+pattern = '^\+\s+(?P<item>[^:]+):\s+(?P<detail>.+)$'
+
+[parser.finding]
+title = "{item}"
+description = "{detail}"
+remediation = "Review the nikto finding and apply the relevant hardening measure."
+proof = "{item}: {detail}"
+category = "Web Server"
+severity = "info"
+
+[[parser.severity_rules]]
+field = "item"
+values = ["OSVDB-0", "OSVDB-1", "OSVDB-2", "OSVDB-3", "OSVDB-4", "OSVDB-5", "OSVDB-6", "OSVDB-7", "OSVDB-8", "OSVDB-9"]
+severity = "high"
+
+[[static_rules]]
+pattern = "Server leaks inodes via ETags"
+title = "Server leaks inodes via ETags"
+severity = "low"
+category = "Web Server"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Nikto sends many potentially noisy requests. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nikto"]

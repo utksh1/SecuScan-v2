@@ -1,0 +1,124 @@
+# nmap wrapper — network discovery and port scanning.
+[plugin]
+id = "nmap"
+name = "Network Scanning (nmap)"
+version = "2.0.0"
+description = "Host discovery, port enumeration and service detection via nmap"
+long_description = """
+Wraps nmap, the industry standard for network reconnaissance. Supports
+connect/SYN/UDP scan types, explicit port lists or presets, service and OS
+detection. Output is parsed line-by-line into normalized open-port findings,
+with high-risk services flagged automatically.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "network"
+difficulty = "intermediate"
+tags = ["ports", "network", "services"]
+
+[engine]
+type = "cli"
+binary = "nmap"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "nmap",
+  "--if:safe_mode:then:-T3:else:-T4",
+  "-s{scan_type}",
+  "--if:ports:then:-p:else:--top-ports",
+  "--if:ports:then:{ports}:else:100",
+  "--if:service_detection:then:-sV",
+  "--if:os_detection:then:-O",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "192.168.1.1, lab.local, or 10.0.0.0/24"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*(/\d{1,2})?$'
+message = "Must be an IP, hostname, or CIDR range"
+
+[[fields]]
+id = "ports"
+label = "Ports"
+type = "string"
+placeholder = "80,443 or 1-1000"
+pattern = '^[0-9,\- ]*$'
+message = "Comma-separated ports/ranges, e.g. 80,443,8000-8005"
+help = "Leave empty to scan the top 100 ports."
+
+[[fields]]
+id = "scan_type"
+label = "Scan type"
+type = "select"
+default = "T"
+options = [
+  { value = "S", label = "SYN scan (stealth, needs root)" },
+  { value = "T", label = "Connect scan" },
+  { value = "U", label = "UDP scan" },
+]
+
+[[fields]]
+id = "service_detection"
+label = "Service detection (-sV)"
+type = "boolean"
+default = false
+
+[[fields]]
+id = "os_detection"
+label = "OS detection (-O, needs root)"
+type = "boolean"
+default = false
+
+[[fields]]
+id = "safe_mode"
+label = "Safe mode (slow timing)"
+type = "boolean"
+default = true
+
+[parser]
+type = "line_regex"
+pattern = '(?P<port>\d+)/(?P<proto>tcp|udp)\s+open\s+(?P<service>[\w-]+)'
+
+[parser.finding]
+title = "Open port: {port}/{proto} ({service})"
+description = "Port {port} is open and running {service}."
+remediation = "Verify whether {service} on port {port} should be exposed; ensure it is patched and uses strong authentication."
+proof = "{proto} port {port} is OPEN ({service})"
+category = "Network Service"
+severity = "info"
+
+[[parser.severity_rules]]
+field = "port"
+values = ["21", "22", "23", "109", "110", "135", "139", "143", "389", "445", "512", "513", "514", "873", "993", "995", "1433", "1521", "2049", "2181", "2375", "2376", "3268", "3306", "3389", "5432", "5900", "5984", "6379", "6667", "9200", "11211", "27017"]
+severity = "low"
+
+[[static_rules]]
+pattern = "VULNERABLE|Exploit"
+title = "Potential vulnerability indicated by nmap NSE output"
+severity = "high"
+description = "An nmap NSE script or version match indicated a potential vulnerability. Review the raw output for details."
+remediation = "Investigate the specific service version and NSE result, then patch or mitigate."
+category = "Vulnerability"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Port scanning may trigger IDS/IPS alerts. Only scan authorized targets."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 2
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nmap"]

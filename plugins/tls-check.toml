@@ -1,0 +1,49 @@
+# Native TLS configuration scanner.
+[plugin]
+id = "tls-check"
+name = "TLS Configuration Check"
+version = "1.0.0"
+description = "Real TLS handshake: protocol version, cipher suite, certificate trust"
+long_description = """
+Performs a real TLS handshake against the target using the public WebPKI
+trust store and reports the negotiated protocol version and cipher suite,
+plus certificate problems (untrusted chains, expiry, validity window). Runs
+natively with rustls — no OpenSSL or external tools needed.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "lock"
+difficulty = "intermediate"
+tags = ["tls", "https", "certificate"]
+
+[engine]
+type = "native"
+native = "tls_check"
+timeout_seconds = 60
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "example.com, example.com:8443, or https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:\[\]/_?&=%#~-]*$'
+message = "Must be a host, host:port, or URL"
+help = "Port defaults to 443."
+
+[[fields]]
+id = "timeout_ms"
+label = "Timeout (ms)"
+type = "integer"
+default = 10000
+min = 500
+max = 30000
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Performs a single TLS handshake to the target."
+max_concurrent = 4
+max_per_hour = 120
+capabilities = ["network"]

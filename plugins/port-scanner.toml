@@ -1,0 +1,86 @@
+# Native TCP port scanner — runs in-process, no external tooling required.
+[plugin]
+id = "port-scanner"
+name = "TCP Port Scanner"
+version = "1.0.0"
+description = "Asynchronous TCP connect scan with curated top-port presets"
+long_description = """
+Scans TCP ports across a host or a small CIDR range using high-concurrency
+connect probes. Ships curated top-100 and well-known-1024 port sets, live
+progress events, and automatic flagging of high-risk services. Runs natively
+inside the SecuScan process — no external binaries needed.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "radar"
+difficulty = "beginner"
+tags = ["ports", "network", "recon"]
+
+[engine]
+type = "native"
+native = "port_scanner"
+timeout_seconds = 600
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "127.0.0.1, lab.local, or 192.168.1.0/24"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:-]*(/\d{1,2})?$'
+message = "Must be an IP, hostname, or CIDR range"
+help = "Host, IP, or CIDR range (max 1024 hosts)."
+
+[[fields]]
+id = "ports"
+label = "Ports"
+type = "string"
+placeholder = "80,443,8000-8005"
+pattern = '^[0-9,\- ]*$'
+message = "Use a comma-separated list and ranges like 8000-8005"
+help = "Explicit port list/ranges. Leave empty to use the preset below."
+
+[[fields]]
+id = "top_ports"
+label = "Port preset"
+type = "select"
+default = "100"
+options = [
+  { value = "100", label = "Top 100 ports" },
+  { value = "1000", label = "Well-known 1024 ports" },
+]
+help = "Used when no explicit ports are given."
+
+[[fields]]
+id = "concurrency"
+label = "Concurrency"
+type = "integer"
+default = 128
+min = 1
+max = 1024
+help = "Parallel connect probes."
+
+[[fields]]
+id = "timeout_ms"
+label = "Probe timeout (ms)"
+type = "integer"
+default = 800
+min = 50
+max = 10000
+help = "Per-probe connect timeout."
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Port scanning may trigger IDS/IPS alerts. Only scan authorized targets."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 4
+max_per_hour = 60
+capabilities = ["network"]

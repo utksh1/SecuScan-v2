@@ -1,0 +1,101 @@
+# nuclei wrapper — template-driven vulnerability scanner.
+[plugin]
+id = "nuclei"
+name = "Vulnerability Templates (nuclei)"
+version = "2.0.0"
+description = "Community template-based vulnerability and exposure scanning"
+long_description = """
+Wraps ProjectDiscovery nuclei and its community template library: CVE
+checks, exposures, misconfigurations and takeovers. Results stream in as
+JSON lines and are normalized with the tool's own severity ratings.
+Requires the nuclei binary and an up-to-date template clone.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "bug"
+difficulty = "advanced"
+tags = ["cve", "vulnerability", "templates"]
+
+[engine]
+type = "cli"
+binary = "nuclei"
+timeout_seconds = 3600
+output_format = "json_lines"
+argv = [
+  "nuclei",
+  "-u", "{target}",
+  "-jsonl",
+  "-silent",
+  "-nc",
+  "--if:severity:then:-severity",
+  "--if:severity:then:{severity}",
+  "--if:templates:then:-t",
+  "--if:templates:then:{templates}",
+  "--if:concurrency:then:-c",
+  "--if:concurrency:then:{concurrency}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid URL"
+
+[[fields]]
+id = "severity"
+label = "Minimum severity"
+type = "string"
+placeholder = "medium,high,critical"
+pattern = '^[a-zA-Z, ]*$'
+message = "Comma-separated severities (unknown, info, low, medium, high, critical)"
+help = "Leave empty to run all severities."
+
+[[fields]]
+id = "templates"
+label = "Template tags/dirs"
+type = "string"
+placeholder = "cves,exposures or ~/nuclei-templates/http/cves"
+help = "Restrict to specific template groups. Leave empty for the full library."
+
+[[fields]]
+id = "concurrency"
+label = "Concurrency"
+type = "integer"
+default = 10
+min = 1
+max = 50
+
+[parser]
+type = "json_lines"
+
+[parser.finding]
+title_field = "info.name"
+description_field = "info.description"
+severity_field = "info.severity"
+url_field = "matched-at"
+proof_field = "template-id"
+category = "Vulnerability"
+kind = "suspected_issue"
+
+[parser.severity_map]
+critical = "critical"
+high = "high"
+medium = "medium"
+low = "low"
+info = "info"
+unknown = "info"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "nuclei sends active probe traffic based on its template library. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 6
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nuclei"]

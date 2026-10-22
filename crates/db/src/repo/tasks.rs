@@ -1,0 +1,206 @@
+//! Tasks: lifecycle persistence.
+
+use crate::models::TaskRow;
+use crate::{new_id, now, DbError, DbResult};
+use secuscan_core::models::TaskStatus;
+use sqlx::SqlitePool;
+
+/// Payload for creating a task row (status starts `queued`).
+pub struct NewTask<'a> {
+    pub user_id: &'a str,
+    pub plugin_id: &'a str,
+    pub plugin_name: &'a str,
+    pub target: Option<&'a str>,
+    pub inputs_json: &'a str,
+    pub options_json: &'a str,
+    pub workflow_run_id: Option<&'a str>,
+}
+
+pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
+    let row = TaskRow {
+        id: new_id(),
+        user_id: t.user_id.to_string(),
+        plugin_id: t.plugin_id.to_string(),
+        plugin_name: t.plugin_name.to_string(),
+        target: t.target.map(str::to_string),
+        status: TaskStatus::Queued.label().to_string(),
+        inputs_json: t.inputs_json.to_string(),
+        options_json: t.options_json.to_string(),
+        exit_code: None,
+        error: None,
+        stats_json: None,
+        output: None,
+        output_truncated: false,
+        workflow_run_id: t.workflow_run_id.map(str::to_string),
+        created_at: now(),
+        started_at: None,
+        finished_at: None,
+    };
+    sqlx::query(
+        "INSERT INTO tasks (id, user_id, plugin_id, plugin_name, target, status, inputs_json, \
+         options_json, output_truncated, workflow_run_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10)",
+    )
+    .bind(&row.id)
+    .bind(&row.user_id)
+    .bind(&row.plugin_id)
+    .bind(&row.plugin_name)
+    .bind(&row.target)
+    .bind(&row.status)
+    .bind(&row.inputs_json)
+    .bind(&row.options_json)
+    .bind(&row.workflow_run_id)
+    .bind(&row.created_at)
+    .execute(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn get(pool: &SqlitePool, id: &str) -> DbResult<TaskRow> {
+    sqlx::query_as::<_, TaskRow>("SELECT * FROM tasks WHERE id = ?1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or_else(|| DbError::NotFound(format!("task {id}")))
+}
+
+/// Full task row including raw output (used by detail endpoint).
+pub async fn get_with_output(pool: &SqlitePool, id: &str) -> DbResult<TaskRow> {
+    get(pool, id).await
+}
+
+#[derive(Debug, Default)]
+pub struct TaskListFilters {
+    pub user_id: Option<String>,
+    pub status: Option<String>,
+    pub plugin_id: Option<String>,
+    pub workflow_run_id: Option<String>,
+    pub search: Option<String>,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// List tasks without the heavy `output` column.
+pub async fn list(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<Vec<TaskRow>> {
+    let limit = if f.limit <= 0 { 50 } else { f.limit.min(500) };
+    let offset = f.offset.max(0);
+    sqlx::query_as::<_, TaskRow>(
+        "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
+         exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
+         created_at, started_at, finished_at \
+         FROM tasks \
+         WHERE (?1 IS NULL OR user_id = ?1) \
+           AND (?2 IS NULL OR status = ?2) \
+           AND (?3 IS NULL OR plugin_id = ?3) \
+           AND (?4 IS NULL OR workflow_run_id = ?4) \
+           AND (?5 IS NULL OR target LIKE '%' || ?5 || '%' OR plugin_name LIKE '%' || ?5 || '%') \
+         ORDER BY created_at DESC LIMIT ?6 OFFSET ?7",
+    )
+    .bind(&f.user_id)
+    .bind(&f.status)
+    .bind(&f.plugin_id)
+    .bind(&f.workflow_run_id)
+    .bind(&f.search)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn count(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<i64> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM tasks \
+         WHERE (?1 IS NULL OR user_id = ?1) \
+           AND (?2 IS NULL OR status = ?2) \
+           AND (?3 IS NULL OR plugin_id = ?3) \
+           AND (?4 IS NULL OR workflow_run_id = ?4) \
+           AND (?5 IS NULL OR target LIKE '%' || ?5 || '%' OR plugin_name LIKE '%' || ?5 || '%')",
+    )
+    .bind(&f.user_id)
+    .bind(&f.status)
+    .bind(&f.plugin_id)
+    .bind(&f.workflow_run_id)
+    .bind(&f.search)
+    .fetch_one(pool)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn mark_running(pool: &SqlitePool, id: &str) -> DbResult<()> {
+    let res = sqlx::query("UPDATE tasks SET status = 'running', started_at = ?1 WHERE id = ?2")
+        .bind(now())
+        .bind(id)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(DbError::NotFound(format!("task {id}")));
+    }
+    Ok(())
+}
+
+pub async fn finish(
+    pool: &SqlitePool,
+    id: &str,
+    status: TaskStatus,
+    exit_code: Option<i64>,
+    error: Option<&str>,
+    stats_json: &str,
+    output: &str,
+    output_truncated: bool,
+) -> DbResult<()> {
+    let res = sqlx::query(
+        "UPDATE tasks SET status = ?1, exit_code = ?2, error = ?3, stats_json = ?4, \
+         output = ?5, output_truncated = ?6, finished_at = ?7 WHERE id = ?8",
+    )
+    .bind(status.label())
+    .bind(exit_code)
+    .bind(error)
+    .bind(stats_json)
+    .bind(output)
+    .bind(output_truncated)
+    .bind(now())
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(DbError::NotFound(format!("task {id}")));
+    }
+    Ok(())
+}
+
+pub async fn delete(pool: &SqlitePool, id: &str) -> DbResult<bool> {
+    let res = sqlx::query("DELETE FROM tasks WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// Recent tasks for the dashboard (no output column).
+pub async fn recent(pool: &SqlitePool, user_id: Option<&str>, limit: i64) -> DbResult<Vec<TaskRow>> {
+    sqlx::query_as::<_, TaskRow>(
+        "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
+         exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
+         created_at, started_at, finished_at \
+         FROM tasks WHERE (?1 IS NULL OR user_id = ?1) \
+         ORDER BY created_at DESC LIMIT ?2",
+    )
+    .bind(user_id)
+    .bind(limit.clamp(1, 50))
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+/// Live in-memory raw-output update for running tasks (so the UI can show
+/// partial output before completion).
+pub async fn update_output(pool: &SqlitePool, id: &str, output: &str, truncated: bool) -> DbResult<()> {
+    sqlx::query("UPDATE tasks SET output = ?1, output_truncated = ?2 WHERE id = ?3")
+        .bind(output)
+        .bind(truncated)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

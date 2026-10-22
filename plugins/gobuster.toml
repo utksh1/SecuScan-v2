@@ -1,0 +1,97 @@
+# gobuster wrapper — directory & file brute-forcing.
+[plugin]
+id = "gobuster"
+name = "Directory Discovery (gobuster)"
+version = "2.0.0"
+description = "Discover hidden paths and files with a wordlist"
+long_description = """
+Wraps gobuster's `dir` mode to brute-force web paths from a wordlist. Found
+paths become observations; the wordlist and extensions are configurable and
+the default preset is intentionally conservative.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "folder-search"
+difficulty = "intermediate"
+tags = ["directories", "brute-force", "http"]
+
+[engine]
+type = "cli"
+binary = "gobuster"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "gobuster", "dir",
+  "-u", "{target}",
+  "-w", "{wordlist}",
+  "-q",
+  "--no-error",
+  "--if:extensions:then:-x",
+  "--if:extensions:then:{extensions}",
+  "--if:threads:then:-t",
+  "--if:threads:then:{threads}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com/"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid URL"
+
+[[fields]]
+id = "wordlist"
+label = "Wordlist path"
+type = "string"
+default = "/usr/share/wordlists/dirb/common.txt"
+placeholder = "/usr/share/wordlists/dirb/common.txt"
+pattern = '^[a-zA-Z0-9/._~-]+$'
+message = "Absolute path to a wordlist file"
+help = "Server-side path readable by the SecuScan process."
+
+[[fields]]
+id = "extensions"
+label = "Extensions"
+type = "string"
+placeholder = "php,bak,old"
+pattern = '^[a-zA-Z0-9, ]*$'
+message = "Comma-separated extensions"
+
+[[fields]]
+id = "threads"
+label = "Threads"
+type = "integer"
+default = 10
+min = 1
+max = 100
+
+[parser]
+type = "line_regex"
+pattern = '^Found:\s+(?P<path>\S+)\s+\(Status:\s+(?P<status>\d+)\)'
+
+[parser.finding]
+title = "Discovered path: {path} (HTTP {status})"
+description = "The path {path} exists and returned HTTP {status}."
+remediation = "Verify that {path} should be publicly reachable; remove or protect it otherwise."
+proof = "Found: {path} (Status: {status})"
+category = "Content Discovery"
+severity = "info"
+
+[[parser.severity_rules]]
+field = "path"
+values = ["/.env", "/.git", "/.svn", "/backup", "/admin", "/phpmyadmin", "/config", "/.aws"]
+severity = "medium"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Directory brute-forcing generates high request volumes. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 6
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["gobuster"]

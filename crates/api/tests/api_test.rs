@@ -1,0 +1,611 @@
+//! End-to-end API integration tests: full application over real HTTP,
+//! temporary SQLite DB, real plugin manifests, live SSE streaming.
+
+use axum::Router;
+use secuscan_api::state::AppState;
+use secuscan_core::PluginRegistry;
+use std::sync::Arc;
+
+struct TestServer {
+    pub base: String,
+    _db_dir: tempfile::TempDir,
+    _plugins_dir: tempfile::TempDir,
+}
+
+async fn spawn_app() -> TestServer {
+    secuscan_exec::init_tls();
+
+    let db_dir = tempfile::tempdir().unwrap();
+    let plugins_dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        plugins_dir.path().join("port-scanner.toml"),
+        include_str!("../../../plugins/port-scanner.toml"),
+    )
+    .unwrap();
+    std::fs::write(
+        plugins_dir.path().join("sleepy.toml"),
+        r#"
+[plugin]
+id = "sleepy"
+name = "Sleepy Test Tool"
+version = "1.0.0"
+description = "test plugin that sleeps (used to exercise cancellation)"
+category = "test"
+
+[engine]
+type = "cli"
+binary = "sh"
+argv = ["sh", "-c", "echo '99/tcp open dummy'; sleep 30"]
+timeout_seconds = 300
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+
+[parser]
+type = "line_regex"
+pattern = '(?P<port>\d+)/(?P<proto>tcp|udp)\s+open\s+(?P<service>[\w-]+)'
+
+[parser.finding]
+title = "Open port: {port}/{proto} ({service})"
+category = "Network Service"
+severity = "info"
+
+[safety]
+level = "safe"
+requires_consent = false
+max_concurrent = 1
+max_per_hour = 0
+"#,
+    )
+    .unwrap();
+
+    let config = Arc::new(secuscan_api::config::Config {
+        addr: "127.0.0.1:0".parse().unwrap(),
+        db_url: format!("sqlite://{}?mode=rwc", db_dir.path().join("test.db").display()),
+        jwt_secret: "integration-test-secret".to_string(),
+        plugins_dir: plugins_dir.path().to_path_buf(),
+        frontend_dir: db_dir.path().join("no-such-frontend"), // API-only mode
+        data_dir: db_dir.path().to_path_buf(),
+        admin_email: "admin@test.local".to_string(),
+        admin_password: Some("admin-password-123".to_string()),
+        denied_capabilities: vec![],
+        allow_register: false,
+        cors_origin: None,
+        max_concurrent_tasks: 4,
+    });
+
+    let db = secuscan_db::open(&config.db_url).await.unwrap();
+    secuscan_api::seed::seed_admin(&db, &config).await;
+    let registry = PluginRegistry::load_dir(&config.plugins_dir);
+    assert!(registry.issues().is_empty(), "{:?}", registry.issues());
+    let tasks = secuscan_api::manager::TaskManager::start(db.clone(), config.clone());
+    let state = Arc::new(AppState {
+        db,
+        config: config.clone(),
+        registry: Arc::new(tokio::sync::RwLock::new(registry)),
+        tasks,
+    });
+
+    let app: Router = secuscan_api::build_app(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    TestServer {
+        base: format!("http://{addr}/api/v1"),
+        _db_dir: db_dir,
+        _plugins_dir: plugins_dir,
+    }
+}
+
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .build()
+        .unwrap()
+}
+
+async fn login(s: &TestServer) -> (reqwest::Client, String) {
+    let c = client();
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({
+            "email": "admin@test.local",
+            "password": "admin-password-123",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let token = body["access_token"].as_str().unwrap().to_string();
+    (c, token)
+}
+
+#[tokio::test]
+async fn health_and_auth_flow() {
+    let s = spawn_app().await;
+    let c = client();
+
+    // health is public
+    let resp = c.get(format!("{}/health", s.base)).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ok");
+
+    // unauthenticated plugin list is rejected
+    let resp = c.get(format!("{}/plugins", s.base)).send().await.unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // wrong password
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "admin@test.local", "password": "wrong"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // login works and sets a refresh cookie
+    let resp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "admin@test.local", "password": "admin-password-123"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let set_cookie = resp
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(set_cookie.contains("secuscan_refresh="), "{set_cookie}");
+    assert!(set_cookie.contains("HttpOnly"), "{set_cookie}");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let token = body["access_token"].as_str().unwrap().to_string();
+    assert_eq!(body["user"]["role"], "admin");
+
+    // me
+    let resp = c
+        .get(format!("{}/auth/me", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let me: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(me["email"], "admin@test.local");
+
+    // register is disabled by default
+    let resp = c
+        .post(format!("{}/auth/register", s.base))
+        .json(&serde_json::json!({"email": "x@y.z", "name": "X", "password": "longenough1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // refresh flow
+    let cookie_value = set_cookie.split(';').next().unwrap().to_string();
+    let resp = c
+        .post(format!("{}/auth/refresh", s.base))
+        .header("cookie", &cookie_value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert!(!body["access_token"].as_str().unwrap().is_empty());
+
+    // old refresh cookie was rotated: reusing it fails
+    let resp = c
+        .post(format!("{}/auth/refresh", s.base))
+        .header("cookie", &cookie_value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+}
+
+#[tokio::test]
+async fn full_task_lifecycle_with_findings_and_reports() {
+    let s = spawn_app().await;
+
+    // live listener to find
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        loop {
+            let _ = listener.accept().await;
+        }
+    });
+
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // ---- plugin catalog ----
+    let resp = auth(c.get(format!("{}/plugins", s.base))).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let items = body["items"].as_array().unwrap();
+    assert!(items.len() >= 2);
+    assert!(items.iter().any(|p| p["id"] == "port-scanner"));
+
+    // schema
+    let resp = auth(c.get(format!("{}/plugins/port-scanner/schema", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let schema: serde_json::Value = resp.json().await.unwrap();
+    assert!(schema["fields"].as_array().unwrap().iter().any(|f| f["id"] == "target"));
+
+    // preview (native)
+    let resp = auth(c.post(format!("{}/plugins/port-scanner/preview", s.base)))
+        .json(&serde_json::json!({"inputs": {"target": "127.0.0.1"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let preview: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(preview["command"], "native:port_scanner");
+
+    // ---- consent required ----
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1", "ports": port.to_string()},
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let err: serde_json::Value = resp.json().await.unwrap();
+    assert!(err["error"]["message"].as_str().unwrap().contains("consent"));
+
+    // ---- unknown field rejected ----
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1", "nonsense": "x"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // ---- target policy: nmap-style restriction on port-scanner (localhost ok) ----
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "203.0.113.50"},  // TEST-NET-3, outside allowed_targets
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // ---- create and await completion ----
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1", "ports": format!("{},{}", port, port + 1)},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let task_id = task["id"].as_str().unwrap().to_string();
+    assert_eq!(task["status"], "queued");
+
+    // poll to completion
+    let mut status = String::new();
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base))).send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let t: serde_json::Value = resp.json().await.unwrap();
+        status = t["status"].as_str().unwrap().to_string();
+        if status == "completed" || status == "failed" {
+            break;
+        }
+    }
+    assert_eq!(status, "completed");
+
+    // result: exactly the open port
+    let resp = auth(c.get(format!("{}/tasks/{task_id}/result", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let result: serde_json::Value = resp.json().await.unwrap();
+    let findings = result["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0]["title"].as_str().unwrap().contains(&format!("{port}/tcp")));
+    assert_eq!(result["severity_counts"]["info"], 1);
+
+    // ---- findings explorer + triage ----
+    let resp = auth(c.get(format!("{}/findings?severity=info", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let fl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(fl["total"], 1);
+
+    let finding_id = findings[0]["id"].as_str().unwrap().to_string();
+    let resp = auth(c.patch(format!("{}/findings/{finding_id}/triage", s.base)))
+        .json(&serde_json::json!({"analyst_status": "confirmed"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let updated: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(updated["analyst_status"], "confirmed");
+
+    // ---- SSE stream: replay persisted events ----
+    let resp = auth(c.get(format!("{}/tasks/{task_id}/stream", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap()
+        .contains("text/event-stream"));
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("\"phase\""), "SSE body: {body}");
+    assert!(body.contains("\"finished\""), "SSE body: {body}");
+
+    // ---- reports ----
+    for (fmt, marker) in [
+        ("md", "SecuScan Report"),
+        ("csv", "severity,kind"),
+        ("sarif", "\"version\": \"2.1.0\""),
+        ("html", "<h1>SecuScan Report"),
+        ("json", "\"findings\""),
+    ] {
+        let resp = auth(c.get(format!("{}/tasks/{task_id}/report/{fmt}", s.base)))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200, "format {fmt}");
+        let body = resp.text().await.unwrap();
+        assert!(body.contains(marker), "format {fmt}: {body}");
+    }
+
+    // ---- dashboard ----
+    let resp = auth(c.get(format!("{}/dashboard/summary", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let d: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(d["tasks"]["total"], 1);
+    assert_eq!(d["findings"]["info"], 1);
+
+    // ---- admin: audit log contains the blocked target ----
+    let resp = auth(c.get(format!("{}/admin/audit", s.base))).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let audit: serde_json::Value = resp.json().await.unwrap();
+    let items = audit["items"].as_array().unwrap();
+    assert!(items.iter().any(|a| a["target"] == "203.0.113.50"), "{items:?}");
+}
+
+#[tokio::test]
+async fn cli_plugin_task_and_cancellation() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // Start the sleepy CLI plugin (sh wrapper, sleeps 30s).
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "sleepy",
+            "inputs": {"target": "127.0.0.1"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let task_id = task["id"].as_str().unwrap().to_string();
+
+    // Wait until running.
+    let mut running = false;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base))).send().await.unwrap();
+        let t: serde_json::Value = resp.json().await.unwrap();
+        if t["status"] == "running" {
+            running = true;
+            break;
+        }
+    }
+    assert!(running, "task should reach running state");
+
+    // Cancel it.
+    let resp = auth(c.post(format!("{}/tasks/{task_id}/cancel", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["cancelled"], true);
+
+    let mut final_status = String::new();
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base))).send().await.unwrap();
+        let t: serde_json::Value = resp.json().await.unwrap();
+        final_status = t["status"].as_str().unwrap().to_string();
+        if final_status == "cancelled" {
+            break;
+        }
+    }
+    assert_eq!(final_status, "cancelled");
+}
+
+#[tokio::test]
+async fn api_key_authentication_and_workflow() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // Create an API key.
+    let resp = auth(c.post(format!("{}/auth/api-keys", s.base)))
+        .json(&serde_json::json!({"name": "ci"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let key_body: serde_json::Value = resp.json().await.unwrap();
+    let api_key = key_body["key"].as_str().unwrap().to_string();
+    assert!(api_key.starts_with("scsk_"));
+
+    // Use the API key against /plugins.
+    let resp = c
+        .get(format!("{}/plugins", s.base))
+        .header("x-api-key", &api_key)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Create a workflow: port-scanner step.
+    let resp = auth(c.post(format!("{}/workflows", s.base)))
+        .json(&serde_json::json!({
+            "name": "lab-recon",
+            "description": "port scan then headers",
+            "steps": [
+                {"plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1", "ports": "9"}},
+                {"plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1", "ports": "10"}},
+            ],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let wf: serde_json::Value = resp.json().await.unwrap();
+    let wf_id = wf["id"].as_str().unwrap().to_string();
+
+    // Run it.
+    let resp = auth(c.post(format!("{}/workflows/{wf_id}/run", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // Wait for the run to complete.
+    let mut run_status = String::new();
+    for _ in 0..200 {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let resp = auth(c.get(format!("{}/workflows/{wf_id}/runs", s.base)))
+            .send()
+            .await
+            .unwrap();
+        let runs: serde_json::Value = resp.json().await.unwrap();
+        let first = &runs["items"][0];
+        run_status = first["status"].as_str().unwrap_or_default().to_string();
+        if !run_status.is_empty() && run_status != "queued" && run_status != "running" {
+            break;
+        }
+    }
+    assert_eq!(run_status, "completed", "workflow run status");
+}
+
+#[tokio::test]
+async fn non_admin_scoping_and_admin_management() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // Create a viewer user as admin.
+    let resp = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "viewer@test.local", "name": "Viewer", "password": "viewer-pass-123", "role": "viewer"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // Login as viewer.
+    let vresp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "viewer@test.local", "password": "viewer-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(vresp.status(), 200);
+    let vbody: serde_json::Value = vresp.json().await.unwrap();
+    let vtoken = vbody["access_token"].as_str().unwrap().to_string();
+
+    // Viewer cannot create tasks? Policy: viewers should be read-only for scans.
+    // (Roles: admin — everything; scanner — run scans; viewer — read only.)
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&vtoken)
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Viewer cannot access admin endpoints.
+    let resp = c
+        .get(format!("{}/admin/users", s.base))
+        .bearer_auth(&vtoken)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Admin can list users and update network policy.
+    let resp = auth(c.get(format!("{}/admin/users", s.base))).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let users: serde_json::Value = resp.json().await.unwrap();
+    assert!(users["items"].as_array().unwrap().len() >= 2);
+
+    // Set a global deny and verify task creation is blocked.
+    let resp = auth(c.put(format!("{}/admin/network-policy", s.base)))
+        .json(&serde_json::json!({"allow": [], "deny": ["127.0.0.1"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Restore.
+    let resp = auth(c.put(format!("{}/admin/network-policy", s.base)))
+        .json(&serde_json::json!({"allow": [], "deny": []}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+}

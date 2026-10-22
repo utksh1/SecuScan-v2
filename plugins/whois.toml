@@ -1,0 +1,60 @@
+# whois wrapper — domain registration records.
+[plugin]
+id = "whois"
+name = "WHOIS Lookup"
+version = "2.0.0"
+description = "Domain registration data: registrar, dates, nameservers, status"
+long_description = """
+Wraps the whois client to pull registration records for a domain. The raw
+record is preserved as task output for review; registrar lock and expiry
+heuristics are surfaced as findings.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "info"
+difficulty = "beginner"
+tags = ["dns", "whois", "recon"]
+
+[engine]
+type = "cli"
+binary = "whois"
+timeout_seconds = 120
+output_format = "text"
+argv = ["whois", "{target}"]
+
+[[fields]]
+id = "target"
+label = "Domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$'
+message = "Must be a domain name"
+
+[parser]
+type = "passthrough"
+
+[[static_rules]]
+pattern = "Domain Status:.*clientTransferProhibited"
+title = "Registrar transfer lock enabled"
+severity = "info"
+description = "The domain has clientTransferProhibited set, protecting against unauthorized transfers."
+category = "Domain"
+
+[[static_rules]]
+pattern = "Registrar:"
+title = "Registrar information disclosed"
+severity = "info"
+description = "The WHOIS record discloses registrar information."
+category = "Domain"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Queries public WHOIS services for the target domain."
+max_concurrent = 4
+max_per_hour = 60
+
+[dependencies]
+binaries = ["whois"]

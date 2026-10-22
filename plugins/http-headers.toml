@@ -1,0 +1,57 @@
+# Native HTTP security-header & cookie scanner.
+[plugin]
+id = "http-headers"
+name = "HTTP Security Headers"
+version = "1.0.0"
+description = "Checks missing security headers, cookie flags and HTTPS redirect"
+long_description = """
+Fetches a URL and audits the response against widely accepted hardening
+practice: HSTS, Content-Security-Policy, X-Content-Type-Options, clickjacking
+protection (X-Frame-Options / CSP frame-ancestors), Referrer-Policy,
+Permissions-Policy, cookie Secure/HttpOnly/SameSite flags, HTTPS redirection
+and information-disclosure headers. Runs natively — no external tooling.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "shield-check"
+difficulty = "beginner"
+tags = ["headers", "http", "hardening"]
+
+[engine]
+type = "native"
+native = "http_headers"
+timeout_seconds = 60
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid http(s) URL"
+help = "Full URL. Bare hosts are treated as https://."
+
+[[fields]]
+id = "follow_redirects"
+label = "Follow redirects"
+type = "boolean"
+default = true
+help = "Follow up to 5 redirects before auditing the final response."
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 10000
+min = 500
+max = 30000
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Sends a small number of benign GET/OPTIONS requests to the target."
+max_concurrent = 4
+max_per_hour = 120
+capabilities = ["network"]
