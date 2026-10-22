@@ -192,21 +192,45 @@ async fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+#[derive(Deserialize, Default)]
+struct RunRequest {
+    /// Workspace the workflow's tasks should be attached to.
+    #[serde(default)]
+    workspace_id: Option<String>,
+}
+
 async fn run(
     State(state): State<SharedState>,
     user: CurrentUser,
     Path(id): Path<String>,
+    body: Option<Json<RunRequest>>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let wf = repo::workflows::get(&state.db, &id).await?;
     let steps: Vec<WorkflowStepDto> = serde_json::from_str(&wf.steps_json)
         .map_err(|_| ApiError::Internal("corrupt workflow steps".into()))?;
+    // Validate before creating the run so an unknown workspace is a clean 404.
+    let workspace_id = match body.map(|Json(b)| b).unwrap_or_default().workspace_id {
+        Some(ws) => {
+            repo::workspaces::get_workspace(&state.db, &ws).await?;
+            Some(ws)
+        }
+        None => None,
+    };
     let run_row = repo::workflows::create_run(&state.db, &id).await?;
     let run_id_spawn = run_row.id.clone();
 
     let state2 = state.clone();
     tokio::spawn(async move {
-        if let Err(e) = run_workflow(&state2, &user, &steps, &run_id_spawn).await {
+        if let Err(e) = run_workflow(
+            &state2,
+            &user,
+            &steps,
+            &run_id_spawn,
+            workspace_id.as_deref(),
+        )
+        .await
+        {
             tracing::error!("workflow run {} failed: {e}", run_id_spawn);
             let _ = repo::workflows::finish_run(
                 &state2.db,
@@ -231,6 +255,7 @@ async fn run_workflow(
     user: &CurrentUser,
     steps: &[WorkflowStepDto],
     run_id: &str,
+    workspace_id: Option<&str>,
 ) -> Result<(), String> {
     for (i, step) in steps.iter().enumerate() {
         let req = StartTaskRequest {
@@ -239,6 +264,7 @@ async fn run_workflow(
             preset: step.preset.clone(),
             // Starting a workflow implies consent for its steps.
             consent_granted: true,
+            workspace_id: workspace_id.map(str::to_string),
         };
         let (task, manifest, inputs) = validate_and_create_task(state, user, &req, Some(run_id))
             .await

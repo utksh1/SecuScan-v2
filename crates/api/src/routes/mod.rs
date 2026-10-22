@@ -9,6 +9,7 @@ pub mod reports;
 pub mod sse;
 pub mod tasks;
 pub mod workflows;
+pub mod workspaces;
 
 use crate::state::SharedState;
 use axum::http::StatusCode;
@@ -24,6 +25,7 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(findings::router())
         .merge(reports::router())
         .merge(workflows::router())
+        .merge(workspaces::router())
         .merge(dashboard::router())
         .merge(admin::router())
         .fallback(fallback_404)

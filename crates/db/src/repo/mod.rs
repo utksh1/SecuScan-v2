@@ -7,3 +7,6 @@ pub mod misc;
 pub mod tasks;
 pub mod users;
 pub mod workflows;
+pub mod workspaces;
+
+pub use workspaces::WorkspaceScope;

@@ -5,6 +5,7 @@
 
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
+use crate::routes::workspaces::parse_workspace_scope;
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -39,6 +40,9 @@ pub struct StartTaskRequest {
     pub preset: Option<String>,
     #[serde(default)]
     pub consent_granted: bool,
+    /// Workspace the task belongs to; absent = the Personal scope.
+    #[serde(default)]
+    pub workspace_id: Option<String>,
 }
 
 /// The complete task admission pipeline. Returns the queued task row plus
@@ -121,7 +125,12 @@ pub async fn validate_and_create_task(
         ));
     }
 
-    // 7) target policy (global allow/deny + plugin allowed_targets)
+    // 7) workspace (must exist when provided)
+    if let Some(ws) = &req.workspace_id {
+        repo::workspaces::get_workspace(&state.db, ws).await?; // 404 when unknown
+    }
+
+    // 8) target policy (global allow/deny + plugin allowed_targets)
     let target_value = normalized
         .get("target")
         .or_else(|| normalized.get("url"))
@@ -157,7 +166,7 @@ pub async fn validate_and_create_task(
         }
     }
 
-    // 8) persist + spawn
+    // 9) persist + spawn
     let row = repo::tasks::create(
         &state.db,
         repo::tasks::NewTask {
@@ -172,6 +181,7 @@ pub async fn validate_and_create_task(
             })
             .to_string(),
             workflow_run_id,
+            workspace_id: req.workspace_id.as_deref(),
         },
     )
     .await?;
@@ -205,6 +215,7 @@ pub fn task_to_json(t: &TaskRow, include_output: bool) -> Value {
         "stats": serde_json::from_str::<Value>(t.stats_json.as_deref().unwrap_or("null")).unwrap_or(Value::Null),
         "output_truncated": t.output_truncated,
         "workflow_run_id": t.workflow_run_id,
+        "workspace_id": t.workspace_id,
         "created_at": t.created_at,
         "started_at": t.started_at,
         "finished_at": t.finished_at,
@@ -221,6 +232,9 @@ struct ListQuery {
     plugin_id: Option<String>,
     workflow_run_id: Option<String>,
     search: Option<String>,
+    /// `none` selects the Personal scope; an id must reference an existing
+    /// workspace; absent = all visible tasks.
+    workspace_id: Option<String>,
     #[serde(default = "default_limit")]
     limit: i64,
     #[serde(default)]
@@ -241,6 +255,7 @@ async fn list(
             return Err(ApiError::BadRequest(format!("unknown status `{s}`")));
         }
     }
+    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
     let filters = repo::tasks::TaskListFilters {
         user_id: if user.is_admin() {
             None
@@ -251,6 +266,7 @@ async fn list(
         plugin_id: q.plugin_id,
         workflow_run_id: q.workflow_run_id,
         search: q.search,
+        workspace,
         limit: q.limit,
         offset: q.offset,
     };
@@ -344,6 +360,7 @@ async fn retry(
             .and_then(|v| v.as_str())
             .map(str::to_string),
         consent_granted: true, // consent was granted for the original task
+        workspace_id: original.workspace_id.clone(), // keep the workspace
     };
     let (row, manifest, inputs) = validate_and_create_task(&state, &user, &req, None).await?;
     state.tasks.spawn(row.clone(), manifest, inputs).await;

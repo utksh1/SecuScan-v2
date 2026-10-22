@@ -2,6 +2,7 @@
 
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
+use crate::routes::workspaces::parse_workspace_scope;
 use crate::state::SharedState;
 use axum::extract::{Path, RawQuery, State};
 use axum::Json;
@@ -48,6 +49,7 @@ struct ListQuery {
     analyst_status: Option<String>,
     category: Option<String>,
     search: Option<String>,
+    workspace_id: Option<String>,
     limit: i64,
     offset: i64,
 }
@@ -68,6 +70,7 @@ impl ListQuery {
                     "analyst_status" => q.analyst_status = Some(v),
                     "category" => q.category = Some(v),
                     "search" => q.search = Some(v),
+                    "workspace_id" => q.workspace_id = Some(v),
                     "limit" => q.limit = v.parse().unwrap_or(100),
                     "offset" => q.offset = v.parse().unwrap_or(0),
                     _ => {}
@@ -106,6 +109,7 @@ async fn list(
 ) -> ApiResult<Json<Value>> {
     let q = ListQuery::parse(raw.as_deref());
     validate_enums(&q)?;
+    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
     // Access control: non-admins are scoped to their own tasks via the join.
     let filters = repo::findings::FindingFilters {
         task_id: q.task_id,
@@ -119,6 +123,7 @@ async fn list(
         analyst_status: q.analyst_status,
         category: q.category,
         search: q.search,
+        workspace,
         limit: q.limit,
         offset: q.offset,
     };

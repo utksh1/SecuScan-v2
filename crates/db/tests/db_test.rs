@@ -110,6 +110,7 @@ async fn task_and_findings_flow() {
             inputs_json: r#"{"target":"127.0.0.1"}"#,
             options_json: "{}",
             workflow_run_id: None,
+            workspace_id: None,
         },
     )
     .await
@@ -331,6 +332,7 @@ async fn dashboard_counters() {
             inputs_json: "{}",
             options_json: "{}",
             workflow_run_id: None,
+            workspace_id: None,
         },
     )
     .await
@@ -340,7 +342,9 @@ async fn dashboard_counters() {
     repo::findings::insert_many(&pool, &t.id, "p", &[f])
         .await
         .unwrap();
-    let s = repo::misc::dashboard_summary(&pool, None).await.unwrap();
+    let s = repo::misc::dashboard_summary(&pool, None, &repo::WorkspaceScope::All)
+        .await
+        .unwrap();
     assert_eq!(s.tasks_total, 1);
     assert_eq!(s.tasks_queued, 1);
     assert_eq!(s.findings_critical, 1);

@@ -1,5 +1,6 @@
 //! Tasks: lifecycle persistence.
 
+use super::workspaces::WorkspaceScope;
 use crate::models::TaskRow;
 use crate::{new_id, now, DbError, DbResult};
 use secuscan_core::models::TaskStatus;
@@ -14,6 +15,7 @@ pub struct NewTask<'a> {
     pub inputs_json: &'a str,
     pub options_json: &'a str,
     pub workflow_run_id: Option<&'a str>,
+    pub workspace_id: Option<&'a str>,
 }
 
 pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
@@ -32,14 +34,15 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
         output: None,
         output_truncated: false,
         workflow_run_id: t.workflow_run_id.map(str::to_string),
+        workspace_id: t.workspace_id.map(str::to_string),
         created_at: now(),
         started_at: None,
         finished_at: None,
     };
     sqlx::query(
         "INSERT INTO tasks (id, user_id, plugin_id, plugin_name, target, status, inputs_json, \
-         options_json, output_truncated, workflow_run_id, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10)",
+         options_json, output_truncated, workflow_run_id, workspace_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)",
     )
     .bind(&row.id)
     .bind(&row.user_id)
@@ -50,6 +53,7 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
     .bind(&row.inputs_json)
     .bind(&row.options_json)
     .bind(&row.workflow_run_id)
+    .bind(&row.workspace_id)
     .bind(&row.created_at)
     .execute(pool)
     .await?;
@@ -76,6 +80,7 @@ pub struct TaskListFilters {
     pub plugin_id: Option<String>,
     pub workflow_run_id: Option<String>,
     pub search: Option<String>,
+    pub workspace: WorkspaceScope,
     pub limit: i64,
     pub offset: i64,
 }
@@ -84,47 +89,62 @@ pub struct TaskListFilters {
 pub async fn list(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<Vec<TaskRow>> {
     let limit = if f.limit <= 0 { 50 } else { f.limit.min(500) };
     let offset = f.offset.max(0);
-    sqlx::query_as::<_, TaskRow>(
+    let mut n = 5usize; // ?1..?5 are bound above
+    let (ws_clause, ws_bind) = f.workspace.clause("workspace_id", &mut n);
+    n += 1;
+    let p_lim = format!("?{n}");
+    n += 1;
+    let p_off = format!("?{n}");
+    let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         created_at, started_at, finished_at \
+         workspace_id, created_at, started_at, finished_at \
          FROM tasks \
          WHERE (?1 IS NULL OR user_id = ?1) \
            AND (?2 IS NULL OR status = ?2) \
            AND (?3 IS NULL OR plugin_id = ?3) \
            AND (?4 IS NULL OR workflow_run_id = ?4) \
            AND (?5 IS NULL OR target LIKE '%' || ?5 || '%' OR plugin_name LIKE '%' || ?5 || '%') \
-         ORDER BY created_at DESC LIMIT ?6 OFFSET ?7",
-    )
-    .bind(&f.user_id)
-    .bind(&f.status)
-    .bind(&f.plugin_id)
-    .bind(&f.workflow_run_id)
-    .bind(&f.search)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+           {ws_clause} \
+         ORDER BY created_at DESC LIMIT {p_lim} OFFSET {p_off}"
+    );
+    let mut q = sqlx::query_as::<_, TaskRow>(&sql)
+        .bind(&f.user_id)
+        .bind(&f.status)
+        .bind(&f.plugin_id)
+        .bind(&f.workflow_run_id)
+        .bind(&f.search);
+    // Bind order must match placeholder order: the workspace clause comes
+    // before LIMIT/OFFSET in the SQL text.
+    if let Some(id) = ws_bind {
+        q = q.bind(id);
+    }
+    q = q.bind(limit).bind(offset);
+    q.fetch_all(pool).await.map_err(Into::into)
 }
 
 pub async fn count(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<i64> {
-    sqlx::query_scalar::<_, i64>(
+    let mut n = 5usize;
+    let (ws_clause, ws_bind) = f.workspace.clause("workspace_id", &mut n);
+    let sql = format!(
         "SELECT COUNT(*) FROM tasks \
          WHERE (?1 IS NULL OR user_id = ?1) \
            AND (?2 IS NULL OR status = ?2) \
            AND (?3 IS NULL OR plugin_id = ?3) \
            AND (?4 IS NULL OR workflow_run_id = ?4) \
-           AND (?5 IS NULL OR target LIKE '%' || ?5 || '%' OR plugin_name LIKE '%' || ?5 || '%')",
-    )
-    .bind(&f.user_id)
-    .bind(&f.status)
-    .bind(&f.plugin_id)
-    .bind(&f.workflow_run_id)
-    .bind(&f.search)
-    .fetch_one(pool)
-    .await
-    .map_err(Into::into)
+           AND (?5 IS NULL OR target LIKE '%' || ?5 || '%' OR plugin_name LIKE '%' || ?5 || '%') \
+           {ws_clause}"
+    );
+    let mut q = sqlx::query_scalar::<_, i64>(&sql)
+        .bind(&f.user_id)
+        .bind(&f.status)
+        .bind(&f.plugin_id)
+        .bind(&f.workflow_run_id)
+        .bind(&f.search);
+    if let Some(id) = ws_bind {
+        q = q.bind(id);
+    }
+    q.fetch_one(pool).await.map_err(Into::into)
 }
 
 pub async fn mark_running(pool: &SqlitePool, id: &str) -> DbResult<()> {
@@ -197,18 +217,34 @@ pub async fn recent(
     user_id: Option<&str>,
     limit: i64,
 ) -> DbResult<Vec<TaskRow>> {
-    sqlx::query_as::<_, TaskRow>(
+    recent_scoped(pool, user_id, &WorkspaceScope::All, limit).await
+}
+
+/// Recent tasks with an additional workspace scope (dashboard).
+pub async fn recent_scoped(
+    pool: &SqlitePool,
+    user_id: Option<&str>,
+    workspace: &WorkspaceScope,
+    limit: i64,
+) -> DbResult<Vec<TaskRow>> {
+    let mut n = 1usize; // ?1 = user_id
+    let (ws_clause, ws_bind) = workspace.clause("workspace_id", &mut n);
+    n += 1;
+    let p_lim = format!("?{n}");
+    let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         created_at, started_at, finished_at \
+         workspace_id, created_at, started_at, finished_at \
          FROM tasks WHERE (?1 IS NULL OR user_id = ?1) \
-         ORDER BY created_at DESC LIMIT ?2",
-    )
-    .bind(user_id)
-    .bind(limit.clamp(1, 50))
-    .fetch_all(pool)
-    .await
-    .map_err(Into::into)
+         {ws_clause} \
+         ORDER BY created_at DESC LIMIT {p_lim}"
+    );
+    let mut q = sqlx::query_as::<_, TaskRow>(&sql).bind(user_id);
+    if let Some(id) = ws_bind {
+        q = q.bind(id);
+    }
+    q = q.bind(limit.clamp(1, 50));
+    q.fetch_all(pool).await.map_err(Into::into)
 }
 
 /// Live in-memory raw-output update for running tasks (so the UI can show

@@ -4,6 +4,27 @@ use secuscan_core::models::{AnalystStatus, FindingKind, Severity, TaskStatus};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WorkspaceRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct TargetRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub name: String,
+    pub kind: String,
+    pub description: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct UserRow {
     pub id: String,
     pub email: String,
@@ -51,6 +72,8 @@ pub struct TaskRow {
     pub output: Option<String>,
     pub output_truncated: bool,
     pub workflow_run_id: Option<String>,
+    /// Owning workspace; NULL = the synthetic "Personal" scope.
+    pub workspace_id: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,

@@ -23,6 +23,58 @@ async fn spawn_app() -> TestServer {
     )
     .unwrap();
     std::fs::write(
+        plugins_dir.path().join("sevtest.toml"),
+        r#"
+[plugin]
+id = "sevtest"
+name = "Severity Test Tool"
+version = "1.0.0"
+description = "emits critical/high/medium findings deterministically"
+category = "test"
+
+[engine]
+type = "cli"
+binary = "sh"
+timeout_seconds = 30
+output_format = "text"
+argv = ["sh", "-c", "echo 'SEVTEST CRITICAL issue'; echo 'SEVTEST HIGH issue'; echo 'SEVTEST MEDIUM issue'"]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+
+[parser]
+type = "passthrough"
+
+[[static_rules]]
+pattern = "SEVTEST CRITICAL"
+title = "Critical test finding"
+severity = "critical"
+category = "Test"
+
+[[static_rules]]
+pattern = "SEVTEST HIGH"
+title = "High test finding"
+severity = "high"
+category = "Test"
+
+[[static_rules]]
+pattern = "SEVTEST MEDIUM"
+title = "Medium test finding"
+severity = "medium"
+category = "Test"
+
+[safety]
+level = "safe"
+requires_consent = false
+max_concurrent = 2
+max_per_hour = 0
+"#,
+    )
+    .unwrap();
+    std::fs::write(
         plugins_dir.path().join("sleepy.toml"),
         r#"
 [plugin]
@@ -880,4 +932,406 @@ async fn last_admin_cannot_be_demoted() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 409);
+}
+
+// ---------------------------------------------------------------------------
+// Workspaces + first-class targets (cycle 7 feature work).
+// ---------------------------------------------------------------------------
+
+/// Wait for a task to reach a terminal state, polling the detail endpoint.
+async fn wait_terminal(
+    c: &reqwest::Client,
+    base: &str,
+    token: &str,
+    id: &str,
+) -> serde_json::Value {
+    for _ in 0..100 {
+        let resp = c
+            .get(format!("{base}/tasks/{id}"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        let t: serde_json::Value = resp.json().await.unwrap();
+        let status = t["status"].as_str().unwrap().to_string();
+        if matches!(status.as_str(), "completed" | "failed" | "cancelled") {
+            return t;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("task {id} did not reach a terminal state in time");
+}
+
+#[tokio::test]
+async fn workspaces_targets_and_task_scoping() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // --- workspace CRUD ---------------------------------------------------
+    let resp = auth(c.post(format!("{}/workspaces", s.base)))
+        .json(&serde_json::json!({"name": "  Acme Corp  ", "description": "Client engagement"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let ws: serde_json::Value = resp.json().await.unwrap();
+    let ws_id = ws["id"].as_str().unwrap().to_string();
+    assert_eq!(ws["name"], "Acme Corp"); // trimmed
+    assert_eq!(ws["tasks_total"], 0);
+
+    // Empty / whitespace names are rejected.
+    let resp = auth(c.post(format!("{}/workspaces", s.base)))
+        .json(&serde_json::json!({"name": "   "}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // List includes the workspace + the synthetic Personal entry.
+    let resp = auth(c.get(format!("{}/workspaces", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(list["items"].as_array().unwrap().len(), 1);
+    assert_eq!(list["personal"]["name"], "Personal");
+
+    // --- targets: kind derivation, uniqueness, validation ------------------
+    let mk_target = |name: &str| serde_json::json!({"name": name});
+    let resp = auth(c.post(format!("{}/workspaces/{ws_id}/targets", s.base)))
+        .json(&mk_target("example.com"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let t_host: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(t_host["kind"], "hostname");
+
+    let resp = auth(c.post(format!("{}/workspaces/{ws_id}/targets", s.base)))
+        .json(&mk_target("192.168.1.10"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let t_ip: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(t_ip["kind"], "ip_address");
+
+    let resp = auth(c.post(format!("{}/workspaces/{ws_id}/targets", s.base)))
+        .json(&mk_target("https://app.example.com"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let t_url: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(t_url["kind"], "url");
+
+    // Duplicate name in the same workspace → 409.
+    let resp = auth(c.post(format!("{}/workspaces/{ws_id}/targets", s.base)))
+        .json(&mk_target("example.com"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+
+    // Whitespace inside a target name → 400.
+    let resp = auth(c.post(format!("{}/workspaces/{ws_id}/targets", s.base)))
+        .json(&mk_target("bad target"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Rename re-derives the kind.
+    let t_url_id = t_url["id"].as_str().unwrap();
+    let resp = auth(c.patch(format!("{}/targets/{t_url_id}", s.base)))
+        .json(&serde_json::json!({"name": "acme.example.org", "description": "renamed"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let renamed: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(renamed["kind"], "hostname");
+    assert_eq!(renamed["description"], "renamed");
+
+    // --- tasks scoped to the workspace -------------------------------------
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest",
+            "inputs": {"target": "example.com"},
+            "consent_granted": true,
+            "workspace_id": ws_id,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let task_id = task["id"].as_str().unwrap().to_string();
+    assert_eq!(task["workspace_id"], serde_json::json!(ws_id));
+
+    let done = wait_terminal(&c, &s.base, &token, &task_id).await;
+    assert_eq!(done["status"], "completed");
+
+    // Unknown workspace on task create → 404 (not 500).
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest",
+            "inputs": {"target": "example.com"},
+            "consent_granted": true,
+            "workspace_id": "no-such-workspace",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Task list scoping.
+    let resp = auth(c.get(format!("{}/tasks?workspace_id={ws_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let tl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(tl["total"], 1);
+    assert_eq!(tl["items"][0]["id"], serde_json::json!(task_id));
+
+    let resp = auth(c.get(format!("{}/tasks?workspace_id=none", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let tl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(tl["total"], 0);
+
+    let resp = auth(c.get(format!("{}/tasks?workspace_id=missing", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Retry keeps the workspace.
+    let resp = auth(c.post(format!("{}/tasks/{task_id}/retry", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let retried: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(retried["workspace_id"], serde_json::json!(ws_id));
+    let _ = wait_terminal(&c, &s.base, &token, retried["id"].as_str().unwrap()).await;
+
+    // Findings scoping (sevtest produced 3 findings per run, 2 runs = 6).
+    let resp = auth(c.get(format!("{}/findings?workspace_id={ws_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let fl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(fl["total"], 6);
+    assert_eq!(fl["items"].as_array().unwrap().len(), 6);
+
+    let resp = auth(c.get(format!("{}/findings?workspace_id=none", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let fl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(fl["total"], 0);
+
+    // Dashboard scoping.
+    let resp = auth(c.get(format!("{}/dashboard/summary?workspace_id={ws_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let sum: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(sum["tasks"]["total"], 2);
+    assert_eq!(sum["findings"]["critical"], 2);
+    assert_eq!(sum["findings"]["high"], 2);
+    assert_eq!(sum["findings"]["medium"], 2);
+
+    let resp = auth(c.get(format!("{}/dashboard/summary?workspace_id=none", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let sum: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(sum["tasks"]["total"], 0);
+
+    // Target stats reflect scans of the matching target string.
+    let t_host_id = t_host["id"].as_str().unwrap();
+    let resp = auth(c.get(format!("{}/targets/{t_host_id}/stats", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404); // no such route (stats ride on the list)
+
+    let resp = auth(c.get(format!("{}/workspaces/{ws_id}/targets", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let targets: serde_json::Value = resp.json().await.unwrap();
+    let items = targets["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    let host_entry = items
+        .iter()
+        .find(|t| t["name"] == serde_json::json!("example.com"))
+        .expect("example.com target present");
+    assert_eq!(host_entry["scans_total"], 2);
+    assert!(host_entry["last_scanned_at"].is_string());
+
+    // --- RBAC ---------------------------------------------------------------
+    // Viewer: read-only.
+    let _ = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "viewer@test.local", "name": "Viewer", "password": "viewer-pass-123", "role": "viewer"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let vresp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "viewer@test.local", "password": "viewer-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let vbody: serde_json::Value = vresp.json().await.unwrap();
+    let vtoken = vbody["access_token"].as_str().unwrap().to_string();
+
+    // Viewer can list workspaces…
+    let resp = c
+        .get(format!("{}/workspaces", s.base))
+        .bearer_auth(&vtoken)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    // …but not create them.
+    let resp = c
+        .post(format!("{}/workspaces", s.base))
+        .bearer_auth(&vtoken)
+        .json(&serde_json::json!({"name": "Nope"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Scanner can create a workspace but not delete one.
+    let _ = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "scanner@test.local", "name": "Scanner", "password": "scanner-pass-123", "role": "scanner"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let sresp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "scanner@test.local", "password": "scanner-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let sbody: serde_json::Value = sresp.json().await.unwrap();
+    let stoken = sbody["access_token"].as_str().unwrap().to_string();
+
+    let resp = c
+        .post(format!("{}/workspaces", s.base))
+        .bearer_auth(&stoken)
+        .json(&serde_json::json!({"name": "By Scanner"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let ws2: serde_json::Value = resp.json().await.unwrap();
+    let ws2_id = ws2["id"].as_str().unwrap().to_string();
+
+    let resp = c
+        .delete(format!("{}/workspaces/{ws2_id}", s.base))
+        .bearer_auth(&stoken)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403); // admin-only
+
+    // Admin deletes ws2; then delete the main workspace — its tasks must
+    // fall back to the Personal scope (ON DELETE SET NULL).
+    let resp = auth(c.delete(format!("{}/workspaces/{ws2_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    let resp = auth(c.delete(format!("{}/workspaces/{ws_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+
+    let resp = auth(c.get(format!("{}/tasks?workspace_id=none", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let tl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(tl["total"], 2); // both sevtest tasks fell back to Personal
+}
+
+#[tokio::test]
+async fn multi_severity_filter_returns_correct_results() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // One sevtest run → exactly one critical, one high, one medium finding.
+    let resp = auth(c.post(format!("{}/tasks", s.base)))
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest",
+            "inputs": {"target": "example.com"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let done = wait_terminal(&c, &s.base, &token, task["id"].as_str().unwrap()).await;
+    assert_eq!(done["status"], "completed");
+
+    // Regression: the severity placeholders used to collide with the OFFSET
+    // parameter, silently dropping all but the first severity (and breaking
+    // single-severity filters entirely). Items and total must now agree.
+    let cases = [
+        (vec!["critical"], 1),
+        (vec!["high"], 1),
+        (vec!["medium"], 1),
+        (vec!["critical", "high"], 2),
+        (vec!["critical", "high", "medium"], 3),
+        (vec!["high", "medium"], 2),
+        (vec![], 3),
+    ];
+    for (sevs, expected) in cases {
+        let mut url = format!("{}/findings", s.base);
+        for (i, sev) in sevs.iter().enumerate() {
+            url.push_str(if i == 0 { "?" } else { "&" });
+            url.push_str(&format!("severity={sev}"));
+        }
+        let resp = auth(c.get(&url)).send().await.unwrap();
+        assert_eq!(resp.status(), 200, "url={url}");
+        let fl: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(
+            fl["total"].as_i64().unwrap(),
+            expected,
+            "total mismatch for {url}"
+        );
+        assert_eq!(
+            fl["items"].as_array().unwrap().len() as i64,
+            expected,
+            "items mismatch for {url}"
+        );
+    }
+
+    // Combined with workspace scoping (none = personal, all tasks are).
+    let resp = auth(c.get(format!(
+        "{}/findings?severity=critical&severity=high&workspace_id=none",
+        s.base
+    )))
+    .send()
+    .await
+    .unwrap();
+    let fl: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(fl["total"], 2);
 }

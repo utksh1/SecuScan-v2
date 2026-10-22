@@ -3,8 +3,9 @@
 use crate::auth::extractor::CurrentUser;
 use crate::error::ApiResult;
 use crate::routes::tasks::task_to_json;
+use crate::routes::workspaces::parse_workspace_scope;
 use crate::state::SharedState;
-use axum::extract::State;
+use axum::extract::{RawQuery, State};
 use axum::Json;
 use secuscan_db::repo;
 use serde_json::{json, Value};
@@ -26,14 +27,39 @@ fn json_health() -> Json<Value> {
     }))
 }
 
-async fn summary(State(state): State<SharedState>, user: CurrentUser) -> ApiResult<Json<Value>> {
+#[derive(Default)]
+struct SummaryQuery {
+    workspace_id: Option<String>,
+}
+
+impl SummaryQuery {
+    fn parse(raw: Option<&str>) -> Self {
+        let mut q = SummaryQuery::default();
+        if let Some(raw) = raw {
+            for (k, v) in url::form_urlencoded::parse(raw.as_bytes()) {
+                if k == "workspace_id" {
+                    q.workspace_id = Some(v.to_string());
+                }
+            }
+        }
+        q
+    }
+}
+
+async fn summary(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    RawQuery(raw): RawQuery,
+) -> ApiResult<Json<Value>> {
+    let q = SummaryQuery::parse(raw.as_deref());
+    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
     let scope_user = if user.is_admin() {
         None
     } else {
         Some(user.0.id.as_str())
     };
-    let s = repo::misc::dashboard_summary(&state.db, scope_user).await?;
-    let recent = repo::tasks::recent(&state.db, scope_user, 10).await?;
+    let s = repo::misc::dashboard_summary(&state.db, scope_user, &workspace).await?;
+    let recent = repo::tasks::recent_scoped(&state.db, scope_user, &workspace, 10).await?;
     let registry = state.registry.read().await;
     let available = registry.all().iter().filter(|p| p.available).count();
     let enabled = secuscan_db::repo::misc::enabled_map(&state.db)

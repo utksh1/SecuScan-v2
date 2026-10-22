@@ -1,5 +1,6 @@
 //! Findings: bulk insert, filters, triage updates.
 
+use super::workspaces::WorkspaceScope;
 use crate::models::FindingRow;
 use crate::{new_id, now, DbError, DbResult};
 use secuscan_core::models::{AnalystStatus, Finding};
@@ -53,19 +54,32 @@ pub struct FindingFilters {
     pub analyst_status: Option<String>,
     pub category: Option<String>,
     pub search: Option<String>,
+    pub workspace: WorkspaceScope,
     pub limit: i64,
     pub offset: i64,
 }
 
+/// Running placeholder counter: every fragment asks for the next index and
+/// records it, so bind order always matches placeholder order no matter
+/// which optional clauses are present. (A previous version hard-coded the
+/// severity start index and collided with the OFFSET parameter.)
+struct Ph(usize);
+
+impl Ph {
+    fn next(&mut self) -> String {
+        self.0 += 1;
+        format!("?{}", self.0)
+    }
+}
+
 impl FindingFilters {
-    /// (sev = ?n OR sev = ?m …) fragment and its bind values.
-    fn severity_clause(&self, start_idx: usize) -> (String, Vec<String>) {
+    /// `(f.severity = ?n OR f.severity = ?m …)` fragment and its bind
+    /// values. Advances `ph` by the number of severities.
+    fn severity_clause(&self, ph: &mut Ph) -> (String, Vec<String>) {
         if self.severity.is_empty() {
             return (String::new(), Vec::new());
         }
-        let placeholders: Vec<String> = (0..self.severity.len())
-            .map(|i| format!("?{}", start_idx + i))
-            .collect();
+        let placeholders: Vec<String> = (0..self.severity.len()).map(|_| ph.next()).collect();
         (
             format!(
                 " AND (f.severity = {})",
@@ -78,20 +92,33 @@ impl FindingFilters {
 
 pub async fn list(pool: &SqlitePool, f: &FindingFilters) -> DbResult<Vec<FindingRow>> {
     let limit = if f.limit <= 0 { 100 } else { f.limit.min(1000) };
-    let (sev_clause, sev_binds) = f.severity_clause(8);
+    let offset = f.offset.max(0);
+
+    let mut ph = Ph(0);
+    let p_task = ph.next();
+    let p_user = ph.next();
+    let p_kind = ph.next();
+    let p_status = ph.next();
+    let p_cat = ph.next();
+    let p_search = ph.next();
+    let (ws_clause, ws_bind) = f.workspace.clause("t.workspace_id", &mut ph.0);
+    let (sev_clause, sev_binds) = f.severity_clause(&mut ph);
+    let p_lim = ph.next();
+    let p_off = ph.next();
+
     let sql = format!(
         "SELECT f.* FROM findings f \
          JOIN tasks t ON t.id = f.task_id \
-         WHERE (?1 IS NULL OR f.task_id = ?1) \
-           AND (?2 IS NULL OR t.user_id = ?2) \
-           AND (?3 IS NULL OR f.kind = ?3) \
-           AND (?4 IS NULL OR f.analyst_status = ?4) \
-           AND (?5 IS NULL OR f.category = ?5) \
-           AND (?6 IS NULL OR f.title LIKE '%' || ?6 || '%' OR f.description LIKE '%' || ?6 || '%'){sev_clause} \
+         WHERE ({p_task} IS NULL OR f.task_id = {p_task}) \
+           AND ({p_user} IS NULL OR t.user_id = {p_user}) \
+           AND ({p_kind} IS NULL OR f.kind = {p_kind}) \
+           AND ({p_status} IS NULL OR f.analyst_status = {p_status}) \
+           AND ({p_cat} IS NULL OR f.category = {p_cat}) \
+           AND ({p_search} IS NULL OR f.title LIKE '%' || {p_search} || '%' OR f.description LIKE '%' || {p_search} || '%'){ws_clause}{sev_clause} \
          ORDER BY CASE f.severity \
             WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 \
             WHEN 'low' THEN 3 ELSE 4 END, f.created_at DESC \
-         LIMIT ?7 OFFSET ?8"
+         LIMIT {p_lim} OFFSET {p_off}"
     );
     let mut q = sqlx::query_as::<_, FindingRow>(&sql)
         .bind(&f.task_id)
@@ -99,26 +126,37 @@ pub async fn list(pool: &SqlitePool, f: &FindingFilters) -> DbResult<Vec<Finding
         .bind(&f.kind)
         .bind(&f.analyst_status)
         .bind(&f.category)
-        .bind(&f.search)
-        .bind(limit)
-        .bind(f.offset.max(0));
+        .bind(&f.search);
+    if let Some(id) = ws_bind {
+        q = q.bind(id);
+    }
     for value in sev_binds {
         q = q.bind(value);
     }
+    q = q.bind(limit).bind(offset);
     q.fetch_all(pool).await.map_err(Into::into)
 }
 
 pub async fn count(pool: &SqlitePool, f: &FindingFilters) -> DbResult<i64> {
-    let (sev_clause, sev_binds) = f.severity_clause(7);
+    let mut ph = Ph(0);
+    let p_task = ph.next();
+    let p_user = ph.next();
+    let p_kind = ph.next();
+    let p_status = ph.next();
+    let p_cat = ph.next();
+    let p_search = ph.next();
+    let (ws_clause, ws_bind) = f.workspace.clause("t.workspace_id", &mut ph.0);
+    let (sev_clause, sev_binds) = f.severity_clause(&mut ph);
+
     let sql = format!(
         "SELECT COUNT(*) FROM findings f \
          JOIN tasks t ON t.id = f.task_id \
-         WHERE (?1 IS NULL OR f.task_id = ?1) \
-           AND (?2 IS NULL OR t.user_id = ?2) \
-           AND (?3 IS NULL OR f.kind = ?3) \
-           AND (?4 IS NULL OR f.analyst_status = ?4) \
-           AND (?5 IS NULL OR f.category = ?5) \
-           AND (?6 IS NULL OR f.title LIKE '%' || ?6 || '%' OR f.description LIKE '%' || ?6 || '%'){sev_clause}"
+         WHERE ({p_task} IS NULL OR f.task_id = {p_task}) \
+           AND ({p_user} IS NULL OR t.user_id = {p_user}) \
+           AND ({p_kind} IS NULL OR f.kind = {p_kind}) \
+           AND ({p_status} IS NULL OR f.analyst_status = {p_status}) \
+           AND ({p_cat} IS NULL OR f.category = {p_cat}) \
+           AND ({p_search} IS NULL OR f.title LIKE '%' || {p_search} || '%' OR f.description LIKE '%' || {p_search} || '%'){ws_clause}{sev_clause}"
     );
     let mut q = sqlx::query_scalar::<_, i64>(&sql)
         .bind(&f.task_id)
@@ -127,6 +165,9 @@ pub async fn count(pool: &SqlitePool, f: &FindingFilters) -> DbResult<i64> {
         .bind(&f.analyst_status)
         .bind(&f.category)
         .bind(&f.search);
+    if let Some(id) = ws_bind {
+        q = q.bind(id);
+    }
     for value in sev_binds {
         q = q.bind(value);
     }
