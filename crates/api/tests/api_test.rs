@@ -77,6 +77,7 @@ max_per_hour = 0
         denied_capabilities: vec![],
         allow_register: false,
         cors_origin: None,
+        cookie_secure: false,
         max_concurrent_tasks: 4,
     });
 

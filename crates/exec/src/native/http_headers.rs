@@ -259,8 +259,22 @@ fn finding(
 }
 
 pub(crate) fn build_client(follow: bool, timeout: Duration) -> Result<Client, String> {
+    // Only same-host redirects: a target must not be able to pivot the
+    // scanner onto arbitrary internal endpoints via a redirect.
     let policy = if follow {
-        redirect::Policy::limited(5)
+        redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                attempt.error("too many redirects")
+            } else if let Some(original) = attempt.previous().first() {
+                if attempt.url().host_str() == original.host_str() {
+                    attempt.follow()
+                } else {
+                    attempt.stop()
+                }
+            } else {
+                attempt.follow()
+            }
+        })
     } else {
         redirect::Policy::none()
     };

@@ -18,6 +18,8 @@ pub struct Config {
     pub allow_register: bool,
     /// Optional CORS origin (e.g. `http://localhost:5173` for split dev).
     pub cors_origin: Option<String>,
+    /// Set the Secure attribute on auth cookies (enable when serving HTTPS).
+    pub cookie_secure: bool,
     /// Global cap on simultaneously *running* tasks.
     pub max_concurrent_tasks: usize,
 }
@@ -76,6 +78,7 @@ impl Config {
             cors_origin: std::env::var("SECUSCAN_CORS_ORIGIN")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            cookie_secure: env_or("SECUSCAN_COOKIE_SECURE", "false") == "true",
             max_concurrent_tasks: env_or("SECUSCAN_MAX_CONCURRENT_TASKS", "8")
                 .parse()
                 .unwrap_or(8),

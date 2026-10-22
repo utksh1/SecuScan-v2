@@ -212,38 +212,63 @@ impl TaskManager {
     }
 }
 
-/// Recorder: persists every envelope, then broadcasts an SSE frame carrying
-/// the DB row id (so live subscribers and DB replay can be de-duplicated).
+/// Hard cap on persisted events per task; beyond this, log lines are only
+/// broadcast live (not stored) so a chatty tool cannot bloat the database.
+const MAX_PERSISTED_EVENTS_PER_TASK: usize = 10_000;
+
+/// Recorder: persists every envelope (subject to the per-task cap), then
+/// broadcasts an SSE frame carrying the DB row id (so live subscribers and
+/// DB replay can be de-duplicated). Events beyond the cap are broadcast
+/// with a synthetic id above any DB id but never persisted.
 async fn recorder(
     mut rx: mpsc::Receiver<EventEnvelope>,
     pool: SqlitePool,
     broadcast: broadcast::Sender<SseFrame>,
 ) {
+    let mut persisted: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut synthetic_id: i64 = i64::MAX / 2;
     while let Some(env) = rx.recv().await {
         let payload_json = serde_json::to_string(&env.event).unwrap_or_else(|_| "{}".into());
         let level = event_level(&env.event);
-        let res = sqlx::query(
-            "INSERT INTO task_events (task_id, ts, level, payload_json) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind(env.task_id.to_string())
-        .bind(&env.ts)
-        .bind(level)
-        .bind(&payload_json)
-        .execute(&pool)
-        .await;
-        let id = match res {
-            Ok(r) => r.last_insert_rowid(),
-            Err(e) => {
-                tracing::error!("event persist failed: {e}");
-                continue;
+        let task_key = env.task_id.to_string();
+
+        let count = persisted.entry(task_key.clone()).or_insert(0);
+        if *count < MAX_PERSISTED_EVENTS_PER_TASK {
+            let res = sqlx::query(
+                "INSERT INTO task_events (task_id, ts, level, payload_json) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind(&task_key)
+            .bind(&env.ts)
+            .bind(level)
+            .bind(&payload_json)
+            .execute(&pool)
+            .await;
+            *count += 1;
+            match res {
+                Ok(r) => {
+                    let id = r.last_insert_rowid();
+                    let _ = broadcast.send(SseFrame {
+                        task_id: task_key,
+                        id,
+                        ts: env.ts,
+                        payload_json,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("event persist failed: {e}");
+                }
             }
-        };
-        let _ = broadcast.send(SseFrame {
-            task_id: env.task_id.to_string(),
-            id,
-            ts: env.ts,
-            payload_json,
-        });
+        } else {
+            // Cap reached: broadcast only, with a synthetic always-increasing
+            // id so live dedup logic still works.
+            synthetic_id += 1;
+            let _ = broadcast.send(SseFrame {
+                task_id: task_key,
+                id: synthetic_id,
+                ts: env.ts,
+                payload_json,
+            });
+        }
     }
 }
 

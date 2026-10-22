@@ -168,10 +168,21 @@ fn csv_report(findings: &[FindingRow]) -> String {
 }
 
 fn csv_escape(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+    // Formula-injection guard: cells that begin with =, +, -, @ or tab are
+    // prefixed with a single quote so spreadsheet apps do not execute them.
+    let guard = matches!(
+        s.as_bytes().first(),
+        Some(b'=') | Some(b'+') | Some(b'-') | Some(b'@') | Some(b'\t')
+    );
+    let body = if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
         s.to_string()
+    };
+    if guard {
+        format!("'{body}")
+    } else {
+        body
     }
 }
 

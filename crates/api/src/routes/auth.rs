@@ -109,12 +109,22 @@ async fn login(
         client_ip(&headers),
         req.email.to_ascii_lowercase()
     ))?;
-    let user = repo::users::find_by_email(&state.db, &req.email)
-        .await?
-        .ok_or_else(|| ApiError::Unauthorized("invalid email or password".into()))?;
-    if !verify_password(&req.password, &user.password_hash) {
-        return Err(ApiError::Unauthorized("invalid email or password".into()));
-    }
+    // Constant-ish time: verify against a dummy hash when the user is
+    // unknown, so response timing does not reveal account existence.
+    const DUMMY_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$YXNhbHQxc2FsdDEyc2FsdA$P13Xq8bX0ZGHGkMZYyYqXlOjSOnDZpS1LzIMiIpEymM";
+    let user = repo::users::find_by_email(&state.db, &req.email).await?;
+    let (user, hash) = match user {
+        Some(u) => {
+            let hash = u.password_hash.clone();
+            (Some(u), hash)
+        }
+        None => (None, DUMMY_HASH.to_string()),
+    };
+    let password_ok = verify_password(&req.password, &hash);
+    let user = match (user, password_ok) {
+        (Some(u), true) => u,
+        _ => return Err(ApiError::Unauthorized("invalid email or password".into())),
+    };
     let access = issue_access_token(&state.config.jwt_secret, &user.id, &user.role)?;
     let refresh = new_refresh_token();
     repo::users::insert_refresh_token(
@@ -130,6 +140,7 @@ async fn login(
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
+        .secure(state.config.cookie_secure)
         .max_age(time::Duration::seconds(REFRESH_TTL_SECS))
         .build();
     let mut hm = HeaderMap::new();
@@ -177,6 +188,7 @@ async fn refresh(
         .path("/")
         .http_only(true)
         .same_site(SameSite::Lax)
+        .secure(state.config.cookie_secure)
         .max_age(time::Duration::seconds(REFRESH_TTL_SECS))
         .build();
     let mut hm = HeaderMap::new();
