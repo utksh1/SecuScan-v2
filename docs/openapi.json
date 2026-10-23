@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "SecuScan v2 API",
-    "version": "3.1.2",
+    "version": "3.1.3",
     "description": "Pentest automation platform: 35-plugin scanner catalog, task lifecycle, finding triage, Pentest Robots DAG, Sniper Auto-Exploiter, VPN-aware scanning, OOB callbacks, notifications, and report generation.\n\nAll endpoints (except `/auth/login`, `/auth/register`, `/health`, and `/oob/:secret`) require authentication via either a Bearer JWT (`Authorization: Bearer <token>`) or an API key (`x-api-key: <key>`).",
     "contact": {
       "name": "SecuScan",

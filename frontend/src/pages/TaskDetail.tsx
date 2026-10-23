@@ -15,6 +15,7 @@ import {
   Plus,
   Check,
   Minus,
+  History,
 } from 'lucide-react'
 import { request, downloadFile } from '@/api/client'
 import { streamTaskEvents, type TaskStreamEvent } from '@/api/sse'
@@ -185,6 +186,17 @@ export function TaskDetailPage() {
             {!active && (user?.role === 'admin' || user?.role === 'scanner') && (
               <button className="btn-secondary" onClick={retry}>
                 <RotateCcw className="h-4 w-4" /> Replay
+              </button>
+            )}
+            {/* v3.1.3 -- one-click jump to the scan-diff view (auto-selects
+                the previous run of the same plugin+target as baseline). */}
+            {!active && (
+              <button
+                className="btn-secondary"
+                onClick={() => setTab('diff')}
+                title="Compare this run's findings to the previous run of the same plugin + target"
+              >
+                <History className="h-4 w-4" /> Compare to previous run
               </button>
             )}
             <div className="group relative">

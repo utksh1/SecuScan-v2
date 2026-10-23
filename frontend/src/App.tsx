@@ -3,6 +3,7 @@ import { Navigate, Outlet, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { WorkspaceProvider } from '@/auth/WorkspaceContext'
+import { ToastProvider } from '@/components/Toast'
 import { AppShell } from '@/components/layout/AppShell'
 import { LoginPage } from '@/pages/Login'
 import { DashboardPage } from '@/pages/Dashboard'
@@ -69,25 +70,27 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route element={<ProtectedLayout />}>
-            <Route path="/" element={<DashboardPage />} />
-            <Route path="/scanners" element={<ScannersPage />} />
-            <Route path="/tasks/new" element={<NewTaskPage />} />
-            <Route path="/tasks" element={<TasksPage />} />
-            <Route path="/tasks/:id" element={<TaskDetailPage />} />
-            <Route path="/findings" element={<FindingsPage />} />
-            <Route path="/sniper" element={<SniperPage />} />
-            <Route path="/vpn" element={<VpnPage />} />
-            <Route path="/targets" element={<TargetsPage />} />
-            <Route path="/reports" element={<ReportsPage />} />
-            <Route path="/schedules" element={<SchedulesPage />} />
-            <Route path="/workflows" element={<WorkflowsPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<NotFound />} />
-          </Route>
-        </Routes>
+        <ToastProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route element={<ProtectedLayout />}>
+              <Route path="/" element={<DashboardPage />} />
+              <Route path="/scanners" element={<ScannersPage />} />
+              <Route path="/tasks/new" element={<NewTaskPage />} />
+              <Route path="/tasks" element={<TasksPage />} />
+              <Route path="/tasks/:id" element={<TaskDetailPage />} />
+              <Route path="/findings" element={<FindingsPage />} />
+              <Route path="/sniper" element={<SniperPage />} />
+              <Route path="/vpn" element={<VpnPage />} />
+              <Route path="/targets" element={<TargetsPage />} />
+              <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/schedules" element={<SchedulesPage />} />
+              <Route path="/workflows" element={<WorkflowsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Route>
+          </Routes>
+        </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>
   )

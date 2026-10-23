@@ -18,10 +18,10 @@ frontend:
 frontend-test:
 	cd frontend && npm ci && npm test
 
-# Full local verification (mirrors CI + the E2E smoke test)
+# Full local verification (mirrors CI + the Node E2E proof script)
 verify: clippy test frontend-test frontend
 	cargo run -q -p secuscan-cli -- plugins validate ./plugins
-	bash scripts/e2e-smoke.sh
+	node scripts/verify.mjs
 
 docker:
 	docker compose -f docker/docker-compose.yml up --build -d

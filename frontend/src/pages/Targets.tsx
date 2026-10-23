@@ -9,6 +9,7 @@ import { Crosshair, Plus, Trash2, Pencil, Play, Layers, Swords } from 'lucide-re
 import { workspaceApi, targetApi } from '@/api/client'
 import type { ScanTarget, AttackSuite } from '@/api/types'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
+import { useToast } from '@/components/Toast'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
 import { formatDate, cn } from '@/utils/format'
@@ -101,16 +102,25 @@ export function TargetsPage() {
 
   // v3.1.2 -- Launch a curated multi-tool suite against a registered
   // target. One task per plugin is created in the target's workspace;
-  // the VPN-aware admission gate still applies. We navigate to /tasks
-  // so the user can watch the new tasks progress.
+  // the VPN-aware admission gate still applies. On success we navigate
+  // to /tasks and raise a toast whose chips deep-link to every launched
+  // task (v3.1.3).
+  const toast = useToast()
   const attackTarget = useMutation({
     mutationFn: ({ id, suite }: { id: string; suite: AttackSuite }) =>
       targetApi.attack(id, suite),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setAttackPicker(null)
       setAttackError(null)
       qc.invalidateQueries({ queryKey: ['targets'] })
       qc.invalidateQueries({ queryKey: ['workspaces'] })
+      toast.push({
+        title: `Attack launched on ${res.target}`,
+        description:
+          `${res.tasks.length} task${res.tasks.length === 1 ? '' : 's'} created` +
+          (res.skipped.length > 0 ? ` · ${res.skipped.length} skipped` : ''),
+        links: res.tasks.map((t) => ({ label: t.plugin_id, to: `/tasks/${t.id}` })),
+      })
       navigate('/tasks')
     },
     onError: (err: Error) => setAttackError(err.message),

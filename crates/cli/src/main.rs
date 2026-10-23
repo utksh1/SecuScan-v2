@@ -6,6 +6,9 @@
 //!   optional Markdown report.
 //! - `plugins` — list / validate plugin manifests.
 //! - `serve`   — start the API server (delegates to the api crate).
+//! - `export-openapi` — print the OpenAPI 3.1 spec served by
+//!   `GET /api/v1/openapi.json` to stdout (SDK generation pipelines;
+//!   pipe into a file or an OpenAPI generator).
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -58,7 +61,17 @@ enum Commands {
     },
     /// Start the API server.
     Serve,
+    /// Print the OpenAPI 3.1 spec (same artifact as GET /api/v1/openapi.json).
+    ExportOpenapi {
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
+
+/// The OpenAPI spec committed at `docs/openapi.json` — the same bytes the
+/// server embeds, so CLI export and HTTP endpoint can never drift.
+const OPENAPI_SPEC_JSON: &str = include_str!("../../../docs/openapi.json");
 
 #[derive(Subcommand)]
 enum PluginsCommands {
@@ -96,7 +109,24 @@ fn main() -> Result<()> {
             PluginsCommands::Validate { path } => validate_manifests(&path),
         },
         Commands::Serve => serve(),
+        Commands::ExportOpenapi { output } => export_openapi(output),
     }
+}
+
+fn export_openapi(output: Option<PathBuf>) -> Result<()> {
+    // Validate that the embedded artifact is well-formed JSON before emitting.
+    let spec: serde_json::Value =
+        serde_json::from_str(OPENAPI_SPEC_JSON).context("embedded docs/openapi.json is not valid JSON")?;
+    let pretty = serde_json::to_string_pretty(&spec).context("cannot serialize spec")?;
+    match output {
+        Some(path) => {
+            std::fs::write(&path, pretty + "\n")
+                .with_context(|| format!("cannot write {}", path.display()))?;
+            eprintln!("OpenAPI spec written to {}", path.display());
+        }
+        None => println!("{pretty}"),
+    }
+    Ok(())
 }
 
 fn parse_inputs(pairs: &[String]) -> Result<BTreeMap<String, serde_json::Value>> {

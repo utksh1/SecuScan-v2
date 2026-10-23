@@ -3,6 +3,95 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 3.1.3 -- Python-free + toast UX + scan-diff button + commit attribution
+
+Three pieces of cleanup surfaced by the user after v3.1.2:
+
+### 1. Commit attribution
+
+All 22 commits in the repo were authored by AI/CI identities ("Z User",
+"SecuScan CI", "SecuScan Dev", "SecuScan v2 Agent") which meant none of
+them counted toward the user's GitHub contribution heatmap. Rewrote the
+entire history with `git filter-branch --env-filter` to set
+`GIT_AUTHOR_NAME` / `GIT_COMMITTER_NAME` / emails to
+`Utkarsh Singh <183999732+utksh1@users.noreply.github.com>` (the GitHub
+noreply form, which is what the heatmap keys off). Original commit
+dates and messages preserved. Force-pushed `main` and all 6 tags
+(v2.5.0, v2.6.0, v3.0.0, v3.1.0, v3.1.1, v3.1.2). All 4 existing GitHub
+releases survived the tag move. Repo-level git config now defaults to
+the user's identity so future commits are attributed correctly without
+filter-branch.
+
+### 2. Python removed from the repo
+
+The user called out that the project should not contain any Python.
+v3.1.2 and earlier shipped 9 Python verification scripts (`v250-verify.py`
+through `v312-verify.py`, plus `e2e-smoke.sh` which embedded Python
+heredocs) and a Python OpenAPI generator (`gen_openapi.py` owned by the
+agent sandbox, not the repo).
+
+- Deleted all 9 Python verify scripts and `e2e-smoke.sh`.
+- Replaced with a single consolidated Node script: `scripts/verify.mjs`.
+  Zero npm dependencies (uses Node >= 18 global `fetch`), 51 assertions
+  covering auth, plugin catalog, OpenAPI spec endpoints, Attack-Target
+  suites, Sniper from a finding, Replay + scan-diff, People Hunter,
+  VPN-aware admission gate (pin -> 409 -> unpin -> 201 with the
+  attack-target endpoint propagating 409), SPA serving, SSE replay, and
+  SARIF report artifact. Signal-safe cleanup kills the detached server
+  on SIGTERM/SIGINT/SIGHUP/exit so background runs can't leak orphans.
+- Removed `docs/openapi.yaml` (was a stale duplicate of the JSON
+  artifact). `GET /api/v1/openapi.yaml` now serializes the embedded
+  JSON to YAML at runtime via `serde_yaml`. One source of truth
+  (`docs/openapi.json`), no Python generator, no drift.
+- Deleted `scripts/gen_openapi.py` (was in the agent sandbox, never
+  committed to the repo, but referenced by the v3.1.2 changelog entry
+  -- that reference is now corrected below).
+- `Makefile` `verify` target now runs `node scripts/verify.mjs` instead
+  of `bash scripts/e2e-smoke.sh`.
+- Added `secuscan export-openapi` CLI subcommand that prints the
+  embedded spec to stdout (or `--output <file>`), so SDK generation
+  pipelines can pull the spec without a running server.
+
+### 3. Toast UX + scan-diff button
+
+Two UX affordances the user asked for after v3.1.2:
+
+- **Toast system** (`frontend/src/components/Toast.tsx`): a
+  `ToastProvider` mounted once in `App.tsx` so toasts survive route
+  navigation. Fixed bottom-right stack, auto-dismiss after 10s, manual
+  close, optional SPA-link chips. The Attack-Target mutation in
+  `Targets.tsx` now raises a toast titled "Attack launched on
+  \<target\>" with one chip per launched task id (deep-linking to
+  `/tasks/<id>`), so the user can jump directly to any of the just-
+  launched scans. The toast survives the `navigate('/tasks')` jump.
+- **"Compare to previous run" button** on `TaskDetail`: a new
+  `btn-secondary` next to the existing Replay button, visible when the
+  task is not active. Clicking it switches to the existing Diff tab,
+  which fetches `GET /tasks/:id/diff` and renders the auto-baselined
+  comparison (new / fixed / regressed / improved / unchanged). The
+  backend endpoint already existed; this wires a one-click affordance
+  to it from the task header.
+
+### Tests
+
+- 208/208 Rust (was 208 in v3.1.2; the v3.1.2 YAML test
+  `embedded_yaml_starts_with_openapi_directive` was renamed and
+  strengthened to `yaml_serialization_round_trips_the_spec`, which
+  now re-parses the serialized YAML and asserts equality with the
+  original spec — guards the runtime JSON->YAML conversion against
+  drift and content loss, not just the first 12 bytes).
+- 64/64 frontend.
+- `scripts/verify.mjs`: 51/51 assertions green (replaces all 9 retired
+  Python harnesses; covers everything they covered plus the v3.1.2
+  features).
+
+### Bug fixes
+
+- `serde_json` workspace dep gained the `preserve_order` feature so the
+  runtime YAML serialization preserves the authored key order (without
+  it, `serde_yaml` sorted keys alphabetically and the spec started with
+  `components` instead of `openapi`).
+
 ## 3.1.2 -- OpenAPI spec + Attack-Target + UI action buttons
 
 Closes the four product-grade gaps surfaced after v3.1.1: a published
@@ -25,11 +114,12 @@ an OpenAPI 3.1 document. Three endpoints serve it:
 - `GET /api/v1/openapi` -- HTML landing page that loads Swagger UI
   from the jsdelivr CDN, pointed at the JSON endpoint.
 
-The spec is generated by `scripts/gen_openapi.py` and committed at
-`docs/openapi.{yaml,json}`. Re-run that script whenever the API surface
-changes. Two Rust tests (`embedded_json_parses_and_has_expected_top_level_keys`,
-`embedded_yaml_starts_with_openapi_directive`) guard the artifact at
-build time -- a malformed spec fails CI instead of reaching clients.
+The spec is hand-maintained at `docs/openapi.json` (in v3.1.3 the
+YAML duplicate was removed and `GET /openapi.yaml` is serialized from
+the JSON at runtime via `serde_yaml`). Two Rust tests
+(`embedded_json_parses_and_has_expected_top_level_keys`,
+`yaml_serialization_round_trips_the_spec`) guard the artifact at build
+time -- a malformed spec fails CI instead of reaching clients.
 
 The sidebar gains an "API Spec" entry that opens the Swagger UI in a
 new tab.
