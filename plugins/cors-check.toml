@@ -1,0 +1,58 @@
+# Native CORS misconfiguration checker.
+[plugin]
+id = "cors-check"
+name = "CORS Misconfiguration Check"
+version = "1.0.0"
+description = "Probe cross-origin policy with attacker Origin headers"
+long_description = """
+Sends requests with attacker-controlled Origin headers — an arbitrary
+origin, `null` (sandboxed iframe), a subdomain and a suffix look-alike —
+and reports reflected or wildcard Access-Control policies, especially
+origin reflection combined with credentials (a cross-site data leak).
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "shield-off"
+difficulty = "beginner"
+tags = ["web", "cors", "http", "headers"]
+
+[engine]
+type = "native"
+native = "cors_check"
+timeout_seconds = 300
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://api.example.com/v1/data"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid URL"
+
+[[fields]]
+id = "extra_origins"
+label = "Extra origins to probe"
+type = "string"
+placeholder = "https://partner.example.net"
+pattern = '^[a-zA-Z0-9,.:/_-]*$'
+help = "Comma-separated Origin values tried in addition to the built-in probes."
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 10000
+min = 500
+max = 30000
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Sends a handful of GET requests with crafted Origin headers."
+max_concurrent = 4
+max_per_hour = 60
+capabilities = ["network"]
+
+[dependencies]

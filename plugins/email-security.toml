@@ -1,0 +1,50 @@
+# Native email-security audit — SPF/DMARC/DKIM/MX via DNS.
+[plugin]
+id = "email-security"
+name = "Email Security (SPF/DKIM/DMARC)"
+version = "1.0.0"
+description = "Audit SPF strictness, DMARC policy, DKIM selectors and MX records"
+long_description = """
+Checks how well a domain defends against email spoofing: presence and
+strictness of SPF (`+all`/`?all`/`~all`/`-all`), DMARC policy level
+(none/quarantine/reject), DKIM selector records for common providers, and
+MX hygiene including the RFC 7208 10-lookup limit.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "mail-check"
+difficulty = "beginner"
+tags = ["dns", "email", "spf", "dmarc", "dkim"]
+
+[engine]
+type = "native"
+native = "email_security"
+timeout_seconds = 300
+
+[[fields]]
+id = "target"
+label = "Domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+message = "Must be a DNS name"
+
+[[fields]]
+id = "dkim_selectors"
+label = "Extra DKIM selectors"
+type = "string"
+placeholder = "s1, selector2023, myprovider"
+pattern = '^[a-zA-Z0-9, _-]*$'
+help = "Comma-separated selector names probed in addition to the built-in common list."
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "DNS lookups are sent to your configured resolver."
+max_concurrent = 4
+max_per_hour = 60
+capabilities = ["network"]
+
+[dependencies]

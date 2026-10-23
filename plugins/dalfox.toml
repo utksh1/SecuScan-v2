@@ -1,0 +1,82 @@
+# dalfox wrapper — XSS scanner (projectdiscovery-style output).
+[plugin]
+id = "xss-scanner"
+name = "XSS Scanner (dalfox)"
+version = "1.0.0"
+description = "Detect reflected and DOM cross-site scripting with dalfox"
+long_description = """
+Wraps dalfox, a purpose-built XSS scanner: it analyses the target URL's
+parameters, injects context-aware payloads and reports verified reflected
+XSS, DOM sinks and blind-XSS callbacks.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "bug"
+difficulty = "intermediate"
+tags = ["web", "xss", "injection"]
+
+[engine]
+type = "cli"
+binary = "dalfox"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "dalfox",
+  "url", "{target}",
+  "--no-color",
+  "--silence",
+  "--no-spinner",
+  "--if:blind_url:then:-b",
+  "--if:blind_url:then:{blind_url}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL with parameters"
+type = "string"
+required = true
+placeholder = "https://example.com/search?q=test"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~{}()-]*$'
+message = "Must be a URL; include a parameter to test, e.g. ?q=test"
+
+[[fields]]
+id = "blind_url"
+label = "Blind-XSS callback (optional)"
+type = "string"
+placeholder = "https://your-callback.example.com"
+pattern = '^https://[a-zA-Z0-9.:/_-]*$'
+help = "Optional callback host for blind-XSS payloads (leave empty to disable)."
+
+[parser]
+type = "line_regex"
+# dalfox --silence prints only results, e.g.
+# [V] https://target/?q=... payload reflected
+# [V][G] parameter `q` reflected
+pattern = '^\[(?P<kind>V|VD|VH|POC|VA)\]\s*(?P<detail>.+)$'
+skip_patterns = []
+metadata_fields = ["kind", "detail"]
+
+[parser.finding]
+title = "XSS finding ({kind}): {detail}"
+description = "dalfox reported an XSS ({kind}). Review the payload context and confirm exploitability."
+remediation = "Apply context-aware output encoding, a strict CSP, and validate input against an allow-list."
+proof = "[{kind}] {detail}"
+category = "Injection"
+severity = "high"
+
+[[parser.severity_rules]]
+field = "kind"
+values = ["VD", "VA"]
+severity = "medium"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "dalfox sends active XSS probe payloads. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["dalfox"]

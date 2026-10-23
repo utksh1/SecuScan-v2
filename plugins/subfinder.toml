@@ -1,0 +1,70 @@
+# subfinder wrapper — passive subdomain enumeration (projectdiscovery).
+[plugin]
+id = "subfinder"
+name = "Subdomain Finder (subfinder, passive)"
+version = "1.0.0"
+description = "Passive subdomain discovery from public data sources"
+long_description = """
+Wraps subfinder for passive subdomain enumeration: it queries dozens of
+public sources (certificate transparency, DNS aggregators, search archives)
+without touching the target's own infrastructure. No API keys required for
+the default sources.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "radar"
+difficulty = "beginner"
+tags = ["dns", "subdomains", "passive", "osint"]
+
+[engine]
+type = "cli"
+binary = "subfinder"
+timeout_seconds = 900
+output_format = "text"
+argv = [
+  "subfinder",
+  "-d", "{target}",
+  "-silent",
+  "--if:exclude_wildcard:then:-nW",
+]
+
+[[fields]]
+id = "target"
+label = "Domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+message = "Must be a DNS name"
+
+[[fields]]
+id = "exclude_wildcard"
+label = "Filter wildcard hosts"
+type = "boolean"
+default = true
+
+[parser]
+type = "line_regex"
+# subfinder -silent prints one domain per line
+pattern = '^(?P<sub>(?:[a-zA-Z0-9_-]+\.)+[a-zA-Z]{2,})$'
+metadata_fields = ["sub"]
+
+[parser.finding]
+title = "Subdomain: {sub}"
+description = "subfinder discovered `{sub}` from passive public sources — no requests were sent to the target."
+remediation = "Review each discovered host for stale deployments and apply the same hardening baseline as primary domains."
+proof = "{sub}"
+category = "DNS"
+severity = "info"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "subfinder queries public third-party sources about the domain."
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["subfinder"]

@@ -1,0 +1,89 @@
+# ffuf wrapper — fast web fuzzer (URL Fuzzer parity).
+[plugin]
+id = "ffuf"
+name = "URL Fuzzer (ffuf)"
+version = "1.0.0"
+description = "Discover hidden paths with ffuf and a wordlist"
+long_description = """
+Wraps ffuf for fast content discovery: fuzzes the FUZZ placeholder in the
+target URL against a wordlist and reports every match with status and size.
+The default match filter keeps only successful/interesting response codes.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "zap"
+difficulty = "intermediate"
+tags = ["web", "fuzzing", "directories", "http"]
+
+[engine]
+type = "cli"
+binary = "ffuf"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "ffuf",
+  "-u", "{target}",
+  "-w", "{wordlist}",
+  "-mc", "200,204,301,302,307,401,403,405,500",
+  "--if:threads:then:-t",
+  "--if:threads:then:{threads}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL (include FUZZ marker)"
+type = "string"
+required = true
+placeholder = "https://example.com/FUZZ"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~{}-]*$'
+message = "Must be a URL containing FUZZ where the wordlist is inserted"
+help = "Example: https://example.com/FUZZ or https://example.com/blog/FUZZ.php"
+
+[[fields]]
+id = "wordlist"
+label = "Wordlist path"
+type = "string"
+default = "/usr/share/wordlists/dirb/common.txt"
+placeholder = "~/tools/wordlists/common.txt"
+pattern = '^[/~a-zA-Z0-9._-]*$'
+message = "Path to a wordlist file"
+
+[[fields]]
+id = "threads"
+label = "Threads"
+type = "integer"
+default = 40
+min = 1
+max = 200
+
+[parser]
+type = "line_regex"
+# ffuf -s prints one line per match:
+#   admin                   [Status: 200, Size: 34, Words: 5, Lines: 1, Duration: 1ms]
+pattern = '^(?P<path>\S+)\s+\[Status:\s*(?P<status>\d+),\s*Size:\s*(?P<size>\d+)'
+metadata_fields = ["path", "status", "size"]
+
+[parser.finding]
+title = "Discovered path: /{path} (HTTP {status})"
+description = "ffuf found /{path} on the target (HTTP {status}, {size} bytes)."
+remediation = "Review whether this path should be exposed; restrict or remove what is not needed."
+proof = "{path} [Status: {status}, Size: {size}]"
+category = "Content Discovery"
+severity = "info"
+
+[[parser.severity_rules]]
+field = "path"
+values = [".env*", ".git*", "backup*", "admin*", "wp-admin*", "phpmyadmin*", "server-status*", ".htaccess*", "debug*"]
+severity = "medium"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "ffuf sends one request per wordlist entry. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["ffuf"]

@@ -1,0 +1,60 @@
+# Native DNS record lookup — runs in-process, no external tooling.
+[plugin]
+id = "dns-lookup"
+name = "DNS Lookup"
+version = "1.0.0"
+description = "Resolve A/AAAA/CNAME/MX/TXT/NS/SOA/PTR/SRV/CAA records for a domain"
+long_description = """
+Queries the system resolver for the chosen record type and reports every
+answer with security context — SPF/DMARC entries, permissive CAA policies
+and verification tokens that disclose which third-party services are in use.
+Runs natively inside the SecuScan process — no external binaries needed.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "globe"
+difficulty = "beginner"
+tags = ["dns", "recon", "passive"]
+
+[engine]
+type = "native"
+native = "dns_lookup"
+timeout_seconds = 120
+
+[[fields]]
+id = "target"
+label = "Domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+message = "Must be a DNS name"
+
+[[fields]]
+id = "record_type"
+label = "Record type"
+type = "select"
+default = "A"
+options = [
+  { value = "A", label = "A — IPv4 addresses" },
+  { value = "AAAA", label = "AAAA — IPv6 addresses" },
+  { value = "CNAME", label = "CNAME — aliases" },
+  { value = "MX", label = "MX — mail servers" },
+  { value = "TXT", label = "TXT — SPF/DMARC/verification" },
+  { value = "NS", label = "NS — nameservers" },
+  { value = "SOA", label = "SOA — zone authority" },
+  { value = "PTR", label = "PTR — reverse names" },
+  { value = "SRV", label = "SRV — services" },
+  { value = "CAA", label = "CAA — certificate authority policy" },
+]
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "DNS lookups are sent to your configured resolver."
+max_concurrent = 4
+max_per_hour = 120
+capabilities = ["network"]
+
+[dependencies]

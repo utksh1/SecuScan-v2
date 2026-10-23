@@ -1,0 +1,66 @@
+# Native virtual-host discovery via Host-header fuzzing.
+[plugin]
+id = "vhost-finder"
+name = "Virtual Host Finder"
+version = "1.0.0"
+description = "Find virtual hosts served by the same web server (Host header fuzz)"
+long_description = """
+Sends requests to the target server with many candidate `Host:` headers and
+flags responses whose status and body differ from the default site —
+revealing staging sites, admin panels and forgotten applications hosted on
+the same IP (pentest-tools "Find Virtual Hosts" parity).
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "server"
+difficulty = "intermediate"
+tags = ["web", "vhost", "recon", "http"]
+
+[engine]
+type = "native"
+native = "vhost_finder"
+timeout_seconds = 900
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://192.0.2.10/ or https://example.com/"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid URL"
+
+[[fields]]
+id = "wordlist"
+label = "Custom wordlist (optional)"
+type = "string"
+placeholder = "/path/to/vhosts.txt"
+pattern = '^[/a-zA-Z0-9._-]*$'
+help = "One vhost label per line. Empty = embedded common list."
+
+[[fields]]
+id = "max_labels"
+label = "Max labels to try"
+type = "integer"
+default = 300
+min = 1
+max = 5000
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 8000
+min = 500
+max = 30000
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Sends one request per candidate vhost name to the target server."
+max_concurrent = 1
+max_per_hour = 20
+capabilities = ["network"]
+
+[dependencies]

@@ -4,10 +4,19 @@
 //! implement the same contract as CLI wrappers — validated inputs in,
 //! [`Finding`]s and live events out — with strict timeouts and cancellation.
 
+pub mod cors_check;
+pub mod dns;
+pub mod dns_lookup;
+pub mod email_security;
+pub mod google_dorks;
 pub mod http_headers;
 pub mod http_recon;
+pub mod password_audit;
 pub mod port_scanner;
+pub mod reverse_dns;
+pub mod subdomain_finder;
 pub mod tls_check;
+pub mod vhost_finder;
 
 use crate::events::EventSink;
 use async_trait::async_trait;
@@ -69,6 +78,14 @@ pub fn registry() -> &'static NativeRegistry {
             &http_headers::HttpHeadersScanner,
             &http_recon::HttpReconScanner,
             &tls_check::TlsCheckScanner,
+            &dns_lookup::DnsLookupScanner,
+            &reverse_dns::ReverseDnsScanner,
+            &subdomain_finder::SubdomainFinderScanner,
+            &email_security::EmailSecurityScanner,
+            &cors_check::CorsCheckScanner,
+            &vhost_finder::VhostFinderScanner,
+            &password_audit::PasswordAuditScanner,
+            &google_dorks::GoogleDorksScanner,
         ],
     })
 }

@@ -1,0 +1,196 @@
+# testssl.sh wrapper — deep TLS/SSL audit.
+[plugin]
+id = "testssl"
+name = "SSL/TLS Deep Scan (testssl.sh)"
+version = "1.0.0"
+description = "Full TLS audit: protocols, ciphers, certificate, known vulnerabilities"
+long_description = """
+Wraps testssl.sh for a thorough TLS/SSL assessment: protocol versions,
+cipher strength, certificate chain/expiry/SAN, and the classic vulnerability
+zoo (Heartbleed, POODLE, ROBOT, CCS injection, …). Findings are raised for
+every `NOT ok` verdict in the output; the full report remains in the task log.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "lock-keyhole"
+difficulty = "intermediate"
+tags = ["tls", "ssl", "certificates", "protocols"]
+
+[engine]
+type = "cli"
+binary = "testssl.sh"
+timeout_seconds = 3600
+output_format = "text"
+argv = [
+  "testssl.sh",
+  "--quiet",
+  "--color", "0",
+  "--warnings", "off",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target host or URL"
+type = "string"
+required = true
+placeholder = "example.com:443"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_-]*$'
+message = "Host, host:port or URL"
+
+[parser]
+type = "passthrough"
+
+# testssl prints a verdict per check; problem lines end with (NOT ok).
+# Anchor on the marker so "not vulnerable (OK)" lines never fire.
+[[static_rules]]
+pattern = '(?i)heartbleed.*\(NOT ok\)'
+title = "Heartbleed (CVE-2014-0160)"
+severity = "critical"
+category = "TLS"
+description = "The service is vulnerable to Heartbleed — attacker-readable memory disclosure via TLS heartbeat."
+
+[[static_rules]]
+pattern = '(?i)CCS injection.*\(NOT ok\)'
+title = "CCS Injection (CVE-2014-0224)"
+severity = "critical"
+category = "TLS"
+description = "ChangeCipherSpec injection allows MITM interception of the session."
+
+[[static_rules]]
+pattern = '(?i)robot.*\(NOT ok\)'
+title = "ROBOT attack"
+severity = "high"
+category = "TLS"
+description = "Return Of Bleichenbacher's Oracle Threat — RSA PKCS#1 v1.5 oracle enables session decryption."
+
+[[static_rules]]
+pattern = '(?i)poodle.*\(NOT ok\)'
+title = "POODLE (SSLv3 / TLS padding oracle)"
+severity = "high"
+category = "TLS"
+description = "POODLE-family padding oracle — decryptable session content."
+
+[[static_rules]]
+pattern = '(?i)DROWN.*\(NOT ok\)'
+title = "DROWN (SSLv2)"
+severity = "high"
+category = "TLS"
+description = "SSLv2 support enables cross-protocol attacks against the RSA key."
+
+[[static_rules]]
+pattern = '(?i)LOGJAM.*\(NOT ok\)'
+title = "LOGJAM (weak DH)"
+severity = "high"
+category = "TLS"
+description = "Weak Diffie-Hellman parameters allow MITM downgrade attacks."
+
+[[static_rules]]
+pattern = '(?i)FREAK.*\(NOT ok\)'
+title = "FREAK (export cipher downgrade)"
+severity = "high"
+category = "TLS"
+description = "Export-grade RSA support enables key downgrade attacks."
+
+[[static_rules]]
+pattern = '(?i)CRIME.*\(NOT ok\)'
+title = "CRIME (TLS compression)"
+severity = "medium"
+category = "TLS"
+description = "TLS compression enables side-channel cookie recovery."
+
+[[static_rules]]
+pattern = '(?i)BREACH.*\(NOT ok\)'
+title = "BREACH (HTTP compression)"
+severity = "low"
+category = "TLS"
+description = "HTTP response compression can leak secrets via reflection size oracles."
+
+[[static_rules]]
+pattern = '(?i)sweet32.*\(NOT ok\)'
+title = "SWEET32 (3DES/64-bit block ciphers)"
+severity = "medium"
+category = "TLS"
+description = "64-bit block ciphers in long sessions allow plaintext recovery."
+
+[[static_rules]]
+pattern = '(?i)RC4.*(NOT ok|offered)'
+title = "RC4 cipher offered"
+severity = "high"
+category = "TLS"
+description = "RC4 is cryptographically broken and must not be negotiated."
+
+[[static_rules]]
+pattern = '(?i)SSLv2.*offered'
+title = "SSLv2 offered"
+severity = "critical"
+category = "TLS"
+description = "SSLv2 must never be enabled."
+
+[[static_rules]]
+pattern = '(?i)SSLv3.*offered'
+title = "SSLv3 offered"
+severity = "high"
+category = "TLS"
+description = "SSLv3 is deprecated (POODLE) and must be disabled."
+
+[[static_rules]]
+pattern = '(?i)TLS\s?1\.0\s.*(offered|deprecated)'
+title = "TLS 1.0 offered (deprecated)"
+severity = "medium"
+category = "TLS"
+description = "TLS 1.0 is deprecated (PCI DSS forbids it); plan removal."
+
+[[static_rules]]
+pattern = '(?i)TLS\s?1\.1\s.*(offered|deprecated)'
+title = "TLS 1.1 offered (deprecated)"
+severity = "low"
+category = "TLS"
+description = "TLS 1.1 is deprecated by RFC 8996; plan removal."
+
+[[static_rules]]
+pattern = '(?i)(self.?signed|self-signed certificate).*(NOT ok)'
+title = "Self-signed certificate"
+severity = "medium"
+category = "TLS"
+description = "The certificate is self-signed — clients cannot verify the server identity."
+
+[[static_rules]]
+pattern = '(?i)certificate.*expired.*(NOT ok)'
+title = "Certificate expired"
+severity = "high"
+category = "TLS"
+description = "The served certificate has expired — browsers block the connection."
+
+[[static_rules]]
+pattern = '(?i)OCSP stapling.*(NOT ok)'
+title = "No OCSP stapling"
+severity = "low"
+category = "TLS"
+description = "Without OCSP stapling clients must query the CA themselves, adding latency and revocation-check gaps."
+
+[[static_rules]]
+pattern = '(?i)SHA1.*signature.*(NOT ok|deprecated)'
+title = "SHA-1 certificate signature"
+severity = "medium"
+category = "TLS"
+description = "SHA-1 signatures are deprecated and collision-prone."
+
+[[static_rules]]
+pattern = '(?i)renegotiation.*(NOT ok)'
+title = "Insecure TLS renegotiation"
+severity = "medium"
+category = "TLS"
+description = "Insecure renegotiation enables prefix-injection attacks."
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "testssl.sh opens many TLS connections to the target — no attack payloads."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["testssl.sh"]

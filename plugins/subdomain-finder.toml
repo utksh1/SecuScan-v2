@@ -1,0 +1,64 @@
+# Native subdomain enumeration — DNS brute-force + certificate transparency.
+[plugin]
+id = "subdomain-finder"
+name = "Subdomain Finder"
+version = "1.0.0"
+description = "Enumerate subdomains via DNS brute-force plus the crt.sh CT log"
+long_description = """
+Two discovery passes: a passive certificate-transparency query against
+crt.sh, and an active DNS brute-force over a curated ~300-name common list
+(or a custom wordlist file). Resolved hosts become observations to feed into
+the rest of the scan scope.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "network"
+difficulty = "beginner"
+tags = ["dns", "recon", "subdomains", "osint"]
+
+[engine]
+type = "native"
+native = "subdomain_finder"
+timeout_seconds = 900
+
+[[fields]]
+id = "target"
+label = "Domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+message = "Must be a DNS name"
+
+[[fields]]
+id = "wordlist"
+label = "Custom wordlist (optional)"
+type = "string"
+placeholder = "/path/to/subdomains.txt"
+pattern = '^[/a-zA-Z0-9._-]*$'
+help = "Path to a file with one candidate label per line. Empty = embedded list."
+
+[[fields]]
+id = "max_labels"
+label = "Max labels to try"
+type = "integer"
+default = 500
+min = 1
+max = 5000
+
+[[fields]]
+id = "use_ct_logs"
+label = "Query crt.sh (passive)"
+type = "boolean"
+default = true
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Performs DNS queries for candidate subdomains and a passive crt.sh lookup."
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]
+
+[dependencies]

@@ -1,0 +1,90 @@
+# WordPress-focused scan via nuclei template tags (WordPress Scanner parity).
+[plugin]
+id = "wordpress-audit"
+name = "WordPress Scanner (nuclei, wp tags)"
+version = "1.0.0"
+description = "Run nuclei's WordPress template set against a WP site"
+long_description = """
+Wraps nuclei restricted to its WordPress templates: core version
+disclosure, exposed debug logs, xmlrpc abuse, known plugin/theme
+vulnerabilities and misconfigurations. Requires the nuclei templates
+(installed by scripts/install-tools.sh).
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "wordpress"
+difficulty = "intermediate"
+tags = ["web", "wordpress", "cms", "nuclei"]
+
+[engine]
+type = "cli"
+binary = "nuclei"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "nuclei",
+  "-u", "{target}",
+  "-tags", "wordpress",
+  "-jsonl",
+  "-silent",
+  "--if:templates:then:-t",
+  "--if:templates:then:{templates}",
+  "-c", "{concurrency}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://blog.example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_-]*$'
+message = "Must be a URL"
+
+[[fields]]
+id = "templates"
+label = "Extra template dirs/tags"
+type = "string"
+placeholder = "~/nuclei-templates/http/technologies/wordpress"
+pattern = '^[a-zA-Z0-9~/,._-]*$'
+help = "Optional extra template paths; the wordpress tag set is always applied."
+
+[[fields]]
+id = "concurrency"
+label = "Concurrency"
+type = "integer"
+default = 10
+min = 1
+max = 50
+
+[parser]
+type = "json_lines"
+
+[parser.finding]
+title_field = "info.name"
+description_field = "info.description"
+severity_field = "info.severity"
+url_field = "matched-at"
+proof_field = "template-id"
+category = "WordPress"
+kind = "suspected_issue"
+
+[parser.severity_map]
+critical = "critical"
+high = "high"
+medium = "medium"
+low = "low"
+info = "info"
+unknown = "info"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Sends active WordPress probe traffic. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 6
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nuclei"]

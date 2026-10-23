@@ -1,0 +1,42 @@
+# Native Google-dork builder — passive OSINT link generation.
+[plugin]
+id = "google-dorks"
+name = "Google Dork Builder"
+version = "1.0.0"
+description = "Generate targeted Google dork searches for a domain"
+long_description = """
+Builds a dozen high-value Google search-operator queries for the domain —
+directory listings, database dumps, config files, phpinfo, dashboards,
+confidential documents — and returns each as a ready-to-open search link.
+Fully passive: no requests are sent to the target.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "search"
+difficulty = "beginner"
+tags = ["osint", "recon", "dorks", "passive"]
+
+[engine]
+type = "native"
+native = "google_dorks"
+timeout_seconds = 30
+
+[[fields]]
+id = "target"
+label = "Domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+message = "Must be a DNS name"
+
+[safety]
+level = "safe"
+requires_consent = false
+consent_message = "Generates search links only — no traffic to the target."
+max_concurrent = 8
+max_per_hour = 240
+capabilities = []
+
+[dependencies]
