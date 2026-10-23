@@ -200,6 +200,33 @@ pub async fn validate_and_create_task(
 )> {
     let admitted = admit_request(state, user, req).await?;
 
+    // v3.1.1 — VPN pre-flight. A workspace pinned to a VPN profile refuses
+    // tasks unless the tunnel is up (or can be brought up right now). This
+    // is a security property, not a convenience: an internal scan launched
+    // without its tunnel would silently probe the wrong routes. connect()
+    // is a no-op when the tunnel is already healthy and auto-heals a stale
+    // one, so the common path costs nothing.
+    let mut vpn_stamp: Option<String> = None;
+    if let Some(ws_id) = req.workspace_id.as_deref() {
+        let ws = repo::workspaces::get_workspace(&state.db, ws_id).await?;
+        if let Some(vpid) = ws.vpn_profile_id.clone() {
+            let profile = repo::vpn::get(&state.db, &vpid).await?;
+            if profile.status == "connecting" {
+                return Err(ApiError::Conflict(format!(
+                    "workspace requires VPN profile `{}` which is still connecting — retry shortly",
+                    profile.name
+                )));
+            }
+            crate::vpn_manager::connect(&state.db, &profile).await.map_err(|e| {
+                ApiError::Conflict(format!(
+                    "workspace requires VPN profile `{}` but the tunnel is not up: {e}",
+                    profile.name
+                ))
+            })?;
+            vpn_stamp = Some(vpid);
+        }
+    }
+
     // persist + spawn
     let row = repo::tasks::create(
         &state.db,
@@ -243,6 +270,15 @@ pub async fn validate_and_create_task(
         .execute(&state.db)
         .await;
 
+    // v3.1.1 — record the VPN profile that guaranteed this task's route.
+    if let Some(vpid) = &vpn_stamp {
+        let _ = sqlx::query("UPDATE tasks SET vpn_profile_id = ? WHERE id = ?")
+            .bind(vpid)
+            .bind(&row.id)
+            .execute(&state.db)
+            .await;
+    }
+
     Ok((row, admitted.manifest, admitted.normalized))
 }
 
@@ -277,6 +313,8 @@ pub fn task_to_json(t: &TaskRow, include_output: bool) -> Value {
         "robot_run_id": t.robot_run_id,
         "auth_profile_id": t.auth_profile_id,
         "oob_marker": t.oob_marker,
+        "sniper_run_id": t.sniper_run_id,
+        "vpn_profile_id": t.vpn_profile_id,
         "created_at": t.created_at,
         "started_at": t.started_at,
         "finished_at": t.finished_at,

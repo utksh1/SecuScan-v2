@@ -11,6 +11,8 @@ pub struct WorkspaceRow {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: Option<String>,
+    /// v3.1.1 — VPN profile scans in this workspace must route through.
+    pub vpn_profile_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -82,6 +84,8 @@ pub struct TaskRow {
     pub auth_profile_id: Option<String>,
     /// v3.0.0 — OOB callback marker (appended to payloads; correlates blind callbacks).
     pub oob_marker: Option<String>,
+    /// v3.1.1 — VPN profile whose tunnel guaranteed this task's route.
+    pub vpn_profile_id: Option<String>,
     /// v3.1.0 — Sniper exploit chain that launched this task (NULL otherwise).
     pub sniper_run_id: Option<String>,
     pub created_at: String,

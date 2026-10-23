@@ -57,6 +57,7 @@ fn workspace_to_json(w: &WorkspaceRow, counts: &repo::workspaces::WorkspaceCount
         "created_by": w.created_by,
         "created_at": w.created_at,
         "updated_at": w.updated_at,
+        "vpn_profile_id": w.vpn_profile_id,
         "tasks_total": counts.tasks_total,
         "tasks_active": counts.tasks_active,
         "targets_total": counts.targets_total,

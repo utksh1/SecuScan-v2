@@ -23,7 +23,7 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/vpn-profiles/:id", axum::routing::get(get_vpn).delete(delete_vpn))
         .route("/vpn-profiles/:id/connect", axum::routing::post(connect_vpn))
         .route("/vpn-profiles/:id/disconnect", axum::routing::post(disconnect_vpn))
-        .route("/workspaces/:id/vpn", axum::routing::put(attach_vpn_to_workspace))
+        .route("/workspaces/:id/vpn", axum::routing::get(get_workspace_vpn).put(attach_vpn_to_workspace))
 }
 
 // --- Sniper ----------------------------------------------------------------
@@ -272,6 +272,30 @@ async fn disconnect_vpn(
 #[derive(Deserialize)]
 struct AttachVpnRequest {
     vpn_profile_id: Option<String>,
+}
+
+/// v3.1.1 — the VPN profile a workspace pins (null = no tunnel required).
+async fn get_workspace_vpn(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let ws = repo::workspaces::get_workspace(&state.db, &id).await?;
+    match ws.vpn_profile_id {
+        None => Ok(Json(json!({"profile": Value::Null}))),
+        Some(pid) => {
+            let row = repo::vpn::get(&state.db, &pid).await?;
+            Ok(Json(json!({"profile": {
+                "id": row.id,
+                "name": row.name,
+                "status": row.status,
+                "interface": row.interface,
+                "last_error": row.last_error,
+                "connected_at": row.connected_at,
+                "openvpn_available": crate::vpn_manager::openvpn_available(),
+            }})))
+        }
+    }
 }
 
 async fn attach_vpn_to_workspace(

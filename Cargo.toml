@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "3.1.0"
+version = "3.1.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/utksh1/SecuScan-v2"

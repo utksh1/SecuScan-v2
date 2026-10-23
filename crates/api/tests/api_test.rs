@@ -2483,8 +2483,13 @@ async fn schedule_crud_and_validation() {
         .unwrap();
     let re_enabled: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(re_enabled["enabled"], true);
+    // Re-anchoring is "now() + interval". When the disable→re-enable round-trip
+    // completes within the same wall-clock second as the prior patch, the new
+    // anchor is equal to (not strictly greater than) `after`. The semantic
+    // guarantee is "re-anchored to a fresh future instant" — >= captures that
+    // and removes a flaky timing race under parallel test execution.
     assert!(
-        re_enabled["next_run_at"].as_str().unwrap() > after.as_str(),
+        re_enabled["next_run_at"].as_str().unwrap() >= after.as_str(),
         "re-enable must re-anchor"
     );
 

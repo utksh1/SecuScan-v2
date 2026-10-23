@@ -52,6 +52,7 @@ pub async fn create_workspace(pool: &SqlitePool, w: NewWorkspace<'_>) -> DbResul
         created_by: w.created_by.to_string(),
         created_at: now(),
         updated_at: None,
+        vpn_profile_id: None,
     };
     sqlx::query(
         "INSERT INTO workspaces (id, name, description, created_by, created_at) \

@@ -93,6 +93,8 @@ export interface Task {
   output_truncated: boolean
   workflow_run_id?: string
   workspace_id?: string
+  sniper_run_id?: string
+  vpn_profile_id?: string
   created_at: string
   started_at?: string
   finished_at?: string
@@ -193,9 +195,53 @@ export interface Workspace {
   created_by: string
   created_at: string
   updated_at?: string
+  vpn_profile_id?: string | null
   tasks_total: number
   tasks_active: number
   targets_total: number
+}
+
+// --- v3.1.0: VPN profiles + Sniper Auto-Exploiter ---------------------------
+
+export interface VpnProfile {
+  id: string
+  name: string
+  status: 'disconnected' | 'connecting' | 'connected' | 'error'
+  last_error?: string
+  interface?: string
+  connected_at?: string
+  created_by: string
+  created_at: string
+  config_size: number
+  openvpn_available: boolean
+  config_text?: string
+  error?: string
+}
+
+export interface SniperRunStep {
+  step: number
+  label: string
+  plugin_id: string
+  status: string
+  task_id?: string | null
+  findings_count?: number
+  error?: string
+}
+
+export interface SniperRun {
+  id: string
+  finding_id: string
+  workspace_id?: string
+  category: string
+  target?: string
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  steps: SniperRunStep[]
+  proof?: string
+  outcome?: 'proven' | 'not_proven' | 'inconclusive'
+  error?: string
+  created_by: string
+  created_at: string
+  finished_at?: string
 }
 
 export interface PersonalWorkspace {

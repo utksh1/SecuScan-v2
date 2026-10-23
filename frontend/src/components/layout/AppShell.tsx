@@ -14,6 +14,8 @@ import {
   ChevronDown,
   FileSpreadsheet,
   CalendarClock,
+  Zap,
+  Network,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
@@ -27,10 +29,12 @@ const NAV = [
   { to: '/tasks/new', label: 'New Task', icon: CirclePlus },
   { to: '/tasks', label: 'Tasks', icon: ListChecks, end: true },
   { to: '/findings', label: 'Findings', icon: ShieldAlert },
+  { to: '/sniper', label: 'Sniper', icon: Zap },
   { to: '/targets', label: 'Targets', icon: Crosshair, end: true },
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
   { to: '/schedules', label: 'Schedules', icon: CalendarClock },
   { to: '/workflows', label: 'Workflows', icon: GitBranch },
+  { to: '/vpn', label: 'VPN', icon: Network },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
 

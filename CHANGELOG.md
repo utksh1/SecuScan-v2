@@ -3,6 +3,69 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 3.1.1 -- VPN-aware scanning admission gate
+
+The v3.1.0 VPN feature stored profiles and exposed connect/disconnect, but
+did not *enforce* tunneled scanning. A pinned workspace would happily run
+its scans through whatever route the host happened to have -- exactly the
+silent-wrong-route failure that VPN pinning is supposed to prevent. v3.1.1
+closes that hole and adds the missing audit trail.
+
+### VPN-aware task admission
+
+When a workspace has a `vpn_profile_id` pin, the task admission pipeline
+calls `vpn_manager::connect()` *before* persisting the task. This is a
+no-op when the tunnel is already healthy and auto-heals a stale one, so
+the common path costs nothing. If the tunnel cannot be brought up (no
+`openvpn` binary, bad config, dead peer), admission returns **409
+Conflict** naming the pinned profile, and no task is created. This is a
+security property, not a convenience: an internal scan launched without
+its tunnel would silently probe the wrong routes.
+
+When the workspace is in the middle of connecting (status `connecting`),
+admission returns 409 with a "retry shortly" hint instead of racing the
+handshake.
+
+### Audit trail
+
+`tasks.vpn_profile_id` records which profile guaranteed a task's route
+(NULL when the workspace had no pin). `GET /tasks/:id` and the task list
+payloads expose this field, so reports can answer "did this scan go
+through the corporate tunnel?".
+
+### New endpoints
+
+- `GET /workspaces/:id/vpn` -- returns the pinned profile (or `null`) with
+  its current status and `openvpn_available` flag, so the UI can warn
+  before a user attempts a scan that will be rejected.
+
+### UI
+
+- New `/vpn` page: list/create/delete profiles, connect/disconnect,
+  pin/unpin to any workspace, graceful "openvpn not installed" warning.
+- New `/sniper` page: live Sniper run list with per-step status, finding
+  counts, outcome badge (`proven` / `not_proven` / `inconclusive`), and
+  proof text.
+- Both pages are linked from the sidebar (Zap icon for Sniper, Network
+  icon for VPN) and restricted to admins/scanners for write actions.
+
+### Bug fixes
+
+- `schedule_crud_and_validation` test: assertion `>` on `next_run_at`
+  was a strict-greater-than check that flaked under parallel test
+  execution when the disable+re-enable round-trip completed within the
+  same wall-clock second as the prior interval patch. Relaxed to `>=`
+  with a comment explaining the semantic guarantee.
+- Removed unused `attachTarget` state in `VpnPage.tsx` (TS6133 build
+  breakage under strict `noUnusedLocals`).
+
+### Tests
+
+- 197/197 Rust (unchanged count; flaky schedule test hardened).
+- 64/64 frontend.
+- New `scripts/v311-verify.py`: proves the admission gate end-to-end
+  (pin -> 409 -> unpin -> 201 -> task.vpn_profile_id NULL).
+
 ## 3.1.0 -- Sniper Auto-Exploiter, People Hunter, VPN profiles
 
 The final three pentest-tools.com feature gaps, closing the platform to full

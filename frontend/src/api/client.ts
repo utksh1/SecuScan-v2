@@ -232,3 +232,50 @@ export const scheduleApi = {
   runs: (id: string) =>
     request<{ items: Task[]; total: number }>(`/schedules/${id}/runs`),
 }
+
+// --- v3.1.0: VPN profiles (OpenVPN) -------------------------------------------
+
+import type { VpnProfile } from './types'
+
+export const vpnApi = {
+  list: () => request<{ items: VpnProfile[] }>('/vpn-profiles'),
+  get: (id: string) => request<VpnProfile>(`/vpn-profiles/${id}`),
+  create: (name: string, configText: string) =>
+    request<VpnProfile>('/vpn-profiles', {
+      method: 'POST',
+      body: { name, config_text: configText },
+    }),
+  remove: (id: string) => request<void>(`/vpn-profiles/${id}`, { method: 'DELETE' }),
+  connect: (id: string) =>
+    request<VpnProfile>(`/vpn-profiles/${id}/connect`, { method: 'POST' }),
+  disconnect: (id: string) =>
+    request<VpnProfile>(`/vpn-profiles/${id}/disconnect`, { method: 'POST' }),
+  workspaceProfile: (workspaceId: string) =>
+    request<{ profile: Pick<VpnProfile, 'id' | 'name' | 'status' | 'interface' | 'last_error' | 'connected_at' | 'openvpn_available'> | null }>(
+      `/workspaces/${workspaceId}/vpn`,
+    ),
+  attachToWorkspace: (workspaceId: string, vpnProfileId: string | null) =>
+    request<void>(`/workspaces/${workspaceId}/vpn`, {
+      method: 'PUT',
+      body: { vpn_profile_id: vpnProfileId },
+    }),
+}
+
+// --- v3.1.0: Sniper Auto-Exploiter ----------------------------------------------
+
+import type { SniperRun } from './types'
+
+export const sniperApi = {
+  list: (params?: { finding_id?: string }) => {
+    const q = params?.finding_id ? `?finding_id=${encodeURIComponent(params.finding_id)}` : ''
+    return request<{ items: SniperRun[] }>(`/sniper/runs${q}`)
+  },
+  get: (id: string) => request<SniperRun>(`/sniper/runs/${id}`),
+  run: (findingId: string, workspaceId?: string) =>
+    request<{ run_id: string; finding_id: string; status: string }>('/sniper/run', {
+      method: 'POST',
+      body: { finding_id: findingId, workspace_id: workspaceId },
+    }),
+  cancel: (id: string) =>
+    request<{ cancelled_tasks: number }>(`/sniper/runs/${id}/cancel`, { method: 'POST' }),
+}

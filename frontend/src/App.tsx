@@ -11,6 +11,8 @@ import { NewTaskPage } from '@/pages/NewTask'
 import { TasksPage } from '@/pages/Tasks'
 import { TaskDetailPage } from '@/pages/TaskDetail'
 import { FindingsPage } from '@/pages/Findings'
+import { SniperPage } from '@/pages/SniperPage'
+import { VpnPage } from '@/pages/VpnPage'
 import { WorkflowsPage } from '@/pages/Workflows'
 import { TargetsPage } from '@/pages/Targets'
 import { ReportsPage } from '@/pages/Reports'
@@ -76,6 +78,8 @@ export default function App() {
             <Route path="/tasks" element={<TasksPage />} />
             <Route path="/tasks/:id" element={<TaskDetailPage />} />
             <Route path="/findings" element={<FindingsPage />} />
+            <Route path="/sniper" element={<SniperPage />} />
+            <Route path="/vpn" element={<VpnPage />} />
             <Route path="/targets" element={<TargetsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/schedules" element={<SchedulesPage />} />
