@@ -819,6 +819,7 @@ mod tests {
             robot_run_id: None,
             auth_profile_id: None,
             oob_marker: None,
+            sniper_run_id: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             started_at: None,
             finished_at: Some("2025-01-01T00:00:01Z".into()),

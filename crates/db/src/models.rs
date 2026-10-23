@@ -82,6 +82,8 @@ pub struct TaskRow {
     pub auth_profile_id: Option<String>,
     /// v3.0.0 — OOB callback marker (appended to payloads; correlates blind callbacks).
     pub oob_marker: Option<String>,
+    /// v3.1.0 — Sniper exploit chain that launched this task (NULL otherwise).
+    pub sniper_run_id: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -476,4 +478,38 @@ pub struct AssetImportRow {
     pub skipped_count: i64,
     pub created_by: String,
     pub created_at: String,
+}
+
+// --- v3.1.0 models ---------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct SniperRunRow {
+    pub id: String,
+    pub finding_id: String,
+    pub workspace_id: Option<String>,
+    pub category: String,
+    pub target: Option<String>,
+    pub status: String,
+    pub state_json: String,
+    pub proof: Option<String>,
+    pub outcome: Option<String>,
+    pub error: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub finished_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct VpnProfileRow {
+    pub id: String,
+    pub name: String,
+    pub config_text: String,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub process_id: Option<i64>,
+    pub interface: Option<String>,
+    pub connected_at: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
 }

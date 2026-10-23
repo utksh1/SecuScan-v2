@@ -2277,7 +2277,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secuscan-api"
-version = "2.6.0"
+version = "3.0.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-cli"
-version = "2.6.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-core"
-version = "2.6.0"
+version = "3.0.0"
 dependencies = [
  "chrono",
  "regex",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-db"
-version = "2.6.0"
+version = "3.0.0"
 dependencies = [
  "chrono",
  "hex",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-exec"
-version = "2.6.0"
+version = "3.0.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2403,7 +2403,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-mcp"
-version = "2.6.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "async-trait",

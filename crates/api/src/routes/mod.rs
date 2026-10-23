@@ -18,6 +18,7 @@ pub mod schedules;
 pub mod sse;
 pub mod tasks;
 pub mod v300_misc;
+pub mod v310;
 pub mod workflows;
 pub mod workspaces;
 
@@ -50,6 +51,7 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(oob::router())
         .merge(notifications::router())
         .merge(v300_misc::router())
+        .merge(v310::router())
         .fallback(fallback_404)
 }
 

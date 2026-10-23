@@ -1,0 +1,51 @@
+# People Hunter -- OSINT email + social-profile harvester (native).
+[plugin]
+id = "people-hunter"
+name = "People Hunter"
+version = "1.0.0"
+description = "OSINT email + social-profile harvester with pattern analysis and address prediction"
+long_description = """
+Discovers email addresses and social-media profiles exposed by the target.
+Seven-step pipeline: HTTPS probe with TLS CN extraction, bounded same-host
+crawl, email regex extraction (HTML/JS/JSON), social profile discovery
+(LinkedIn, X/Twitter, Facebook, Instagram, GitHub, YouTube -- share-button
+noise filtered), MX validation with external-domain filtering, pattern
+analysis (first.last / first_last / first-last / first-only conventions with
+percentages), and prediction of additional addresses from the dominant
+pattern.
+
+Optional Tomba.io enrichment: set TOMBA_API_KEY + TOMBA_API_SECRET in the
+server environment for a richer seed list. Without keys, the crawler-only
+path still works fully offline.
+
+Passive: sends only normal HTTP GETs the site would serve to any visitor.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "users"
+difficulty = "beginner"
+tags = ["osint", "email", "social", "recon", "passive"]
+
+[engine]
+type = "native"
+native = "people_hunter"
+timeout_seconds = 600
+
+[[fields]]
+id = "target"
+label = "Hostname or IP"
+type = "string"
+required = true
+placeholder = "example.com or 203.0.113.10"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:\[\]-]*$'
+message = "Must be a hostname or IP address"
+
+[safety]
+level = "safe"
+requires_consent = false
+consent_message = "People Hunter sends only normal HTTP GET requests and DNS lookups."
+allowed_targets = ["*"]
+max_concurrent = 5
+max_per_hour = 30
+capabilities = ["network.connect", "http.request"]

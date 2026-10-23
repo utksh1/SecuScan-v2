@@ -13,7 +13,9 @@ pub mod routes;
 pub mod scheduler;
 pub mod seed;
 pub mod state;
+pub mod sniper_engine;
 pub mod static_files;
+pub mod vpn_manager;
 
 use crate::state::SharedState;
 use axum::http::{header, Method};

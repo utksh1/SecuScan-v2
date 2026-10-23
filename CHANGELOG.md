@@ -3,6 +3,105 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 3.1.0 -- Sniper Auto-Exploiter, People Hunter, VPN profiles
+
+The final three pentest-tools.com feature gaps, closing the platform to full
+parity on every documented non-AI capability.
+
+### 1. Sniper Auto-Exploiter
+
+Finding-driven exploit chains. Given a finding, Sniper picks a chain of
+exploit steps tailored to the finding's category, executes them as real
+scan tasks, and aggregates results into a proof. When any step produces a
+`validated_issue` (or critical/high) finding, the source finding is upgraded
+to `validated_issue` + `confirmed` with the proof attached.
+
+Chains (matched case-insensitively on category substring):
+
+| category match | steps |
+|----------------|-------|
+| SQL | sqli-exploiter (confirm) -> sqli-exploiter (enumerate) -> sqli-exploiter (extract hashes) |
+| XSS | xss-exploiter (OOB handler + payload) |
+| Credential | password-audit (brute force) |
+| WordPress | wordpress-audit (deep) |
+| Drupal | drupal-scanner (CVE) |
+| TLS | testssl (full audit) |
+| Port | nmap (service + script sweep) |
+| HTTP (catch-all) | http-recon -> http-headers |
+
+A failing step (e.g. missing binary) marks that step failed but does not
+abort the chain. Every exploit step re-runs through the standard task
+admission pipeline, so the global target policy and per-plugin consent
+gates still apply.
+
+- `POST /sniper/run` `{finding_id, workspace_id?}` -> 202 with run_id
+- `GET /sniper/runs/:id` -- live step states + proof + outcome
+- `POST /sniper/runs/:id/cancel`
+- `crates/api/src/sniper_engine.rs` -- chain catalog + orchestrator
+- `crates/db/src/repo/sniper.rs` -- run persistence + finding validation
+
+### 2. People Hunter (OSINT)
+
+Native scanner implementing the documented seven-step pipeline:
+
+1. HTTPS probe on 443; extract TLS cert CN when given an IP
+2. Bounded same-host crawl (25 pages) collecting HTML/JS/JSON
+3. Email regex extraction with noise filtering (images, sentry, examples)
+4. Social profile discovery (LinkedIn, X/Twitter, Facebook, Instagram,
+   GitHub, YouTube) with share-button noise filtering
+5. MX validation via the shared DNS resolver + external-domain filter
+6. Pattern analysis: group usernames by convention (first.last,
+   first_last, first-last, first-only) with percentages
+7. Dominant-pattern prediction surfaced as findings
+
+Optional Tomba.io enrichment: set `TOMBA_API_KEY` + `TOMBA_API_SECRET` in
+the server environment. Without keys the crawler-only path works fully
+offline.
+
+- New plugin: `people-hunter` (35-plugin catalog)
+- `crates/exec/src/native/people_hunter.rs`
+- `crates/exec/src/native/dns.rs` -- new `resolve_mx` helper
+
+### 3. VPN Profiles (OpenVPN)
+
+Named OpenVPN configs attached to workspaces; scans in a VPN-enabled
+workspace route through the tunnel while it is connected.
+
+- `POST /vpn-profiles` `{name, config_text}` -- store a .ovpn config
+  (validated to contain a `remote` directive; <= 512KB)
+- `POST /vpn-profiles/:id/connect` -- spawns `openvpn --config ... --daemon`,
+  waits up to 20s for the tun/tap interface, tracks the OS pid
+- `POST /vpn-profiles/:id/disconnect` -- kills the daemon, clears status
+- `PUT /workspaces/:id/vpn` `{vpn_profile_id}` -- attach/detach
+- Status machine: disconnected -> connecting -> connected | error
+- Startup reconciliation: profiles marked connected whose pid died while
+  the server was down flip to error
+- Graceful degradation: missing openvpn binary or sandbox without tun
+  permissions yields a clear error message, never a crash
+
+- `crates/api/src/vpn_manager.rs` -- process management + interface detection
+- `crates/db/migrations/0007_v310_features.sql` -- sniper_runs, vpn_profiles
+- `crates/db/src/repo/{sniper,vpn}.rs`
+
+### Test suite
+
+- Rust: **197/197 passing** (was 186; +11 tests for sniper chain selection,
+  people-hunter email regex/pattern analysis, VPN manager pid/binary checks)
+- Frontend (vitest): 64/64 unchanged
+
+### Catalog
+
+**35 plugins** (was 34 in v3.0.0).
+
+### Remaining vs pentest-tools.com (all require external services/LLMs)
+
+- AI Pentests (Specter autonomous agent) -- LLM product
+- ML Classifier -- fine-tuned model deployment
+- Flowmapper -- frontier-model browser agent
+- Sniper "detection modules" beyond chain replay -- deep exploit engineering
+- Burp Suite extension -- Java client work
+
+
 ## 3.0.0 — OOB callbacks, finding enrichment, notifications, +7 tools, platform parity
 
 Closes the remaining gaps identified in the pentest-tools.com reverse-

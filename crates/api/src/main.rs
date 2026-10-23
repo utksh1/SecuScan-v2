@@ -89,6 +89,10 @@ async fn main() {
     // OOB-handler-creating scanners (http_request_logger, xss_exploiter)
     // can persist their handlers.
     secuscan_exec::native::set_db_pool(db.clone());
+
+    // v3.1.0 — reconcile VPN profile statuses (detect tunnels that died
+    // while the server was down).
+    secuscan_api::vpn_manager::reconcile(&db).await;
     let state = Arc::new(AppState {
         db,
         config: config.clone(),

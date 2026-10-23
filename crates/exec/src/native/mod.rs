@@ -16,6 +16,7 @@ pub mod http_headers;
 pub mod http_recon;
 pub mod http_request_logger;
 pub mod password_audit;
+pub mod people_hunter;
 pub mod port_scanner;
 pub mod reverse_dns;
 pub mod subdomain_finder;
@@ -111,6 +112,7 @@ pub fn registry() -> &'static NativeRegistry {
             &domain_finder::DomainFinder,
             &http_request_logger::HttpRequestLogger,
             &xss_exploiter::XssExploiter,
+            &people_hunter::PeopleHunter,
         ],
     })
 }

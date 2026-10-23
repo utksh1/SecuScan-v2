@@ -14,6 +14,8 @@ pub mod oob;
 pub mod reports;
 pub mod robots;
 pub mod schedules;
+pub mod sniper;
+pub mod vpn;
 pub mod tasks;
 pub mod users;
 pub mod v300_misc;
