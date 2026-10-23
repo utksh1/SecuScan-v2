@@ -3,6 +3,31 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.4.1 — real-tool verification: gobuster/nikto parser fixes
+
+Verified the whole platform against **real installed binaries** (nmap 7.95,
+nikto 2.6.1, nuclei 3.11.1 + templates, gobuster 3.8.2, sqlmap 1.10,
+whois 5.6.3, traceroute) scanning a live lab target: 43 normalized findings
+across 9 plugins, full reports. Two parser bugs surfaced and were fixed:
+
+- **gobuster** (v2.0.1): the parser expected the legacy `Found: /path
+  (Status: 200)` prefix that gobuster removed in v3.5 — modern output
+  (`path  (Status: 200) [Size: n]`) produced **zero findings**. The new
+  pattern handles both formats, normalizes the leading slash, and severity
+  globs (`.git*`, `backup*`, `admin*`, ...) now match modern paths.
+- **nikto** (v2.0.1): check lines carry a numeric id (`[740001]`) that the
+  old parser discarded; only legacy `OSVDB-*` lines could ever elevate
+  severity. The id is now captured and mapped (backup/cert files and git
+  exposure -> medium, outdated software / missing headers / robots.txt
+  disclosures -> low, any other id-carrying check -> low), and colon-less
+  check lines ("X appears to be outdated") parse instead of being dropped.
+- **core**: template rendering of unmatched *optional* capture groups now
+  yields an empty string instead of a literal `{group}` placeholder
+  (mustache-style), enabling optional-group patterns. Verbatim scanner
+  lines remain the default evidence when no proof template is set.
+- Regression tests: `gobuster_both_output_formats`,
+  `nikto_check_ids_get_severity` (suite: 115 passing).
+
 ## 2.4.0 — recurring scan schedules
 
 Automated recurring scans (pentest-tools.com gap #4):

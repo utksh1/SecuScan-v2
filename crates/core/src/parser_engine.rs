@@ -137,7 +137,10 @@ fn substitute_groups(template: &str, caps: &regex::Captures<'_>) -> String {
                 let name = &after[..end];
                 match caps.name(name) {
                     Some(m) => out.push_str(m.as_str()),
-                    None => out.push_str(&format!("{{{name}}}")),
+                    // Unmatched optional capture groups render as empty
+                    // (mustache-style) so patterns with optional groups can
+                    // feed every template field.
+                    None => {}
                 }
                 rest = &after[end + 1..];
             }
@@ -477,6 +480,116 @@ mod tests {
         };
         let findings = parse_output(&spec, &[], "abc").unwrap();
         assert_eq!(findings[0].severity, Severity::Medium);
+    }
+
+    /// Regression: gobuster plugin parser must handle BOTH output formats.
+    /// gobuster >= 3.5 prints `admin      (Status: 200) [Size: 34]`
+    /// (no "Found:" prefix, no leading slash); older releases print
+    /// `Found: /admin (Status: 200)`. Captured path is normalized (no
+    /// leading slash) so severity globs match both.
+    #[test]
+    fn gobuster_both_output_formats() {
+        let spec = ParserSpec::LineRegex {
+            pattern: r"^(?:Found:\s+)?/?(?P<path>\S+?)\s+\(Status:\s+(?P<status>\d+)\)".into(),
+            finding: LineFindingTemplate {
+                title: "Discovered path: /{path} (HTTP {status})".into(),
+                description: Some("The path /{path} exists.".into()),
+                remediation: None,
+                proof: Some("/{path} (Status: {status})".into()),
+                category: Some("Content Discovery".into()),
+                severity: "info".into(),
+            },
+            severity_rules: vec![SeverityRule {
+                field: "path".into(),
+                values: vec![
+                    ".env*".into(),
+                    ".git*".into(),
+                    "backup*".into(),
+                    "admin*".into(),
+                ],
+                severity: "medium".into(),
+            }],
+            metadata_fields: vec!["path".into(), "status".into()],
+        };
+        let out = concat!(
+            ".git                 (Status: 301) [Size: 0] [--> /.git/]\n",
+            ".git/HEAD            (Status: 200) [Size: 21]\n",
+            "admin                (Status: 301) [Size: 0] [--> /admin/]\n",
+            "index.html           (Status: 200) [Size: 55]\n",
+            "Found: /old-format   (Status: 200) [Size: 10]\n"
+        );
+        let findings = parse_output(&spec, &[], out).unwrap();
+        assert_eq!(findings.len(), 5, "all lines parse in both formats");
+        // modern format, sensitive path elevated
+        assert_eq!(findings[0].title, "Discovered path: /.git (HTTP 301)");
+        assert_eq!(findings[0].severity, Severity::Medium);
+        // nested path under .git also elevated via glob
+        assert_eq!(findings[1].severity, Severity::Medium);
+        assert_eq!(findings[1].metadata["path"], json!(".git/HEAD"));
+        // admin elevated
+        assert_eq!(findings[2].severity, Severity::Medium);
+        // ordinary path stays info
+        assert_eq!(findings[3].severity, Severity::Info);
+        // legacy "Found:" format parses with normalized path
+        assert_eq!(findings[4].title, "Discovered path: /old-format (HTTP 200)");
+        assert_eq!(findings[4].metadata["path"], json!("old-format"));
+    }
+
+    /// Regression: nikto check lines carry a numeric id `[740001]` that
+    /// severity rules key off; summary lines without an id stay info, and
+    /// colon-less check lines ("X appears to be outdated") still parse.
+    #[test]
+    fn nikto_check_ids_get_severity() {
+        let spec = ParserSpec::LineRegex {
+            pattern: r"^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$".into(),
+            finding: LineFindingTemplate {
+                title: "{item}".into(),
+                description: Some("{detail}".into()),
+                remediation: None,
+                proof: None,
+                category: Some("Web Server".into()),
+                severity: "info".into(),
+            },
+            severity_rules: vec![
+                SeverityRule {
+                    field: "check".into(),
+                    values: vec!["740001".into(), "006609".into()],
+                    severity: "medium".into(),
+                },
+                SeverityRule {
+                    field: "check".into(),
+                    values: vec!["??????".into()],
+                    severity: "low".into(),
+                },
+            ],
+            metadata_fields: vec![],
+        };
+        let out = concat!(
+            "+ Target IP:          127.0.0.1\n",
+            "+ Server: SimpleHTTP/0.6 Python/3.12.15\n",
+            "+ [740001] /backup.zip: Potentially interesting backup/cert file found.  [Confidence: 70%]\n",
+            "+ [006609] /.git/HEAD: Git HEAD file found. Full repo details may be present.\n",
+            "+ [600652] Python/3.12.15 appears to be outdated (current is at least 3.14.6).\n"
+        );
+        let findings = parse_output(&spec, &[], out).unwrap();
+        assert_eq!(findings.len(), 5);
+        // summary lines: no id → info
+        assert_eq!(findings[0].severity, Severity::Info);
+        assert_eq!(findings[0].title, "Target IP");
+        assert_eq!(findings[0].description, "127.0.0.1");
+        // backup + git exposure → medium
+        assert_eq!(findings[2].severity, Severity::Medium);
+        assert_eq!(findings[2].title, "/backup.zip");
+        assert_eq!(findings[3].severity, Severity::Medium);
+        // colon-less check line: still parsed, id elevates to low
+        assert_eq!(findings[4].severity, Severity::Low);
+        assert!(findings[4].title.contains("appears to be outdated"));
+        assert_eq!(findings[4].description, "");
+        // no proof template → verbatim scanner line as evidence
+        assert_eq!(
+            findings[2].proof,
+            "+ [740001] /backup.zip: Potentially interesting backup/cert file found.  [Confidence: 70%]"
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@
 [plugin]
 id = "gobuster"
 name = "Directory Discovery (gobuster)"
-version = "2.0.0"
+version = "2.0.1"
 description = "Discover hidden paths and files with a wordlist"
 long_description = """
 Wraps gobuster's `dir` mode to brute-force web paths from a wordlist. Found
@@ -70,19 +70,23 @@ max = 100
 
 [parser]
 type = "line_regex"
-pattern = '^Found:\s+(?P<path>\S+)\s+\(Status:\s+(?P<status>\d+)\)'
+# gobuster >= 3.5 prints `admin            (Status: 200) [Size: 34]`
+# (no "Found:" prefix, no leading slash); older releases printed
+# `Found: /admin (Status: 200)`. The optional prefix + optional leading
+# slash normalize both formats to the same `path` capture.
+pattern = '^(?:Found:\s+)?/?(?P<path>\S+?)\s+\(Status:\s+(?P<status>\d+)\)'
 
 [parser.finding]
-title = "Discovered path: {path} (HTTP {status})"
-description = "The path {path} exists and returned HTTP {status}."
-remediation = "Verify that {path} should be publicly reachable; remove or protect it otherwise."
-proof = "Found: {path} (Status: {status})"
+title = "Discovered path: /{path} (HTTP {status})"
+description = "The path /{path} exists and returned HTTP {status}."
+remediation = "Verify that /{path} should be publicly reachable; remove or protect it otherwise."
+proof = "/{path} (Status: {status})"
 category = "Content Discovery"
 severity = "info"
 
 [[parser.severity_rules]]
 field = "path"
-values = ["/.env", "/.git", "/.svn", "/backup", "/admin", "/phpmyadmin", "/config", "/.aws"]
+values = [".env*", ".git*", ".svn*", ".aws*", "backup*", "admin*", "phpmyadmin*", "config*", "secret*", "dump*", "*.sql", "*.bak", "*.old", "*.swp"]
 severity = "medium"
 
 [safety]

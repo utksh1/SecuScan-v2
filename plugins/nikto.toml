@@ -2,7 +2,7 @@
 [plugin]
 id = "nikto"
 name = "Web Server Scan (nikto)"
-version = "2.0.0"
+version = "2.0.1"
 description = "Well-known web misconfigurations, default files and outdated software"
 long_description = """
 Wraps nikto for classic web-server checks: dangerous files, misconfigured
@@ -56,15 +56,56 @@ default = false
 
 [parser]
 type = "line_regex"
-pattern = '^\+\s+(?P<item>[^:]+):\s+(?P<detail>.+)$'
+# Summary lines: `+ Server: SimpleHTTP/0.6 Python/3.12.15`
+# Check results:  `+ [740001] /backup.zip: Potentially interesting backup file ...`
+# Some check lines carry no colon at all (e.g. `[600652] Python/3.12
+# appears to be outdated`); the optional `: detail` group keeps them
+# parseable while severity_rules key off the numeric check id.
+pattern = '^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$'
 
 [parser.finding]
 title = "{item}"
 description = "{detail}"
 remediation = "Review the nikto finding and apply the relevant hardening measure."
-proof = "{item}: {detail}"
+# No proof template → the verbatim nikto line is stored as evidence.
 category = "Web Server"
 severity = "info"
+
+[[parser.severity_rules]]
+field = "check"
+values = ["740001"]
+severity = "medium"
+
+[[parser.severity_rules]]
+field = "check"
+values = ["006609"]
+severity = "medium"
+
+[[parser.severity_rules]]
+field = "check"
+values = ["006230"]
+severity = "low"
+
+[[parser.severity_rules]]
+field = "check"
+values = ["600652", "600720"]
+severity = "low"
+
+[[parser.severity_rules]]
+field = "check"
+values = ["013587", "007342", "007352"]
+severity = "low"
+
+[[parser.severity_rules]]
+field = "check"
+values = ["999997", "999996"]
+severity = "low"
+
+# Any other id-carrying check line is at least an observation.
+[[parser.severity_rules]]
+field = "check"
+values = ["??????"]
+severity = "low"
 
 [[parser.severity_rules]]
 field = "item"
