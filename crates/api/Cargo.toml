@@ -36,6 +36,7 @@ async-trait = { workspace = true }
 uuid = { workspace = true }
 sqlx = { workspace = true }
 url = "2"
+regex = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }

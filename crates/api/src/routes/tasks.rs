@@ -45,6 +45,9 @@ pub struct StartTaskRequest {
     /// Workspace the task belongs to; absent = the Personal scope.
     #[serde(default)]
     pub workspace_id: Option<String>,
+    /// v2.6.0 — auth profile to attach (web scans inject cookies/headers).
+    #[serde(default)]
+    pub auth_profile_id: Option<String>,
 }
 
 /// Result of admitting a request through the validation pipeline (no DB
@@ -218,6 +221,16 @@ pub async fn validate_and_create_task(
         },
     )
     .await?;
+
+    // v2.6.0 — attach auth profile if provided (sets task.auth_profile_id;
+    // the executor reads it to inject cookies/headers into the subprocess).
+    if let Some(pid) = &req.auth_profile_id {
+        let _ = sqlx::query("UPDATE tasks SET auth_profile_id = ? WHERE id = ?")
+            .bind(pid)
+            .bind(&row.id)
+            .execute(&state.db)
+            .await;
+    }
 
     Ok((row, admitted.manifest, admitted.normalized))
 }
@@ -401,6 +414,7 @@ async fn retry(
             .map(str::to_string),
         consent_granted: true, // consent was granted for the original task
         workspace_id: original.workspace_id.clone(), // keep the workspace
+        auth_profile_id: original.auth_profile_id.clone(),
     };
     let (row, manifest, inputs) =
         validate_and_create_task(&state, &user, &req, None, original.schedule_id.as_deref())

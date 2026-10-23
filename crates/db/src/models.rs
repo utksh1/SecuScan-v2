@@ -76,6 +76,10 @@ pub struct TaskRow {
     pub workspace_id: Option<String>,
     /// Schedule that launched this task (NULL for manual/workflow starts).
     pub schedule_id: Option<String>,
+    /// Robot run that launched this task (v2.6.0; NULL for non-robot tasks).
+    pub robot_run_id: Option<String>,
+    /// Auth profile attached to this task (v2.6.0; NULL = unauthenticated).
+    pub auth_profile_id: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -231,4 +235,106 @@ pub struct ScheduleRow {
     pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: Option<String>,
+}
+
+// --- v2.6.0 models ---------------------------------------------------------
+
+/// Pentest Robot: a DAG of Tool/Filter/Extractor/Reducer nodes.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RobotRow {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub nodes_json: String,
+    pub edges_json: String,
+    pub source: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RobotRunRow {
+    pub id: String,
+    pub robot_id: String,
+    pub workspace_id: Option<String>,
+    pub status: String,
+    pub state_json: String,
+    pub targets_json: String,
+    pub error: Option<String>,
+    pub created_by: String,
+    pub created_at: String,
+    pub finished_at: Option<String>,
+}
+
+/// Aggregated asset in the Attack Surface inventory.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct AttackSurfaceAssetRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub hostname: Option<String>,
+    pub ip_address: Option<String>,
+    pub url: Option<String>,
+    pub asset_key: String,
+    pub metadata_json: String,
+    pub first_seen_at: String,
+    pub last_seen_at: String,
+    pub created_at: String,
+}
+
+/// Reusable authentication profile for web scans.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct AuthProfileRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub name: String,
+    pub method: String,
+    pub config_json: String,
+    pub notes: String,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+}
+
+/// Workspace membership (owner / editor / viewer).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WorkspaceMemberRow {
+    pub workspace_id: String,
+    pub user_id: String,
+    pub role: String,
+    pub added_at: String,
+    pub added_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct FindingCommentRow {
+    pub id: String,
+    pub finding_id: String,
+    pub author_id: String,
+    pub body: String,
+    pub kind: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct MentionRow {
+    pub id: String,
+    pub comment_id: String,
+    pub mentioned_user_id: String,
+    pub finding_id: String,
+    pub workspace_id: Option<String>,
+    pub read_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct BrandingRow {
+    pub id: i64,
+    pub org_name: String,
+    pub logo_png: Option<Vec<u8>>,
+    pub primary_color: String,
+    pub accent_color: String,
+    pub footer_text: String,
+    pub updated_at: String,
+    pub updated_by: Option<String>,
 }

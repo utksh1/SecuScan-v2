@@ -66,6 +66,14 @@ pub async fn find_by_id(pool: &SqlitePool, id: &str) -> DbResult<Option<UserRow>
         .map_err(Into::into)
 }
 
+pub async fn find_by_name(pool: &SqlitePool, name: &str) -> DbResult<Option<UserRow>> {
+    sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE name = ?1 COLLATE NOCASE LIMIT 1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+}
+
 pub async fn list(pool: &SqlitePool) -> DbResult<Vec<UserRow>> {
     sqlx::query_as::<_, UserRow>("SELECT * FROM users ORDER BY created_at ASC")
         .fetch_all(pool)

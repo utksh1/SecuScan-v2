@@ -1,12 +1,17 @@
 //! Route assembly: everything mounts under `/api/v1`.
 
 pub mod admin;
+pub mod attack_surface;
 pub mod auth;
+pub mod auth_profiles;
+pub mod branding;
+pub mod collab;
 pub mod dashboard;
 pub mod diff;
 pub mod findings;
 pub mod plugins;
 pub mod reports;
+pub mod robots;
 pub mod schedules;
 pub mod sse;
 pub mod tasks;
@@ -32,6 +37,12 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(schedules::router())
         .merge(dashboard::router())
         .merge(admin::router())
+        // v2.6.0 feature routes
+        .merge(robots::router())
+        .merge(attack_surface::router())
+        .merge(auth_profiles::router())
+        .merge(collab::router())
+        .merge(branding::router())
         .fallback(fallback_404)
 }
 

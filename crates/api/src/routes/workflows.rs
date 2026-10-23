@@ -265,6 +265,7 @@ async fn run_workflow(
             // Starting a workflow implies consent for its steps.
             consent_granted: true,
             workspace_id: workspace_id.map(str::to_string),
+            auth_profile_id: None,
         };
         let (task, manifest, inputs) =
             validate_and_create_task(state, user, &req, Some(run_id), None)

@@ -191,6 +191,16 @@ impl TaskManager {
         {
             tracing::error!("failed to persist findings for task {}: {e}", task.id);
         }
+        // v2.6.0 — auto-aggregate findings into the Attack Surface inventory.
+        // Best-effort: errors are logged inside the aggregator.
+        crate::attack_surface_aggregator::aggregate_for_task(
+            &self.pool,
+            task.workspace_id.as_deref(),
+            &task.id,
+            &task.plugin_id,
+            o.findings,
+        )
+        .await;
         if let Err(e) = repo::tasks::finish(
             &self.pool,
             &task.id,

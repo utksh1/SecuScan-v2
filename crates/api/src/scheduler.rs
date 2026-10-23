@@ -126,6 +126,7 @@ async fn process_one(state: &SharedState, s: &ScheduleRow, now_ts: &str) -> DueO
         // Consent was captured when the schedule was created.
         consent_granted: true,
         workspace_id: s.workspace_id.clone(),
+        auth_profile_id: None,
     };
 
     match validate_and_create_task(state, &user, &req, None, Some(&s.id)).await {

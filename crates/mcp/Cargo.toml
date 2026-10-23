@@ -1,0 +1,30 @@
+[package]
+name = "secuscan-mcp"
+description = "SecuScan v2 Model Context Protocol server — lets AI agents drive scans"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "secuscan-mcp"
+path = "src/main.rs"
+
+[dependencies]
+secuscan-core = { path = "../core" }
+secuscan-db = { path = "../db" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = "1"
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+uuid = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }

@@ -6,10 +6,11 @@ members = [
     "crates/db",
     "crates/api",
     "crates/cli",
+    "crates/mcp",
 ]
 
 [workspace.package]
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/utksh1/SecuScan-v2"
@@ -18,7 +19,7 @@ authors = ["SecuScan Contributors"]
 [workspace.dependencies]
 tokio = { version = "1.41", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros", "multipart"] }
 tower = { version = "0.5" }
 tower-http = { version = "0.6", features = ["trace", "cors", "fs", "timeout", "limit"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "gzip"] }

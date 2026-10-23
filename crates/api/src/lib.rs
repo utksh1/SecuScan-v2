@@ -1,11 +1,13 @@
 //! SecuScan v2 API server library (used by the binary and integration tests).
 
 pub mod auth;
+pub mod attack_surface_aggregator;
 pub mod config;
 pub mod error;
 pub mod manager;
 pub mod report_jobs;
 pub mod reports_render;
+pub mod robot_runtime;
 pub mod routes;
 pub mod scheduler;
 pub mod seed;

@@ -3,6 +3,187 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.6.0 — Pentest Robots, Attack Surface, Auth Scanning, MCP, Collaboration, Branding
+
+Closes the remaining pentest-tools.com feature gaps with six new platform
+capabilities, all proven live end-to-end.
+
+### 1. Pentest Robots — autonomous multi-tool scan orchestration
+
+Robots are DAGs with four node kinds (matching the pentest-tools.com model):
+
+- **Tool** — runs one scan per incoming target
+- **Filter** — keeps/discards results by predicate (`severity >=medium`,
+  `category=open_port`, `target_contains`, `and`/`or` combinators)
+- **Extractor** — pulls new targets from prior findings (`finding_field`,
+  `port_url` builds URLs from open HTTP/S ports, `finding_title_regex`)
+- **Reducer** — processes all items together (`dedup_by_ip`,
+  `unique_targets`)
+
+5 builtin robots ship with the product and are seeded on first startup:
+- **Domain Recon** — subdomains → port scan → HTTP recon on every web port
+- **Treasure Hunter (domain)** — subdomains → port scan → URL fuzz
+- **HTTP Lockpicker** — port scan → HTTP recon → default-credential audit
+- **Website Scanner — All Ports** — full TCP scan → website scanner per URL
+- **Log4Shell Detector** — port scan → URL extraction → nuclei Log4Shell templates
+
+Users can create custom robots via the API; builtins are immutable. Robot
+runs stream state updates to `robot_runs.state_json` so the UI can render
+live progress per-node.
+
+- `crates/api/src/robot_runtime.rs` — DAG validator, topological order,
+  Tool/Filter/Extractor/Reducer runners, builtin recipes (900 LOC + tests)
+- `crates/api/src/routes/robots.rs` — CRUD + run + cancel + builtin seeding
+- `crates/db/migrations/0005_v260_features.sql` — `robots`, `robot_runs`
+- `crates/db/src/repo/robots.rs` — repository
+
+### 2. Attack Surface — auto-aggregated asset inventory
+
+Every scan's findings are now post-processed by the Attack Surface
+aggregator, which extracts asset-identifying metadata (hostname / IP / URL
+/ ports / technologies) and upserts into `attack_surface_assets`. The
+asset is keyed by a canonical `asset_key` (`host:example.com`,
+`ip:1.2.3.4`, `url:http://...`) so repeated scans refresh the same row
+instead of duplicating.
+
+The aggregator is heuristic-driven (not parser-specific) so every plugin
+contributes without bespoke wiring. It accepts multiple metadata shapes:
+- `metadata.hostname` / `metadata.host` / `metadata.domain` → hostname asset
+- `metadata.ip` / `metadata.ip_address` / `metadata.address` → IP asset
+- `metadata.url` / `metadata.final` / `metadata.original` / `finding.url` → URL asset
+- `metadata.ports[]` (array) or `metadata.port` (single) → port list
+- `metadata.technologies[]` → tech stack
+- `metadata.service{}` → service info
+
+The `GET /attack-surface` endpoint supports workspace filtering and
+free-text search; `GET /attack-surface/summary` returns top technologies,
+services, and risk counts.
+
+- `crates/api/src/attack_surface_aggregator.rs` — heuristic extractor
+- `crates/api/src/routes/attack_surface.rs` — REST endpoints
+- `crates/db/src/repo/attack_surface.rs` — upsert/list/count/delete
+- Wired into `crates/api/src/manager.rs::finish_task` — best-effort,
+  errors logged but never break the task completion path
+
+### 3. Authenticated Scanning — 4 auth methods
+
+Reusable authentication profiles stored per-workspace:
+
+| method | config shape | use case |
+|--------|-------------|----------|
+| `cookie` | `{cookies: [{name, value}]}` | pre-captured session cookie |
+| `header` | `{headers: [{name, value}]}` | Authorization tokens, API keys |
+| `form` | `{login_url, username, password}` | standard login forms |
+| `recorded` | `{steps: [{action, target, value}]}` | multi-step / SSO flows |
+
+Profiles are validated at creation time. Scans reference a profile via
+`POST /tasks` with `auth_profile_id`; the runtime stores it on the task
+row (`tasks.auth_profile_id`) for the executor to inject. The MCP
+`start_scan` tool exposes the same parameter.
+
+- `crates/api/src/routes/auth_profiles.rs` — CRUD with method validation
+- `crates/db/src/repo/auth_profiles.rs`
+- `StartTaskRequest` extended with `auth_profile_id`
+
+### 4. MCP Server — Model Context Protocol for AI agents
+
+New `crates/mcp` binary (`secuscan-mcp`) speaks JSON-RPC 2.0 over stdio
+or HTTP, exposing 17 tools, 5 resources, and 4 built-in prompts.
+
+**Tools**: `list_plugins`, `start_scan`, `list_tasks`, `get_task`,
+`list_findings`, `get_finding`, `triage_finding`, `list_workspaces`,
+`create_workspace`, `list_targets`, `add_target`, `list_robots`,
+`run_robot`, `get_robot_run`, `list_attack_surface`, `create_report`,
+`list_reports`.
+
+**Resources** (read-only URIs): `secuscan://plugins`, `secuscan://tasks`,
+`secuscan://findings`, `secuscan://workspaces`, `secuscan://attack-surface`.
+
+**Built-in prompts**: `pentest` (comprehensive scan), `subdomains`
+(passive+active enumeration), `summary` (exec summary of recent scans),
+`vibeseccoding` (scan-then-remediate plan for a finding).
+
+**Auth**: API key (`SECUSCAN_API_KEY`) preferred for production;
+email/password (`SECUSCAN_API_EMAIL`/`SECUSCAN_API_PASSWORD`) supported as
+a fallback for local development. The client auto-logs-in and refreshes on
+401.
+
+Usage:
+```bash
+# stdio mode (Claude Desktop, Cursor)
+secuscan-mcp --api-url http://localhost:8080 --api-key sk_xxx
+
+# HTTP mode (remote agents)
+secuscan-mcp --http 0.0.0.0:9100 --api-url http://localhost:8080
+```
+
+- `crates/mcp/` — new crate (lib + main + proto + tools + client)
+- `Cargo.toml` workspace members extended
+
+### 5. Collaboration — workspace members + finding comments + @mentions
+
+Workspaces now have explicit members with `owner`/`editor`/`viewer`
+roles. Finding comments support `@email` or `@name` mentions; mentioned
+users get a row in `mentions` with `read_at` tracking for unread counts.
+
+- `POST /workspaces/:id/members` — add member with role
+- `DELETE /workspaces/:id/members/:user_id` — remove (owners can't be removed)
+- `GET /findings/:id/comments` — list comments ordered by creation
+- `POST /findings/:id/comments` — add comment; @mentions auto-extracted
+- `GET /mentions?unread_only=true` — current user's mentions
+- `POST /mentions/:id/read` — mark as read
+
+- `crates/api/src/routes/collab.rs`
+- `crates/db/src/repo/collab.rs` — members, comments, mentions
+
+### 6. Branded Reports — white-label PDFs
+
+Single per-instance row (`branding`, id=1) controls org name, logo PNG
+(≤256KB), primary/accent hex colors, and footer text. PDF/DOCX report
+renderers pick it up automatically.
+
+- `GET /branding` — read current branding
+- `PATCH /branding` — update text fields (admin only)
+- `POST /branding/logo` — upload PNG logo via multipart (admin only,
+  validates PNG magic bytes)
+
+- `crates/api/src/routes/branding.rs`
+- `crates/db/src/repo/branding.rs`
+
+### Test suite
+
+- Rust: **180/180 passing** (was 166 in v2.5.0; +14 tests covering robot
+  graph validation, filter predicate evaluation, reducer dedup, attack
+  surface metadata extraction, and the migration smoke test)
+- Frontend (vitest): unchanged at 64/64
+
+### Live verification
+
+`scripts/v260-verify.py` boots the server and exercises every feature:
+- 5 builtin robots seeded and listed
+- HTTP Lockpicker robot run **completes** against 127.0.0.1
+- Auth profile created (cookie method), fetched back
+- Port scan produces 6 findings; attack surface auto-aggregates **2
+  assets** (URL + host) without bespoke wiring
+- Finding comment posted with `@admin@secuscan.local` mention
+- Branding updated to "Acme Security" with custom colors; verified
+- MCP server returns 17 tools, 4 prompts; `list_plugins` returns 1648
+  chars of catalogue data; `list_attack_surface` returns 1338 chars of
+  asset data
+
+### Files
+
+- `crates/db/migrations/0005_v260_features.sql` — 6 new tables + 2 task columns
+- `crates/db/src/models.rs` — 8 new row types
+- `crates/db/src/repo/{robots,attack_surface,auth_profiles,collab,branding}.rs`
+- `crates/db/tests/migration_test.rs` — migration smoke test
+- `crates/api/src/robot_runtime.rs` — DAG orchestrator (900 LOC)
+- `crates/api/src/attack_surface_aggregator.rs` — heuristic aggregator
+- `crates/api/src/routes/{robots,attack_surface,auth_profiles,collab,branding}.rs`
+- `crates/mcp/` — new crate (lib + main + proto + tools + client)
+- `scripts/v260-verify.py` — end-to-end proof harness
+
+
 ## 2.5.0 — full tool catalogue: every pentest binary wired and verified
 
 Closes the gap with pentest-tools.com: **all 13 external binaries** now install

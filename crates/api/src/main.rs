@@ -101,6 +101,11 @@ async fn main() {
         });
     }
 
+    // Seed builtin Pentest Robots (idempotent — skips names that already exist).
+    if let Err(e) = secuscan_api::routes::robots::seed_builtins(&state).await {
+        tracing::warn!("builtin robot seeding failed: {e}");
+    }
+
     let app = build_app(state);
 
     let listener = match tokio::net::TcpListener::bind(&config.addr).await {
