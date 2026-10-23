@@ -1,0 +1,45 @@
+# Drupal Scanner -- wraps droopescan if available, falls back to native HTTP checks.
+[plugin]
+id = "drupal-scanner"
+name = "Drupal Scanner"
+version = "1.0.0"
+description = "Drupal CMS fingerprinting + version-based CVE matching + module enumeration"
+long_description = """
+Fingerprints the target's Drupal version from meta tags, script URLs, and
+CHANGELOG.txt. Enumerates installed modules by parsing page links and the
+Drupal.settings JavaScript object. Matches detected versions against a CVE
+database with CVSS scores, EPSS, and exploit availability references.
+
+Covers the Drupalgeddon family (CVE-2014-3704, CVE-2018-7600, CVE-2018-7602).
+Like its WordPress sibling, detection is version-based so severity is capped
+at High. Runs natively (no droopescan binary required).
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "cms"
+difficulty = "intermediate"
+tags = ["drupal", "cms", "web"]
+
+[engine]
+type = "native"
+native = "drupal_scanner"
+timeout_seconds = 600
+
+[[fields]]
+id = "target"
+label = "Drupal site URL"
+type = "string"
+required = true
+placeholder = "https://example.com or https://example.com/blog/"
+pattern = '^https?://[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "URL (must start with http:// or https://)"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Only scan systems you own or are explicitly authorized to test."
+allowed_targets = ["any"]
+max_concurrent = 5
+max_per_hour = 30
+capabilities = ["network.connect", "http.request"]

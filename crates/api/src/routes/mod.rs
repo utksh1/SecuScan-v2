@@ -9,12 +9,15 @@ pub mod collab;
 pub mod dashboard;
 pub mod diff;
 pub mod findings;
+pub mod notifications;
+pub mod oob;
 pub mod plugins;
 pub mod reports;
 pub mod robots;
 pub mod schedules;
 pub mod sse;
 pub mod tasks;
+pub mod v300_misc;
 pub mod workflows;
 pub mod workspaces;
 
@@ -43,6 +46,10 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(auth_profiles::router())
         .merge(collab::router())
         .merge(branding::router())
+        // v3.0.0 feature routes
+        .merge(oob::router())
+        .merge(notifications::router())
+        .merge(v300_misc::router())
         .fallback(fallback_404)
 }
 

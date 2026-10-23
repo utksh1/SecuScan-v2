@@ -186,11 +186,69 @@ impl TaskManager {
     }
 
     async fn finish_task(&self, task: &TaskRow, o: FinishOutcome<'_>) {
+        // v3.0.0 — apply FP memory: auto-mark findings that were previously
+        // marked false positive on the same (target_fingerprint, plugin_id, title).
+        let findings_with_status: Vec<(secuscan_core::models::Finding, String)> = {
+            let mut out = Vec::with_capacity(o.findings.len());
+            for f in o.findings {
+                let fp = secuscan_db::repo::finding_dedup::is_remembered_false_positive(
+                    &self.pool,
+                    task.workspace_id.as_deref(),
+                    &task.plugin_id,
+                    &f.title,
+                    &secuscan_db::repo::finding_dedup::target_fingerprint(
+                        f.url.as_deref(),
+                        task.target.as_deref(),
+                    ),
+                )
+                .await
+                .ok()
+                .flatten();
+                let status = if fp.is_some() { "false_positive" } else { "new" };
+                out.push((f.clone(), status.to_string()));
+            }
+            out
+        };
+
         if let Err(e) =
             repo::findings::insert_many(&self.pool, &task.id, &task.plugin_id, o.findings).await
         {
             tracing::error!("failed to persist findings for task {}: {e}", task.id);
         }
+
+        // v3.0.0 — apply dedup grouping + FP-memory status overrides.
+        for (f, status) in &findings_with_status {
+            let fp_target = secuscan_db::repo::finding_dedup::target_fingerprint(
+                f.url.as_deref(),
+                task.target.as_deref(),
+            );
+            // Find or create the dedup group.
+            if let Ok(group) = secuscan_db::repo::finding_dedup::find_or_create_group(
+                &self.pool,
+                task.workspace_id.as_deref(),
+                &task.plugin_id,
+                &f.title,
+                &fp_target,
+            ).await {
+                // Find this finding's row (just-inserted) and attach group_id.
+                let _ = sqlx::query(
+                    "UPDATE findings SET group_id = ? WHERE task_id = ? AND title = ? ORDER BY created_at DESC LIMIT 1",
+                )
+                .bind(&group.id)
+                .bind(&task.id)
+                .bind(&f.title)
+                .execute(&self.pool).await;
+                if status == "false_positive" {
+                    let _ = sqlx::query(
+                        "UPDATE findings SET analyst_status = 'false_positive' WHERE task_id = ? AND title = ?",
+                    )
+                    .bind(&task.id)
+                    .bind(&f.title)
+                    .execute(&self.pool).await;
+                }
+            }
+        }
+
         // v2.6.0 — auto-aggregate findings into the Attack Surface inventory.
         // Best-effort: errors are logged inside the aggregator.
         crate::attack_surface_aggregator::aggregate_for_task(
@@ -201,6 +259,14 @@ impl TaskManager {
             o.findings,
         )
         .await;
+
+        // v3.0.0 — fire notification rules for this task + its findings.
+        if let Err(e) = crate::notifications_engine::fire_for_task(
+            &self.pool, task, o.findings,
+        ).await {
+            tracing::warn!("notification dispatch for task {} failed: {e}", task.id);
+        }
+
         if let Err(e) = repo::tasks::finish(
             &self.pool,
             &task.id,

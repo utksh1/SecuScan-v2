@@ -2277,7 +2277,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secuscan-api"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2316,7 +2316,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-cli"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2336,7 +2336,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-core"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "chrono",
  "regex",
@@ -2350,11 +2350,12 @@ dependencies = [
 
 [[package]]
 name = "secuscan-db"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "chrono",
  "hex",
  "rand 0.8.8",
+ "regex",
  "secuscan-core",
  "serde",
  "serde_json",
@@ -2364,39 +2365,45 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "url",
  "uuid",
 ]
 
 [[package]]
 name = "secuscan-exec"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "async-trait",
  "axum",
  "base64 0.22.1",
  "chrono",
  "futures",
+ "hex",
+ "rand 0.8.8",
  "rcgen",
  "regex",
  "reqwest",
  "rustls",
  "rustls-pki-types",
  "secuscan-core",
+ "secuscan-db",
  "serde",
  "serde_json",
+ "sqlx",
  "tempfile",
  "thiserror",
  "tokio",
  "tokio-rustls",
  "tokio-util",
  "tracing",
+ "url",
  "uuid",
  "webpki-roots 0.26.11",
 ]
 
 [[package]]
 name = "secuscan-mcp"
-version = "2.5.0"
+version = "2.6.0"
 dependencies = [
  "anyhow",
  "async-trait",

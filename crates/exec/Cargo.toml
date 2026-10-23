@@ -9,6 +9,7 @@ authors.workspace = true
 
 [dependencies]
 secuscan-core = { path = "../core" }
+secuscan-db = { path = "../db" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 reqwest = { workspace = true }
@@ -23,6 +24,10 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 tempfile = "3"
 base64 = "0.22"
+url = "2"
+hex = { workspace = true }
+rand = { workspace = true }
+sqlx = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 webpki-roots = "0.26"

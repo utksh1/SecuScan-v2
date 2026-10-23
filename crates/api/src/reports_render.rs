@@ -818,6 +818,7 @@ mod tests {
             schedule_id: None,
             robot_run_id: None,
             auth_profile_id: None,
+            oob_marker: None,
             created_at: "2025-01-01T00:00:00Z".into(),
             started_at: None,
             finished_at: Some("2025-01-01T00:00:01Z".into()),
@@ -839,6 +840,9 @@ mod tests {
             proof: proof.into(),
             url: Some("https://example.com/x".into()),
             metadata_json: "{}".into(),
+            group_id: None, cve: None, cvss_v3: None, cvss_vector: None,
+            epss_score: None, epss_percentile: None, cisa_kev: 0,
+            cwe: None, owasp: None, confidence: None,
             created_at: "2025-01-01T00:00:00Z".into(),
         };
         vec![
@@ -927,6 +931,9 @@ mod tests {
             proof: "proof \t tabbed".into(),
             url: None,
             metadata_json: "{}".into(),
+            group_id: None, cve: None, cvss_v3: None, cvss_vector: None,
+            epss_score: None, epss_percentile: None, cisa_kev: 0,
+            cwe: None, owasp: None, confidence: None,
             created_at: "2025-01-01T00:00:00Z".into(),
         });
         for fmt in ["pdf", "docx", "xlsx", "md", "csv", "html", "sarif", "json"] {

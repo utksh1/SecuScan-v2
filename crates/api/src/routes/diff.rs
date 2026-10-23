@@ -301,6 +301,9 @@ mod tests {
             url: None,
             metadata_json: "{}".into(),
             created_at: "2026-01-01T00:00:00Z".into(),
+            group_id: None, cve: None, cvss_v3: None, cvss_vector: None,
+            epss_score: None, epss_percentile: None, cisa_kev: 0,
+            cwe: None, owasp: None, confidence: None,
         }
     }
 

@@ -128,6 +128,7 @@ fn parse_line_regex(
                 .unwrap_or_else(|| line.trim().to_string()),
             url: None,
             metadata: Value::Object(metadata),
+            ..Default::default()
         });
     }
     Ok(findings)
@@ -267,6 +268,7 @@ fn parse_json_lines(
             proof,
             url,
             metadata: json!({}),
+            ..Default::default()
         });
     }
     findings
@@ -324,6 +326,7 @@ fn apply_static_rule(rule: &StaticRule, output: &str) -> CoreResult<Option<Findi
             .unwrap_or_else(|| format!("matched `{}` at byte {}", rule.pattern, m.start())),
         url: None,
         metadata: json!({ "matched": m.as_str() }),
+        ..Default::default()
     }))
 }
 

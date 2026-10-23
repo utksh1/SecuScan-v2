@@ -1,0 +1,59 @@
+# Domain Finder -- discover related domains owned by the same organization.
+[plugin]
+id = "domain-finder"
+name = "Domain Finder"
+version = "1.0.0"
+description = "Find related domains via Certificate Transparency, BuiltWith, and reverse WHOIS"
+long_description = """
+Discovers domains owned by the same organization using three techniques with
+a rule-based certainty score:
+
+1. Certificate Transparency: searches CT logs for certificates where the
+   target appears in the CN or SAN, then uses the Organization field to find
+   other certificates issued to the same org.
+2. BuiltWith-style: flags domains sharing tracking identifiers (Google
+   Analytics IDs, Facebook Pixels), weighted by activity and duration.
+3. Reverse WHOIS: chains whois(target) → extract registrant company → reverse
+   search by company name and contact email.
+
+Each discovered domain receives a certainty score (0-100). Results chain
+directly into Subdomain Finder and Google Hacking.
+"""
+category = "recon"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "globe"
+difficulty = "intermediate"
+tags = ["domains", "recon", "passive", "ct-logs"]
+
+[engine]
+type = "native"
+native = "domain_finder"
+timeout_seconds = 300
+
+[[fields]]
+id = "target"
+label = "Root domain"
+type = "string"
+required = true
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$'
+message = "Root domain with TLD (e.g. example.com)"
+
+[[fields]]
+id = "min_certainty"
+label = "Minimum certainty"
+type = "integer"
+default = 30
+min = 0
+max = 100
+placeholder = "30"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Only scan systems you own or are explicitly authorized to test."
+allowed_targets = ["any"]
+max_concurrent = 5
+max_per_hour = 30
+capabilities = ["network.connect", "http.request"]

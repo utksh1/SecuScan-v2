@@ -1,0 +1,100 @@
+# UDP Port Scan -- wraps nmap's UDP mode.
+[plugin]
+id = "udp-port-scan"
+name = "UDP Port Scan (Nmap)"
+version = "1.0.0"
+description = "UDP port scanning with two-phase open|filtered verification"
+long_description = """
+Web interface for Nmap's UDP scan mode. Sends UDP packets, interprets silence
+as open|filtered, treats ICMP port unreachable as closed, and re-verifies
+open|filtered ports with service-version detection in a dedicated second pass
+(because the operation is slow).
+
+Light covers the top 100 UDP ports with version detection enabled. Deep
+extends to 1000 ports. Outputs UDP port verdicts, service versions (DNS, VPN,
+SNMP, NTP), and OS fingerprint -- feeds the Attack Surface.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "network"
+difficulty = "intermediate"
+tags = ["udp", "ports", "network", "nmap"]
+
+[engine]
+type = "cli"
+binary = "nmap"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "nmap",
+  "-sU",
+  "-sV",
+  "--if:os_detection:then:-O",
+  "--if:ports:then:-p:else:--top-ports",
+  "--if:ports:then:{ports}:else:100",
+  "--if:disable_host_discovery:then:-Pn",
+  "{target}"
+]
+
+[parser]
+type = "line_regex"
+pattern = '^(?P<port>\d+)/udp\s+open\s+(?P<service>\S+)(?:\s+(?P<version>.*))?$'
+metadata_fields = ["port", "service", "version"]
+skip_patterns = [
+  '^Starting Nmap',
+  '^Nmap done',
+  '^Nmap scan report',
+  '^Host is up',
+  '^Service Info',
+  '^MAC Address',
+  '^Warning:',
+  '^readtcp:',
+  '^# '
+]
+
+[parser.finding]
+title = "Open UDP port: {port}/udp ({service})"
+description = "UDP port {port} is open, running {service}."
+remediation = "Verify whether this UDP service should be exposed."
+category = "Open UDP Port"
+severity = "info"
+
+[[fields]]
+id = "target"
+label = "Target host or IP"
+type = "string"
+required = true
+placeholder = "192.168.1.1 or lab.local"
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*$'
+message = "Must be an IP, hostname, or CIDR range"
+
+[[fields]]
+id = "ports"
+label = "Ports"
+type = "string"
+default = ""
+placeholder = "53,123,161 or empty for top 100"
+pattern = '^[0-9,\- ]*$|^$'
+message = "Use a comma-separated list and ranges like 53,123,161"
+
+[[fields]]
+id = "os_detection"
+label = "OS detection"
+type = "boolean"
+default = false
+
+[[fields]]
+id = "disable_host_discovery"
+label = "Disable host discovery (-Pn)"
+type = "boolean"
+default = false
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "UDP scanning may trigger IDS/IPS alerts. Only scan hosts you own or are authorized to test."
+allowed_targets = ["private"]
+max_concurrent = 2
+max_per_hour = 20
+capabilities = ["network.connect"]

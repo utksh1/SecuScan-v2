@@ -232,6 +232,17 @@ pub async fn validate_and_create_task(
             .await;
     }
 
+    // v3.0.0 — assign a per-scan OOB marker for blind-vuln correlation.
+    // The marker (e.g. "ptt1a2b3c4d") is appended to payloads by web
+    // scanners; when the target calls back to /oob/<handler> the marker
+    // correlates the hit back to this task.
+    let marker = secuscan_db::repo::oob::new_marker();
+    let _ = sqlx::query("UPDATE tasks SET oob_marker = ? WHERE id = ?")
+        .bind(&marker)
+        .bind(&row.id)
+        .execute(&state.db)
+        .await;
+
     Ok((row, admitted.manifest, admitted.normalized))
 }
 
@@ -263,6 +274,9 @@ pub fn task_to_json(t: &TaskRow, include_output: bool) -> Value {
         "workflow_run_id": t.workflow_run_id,
         "workspace_id": t.workspace_id,
         "schedule_id": t.schedule_id,
+        "robot_run_id": t.robot_run_id,
+        "auth_profile_id": t.auth_profile_id,
+        "oob_marker": t.oob_marker,
         "created_at": t.created_at,
         "started_at": t.started_at,
         "finished_at": t.finished_at,

@@ -6,13 +6,17 @@ pub mod attack_surface;
 pub mod auth_profiles;
 pub mod branding;
 pub mod collab;
+pub mod finding_dedup;
 pub mod findings;
 pub mod misc;
+pub mod notifications;
+pub mod oob;
 pub mod reports;
 pub mod robots;
 pub mod schedules;
 pub mod tasks;
 pub mod users;
+pub mod v300_misc;
 pub mod workflows;
 pub mod workspaces;
 

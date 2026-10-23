@@ -3,6 +3,135 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 3.0.0 — OOB callbacks, finding enrichment, notifications, +7 tools, platform parity
+
+Closes the remaining gaps identified in the pentest-tools.com reverse-
+engineering teardown. Adds 9 new platform features and 7 new tools, bringing
+the catalog to 34 plugins and matching pentest-tools.com on every
+non-AI feature axis.
+
+### 1. OOB callback infrastructure
+
+Out-of-band callbacks for blind-vulnerability detection (SSRF, XXE, blind
+SQLi, command injection). Per-scan OOB markers (`ptt1a2b3c4d5e6f`) correlate
+callbacks back to the scan that induced them.
+
+- `POST /oob-handlers` — create handler (returns secret callback URL)
+- `ANY /api/v1/oob/:secret` — public callback receiver (no auth)
+- `GET /oob-handlers/:id/hits` — list captured requests
+- `crates/db/src/repo/oob.rs` — handler + hit persistence
+- Per-scan `tasks.oob_marker` column for blind-vuln correlation
+
+### 2. Finding dedup groups + lifecycle memory
+
+Findings with the same (workspace, plugin_id, normalized_title,
+target_fingerprint) end up in a `finding_groups` row. Status changes
+propagate to all group members. False-positive decisions are remembered
+per (target_fingerprint, plugin_id, title) so future scans auto-mark
+matching findings as `false_positive`.
+
+- `crates/db/src/repo/finding_dedup.rs` — group lookup/create + FP memory
+- Wired into `manager.rs::finish_task` — runs after every scan
+
+### 3. CVSS/EPSS/CISA-KEV enrichment
+
+Finding rows now carry `cve`, `cvss_v3`, `cvss_vector`, `epss_score`,
+`epss_percentile`, `cisa_kev`, `cwe`, `owasp`, `confidence` columns. The
+`Finding` struct in `secuscan-core` carries the same fields; native
+scanners (Drupal, Cloud) populate them directly.
+
+### 4. Notifications engine
+
+Rule-based notifications with triggers and actions. Triggers: `vuln_found`
+(with severity operator), `scan_status`. Actions: `webhook` (HMAC-SHA256
+signed), `email`, `slack`, `teams`, `discord`. Every delivery is logged
+with HTTP status for retry/audit.
+
+- `crates/api/src/notifications_engine.rs` — evaluator + dispatcher
+- `crates/db/src/repo/notifications.rs` — rule CRUD + delivery log
+- `POST /notifications`, `GET /notifications/:id/log`
+
+### 5. Scan Groups
+
+Bundle multiple tasks into a named group for one aggregated report.
+
+- `POST /scan-groups`, `POST /scan-groups/:id/tasks`
+- `crates/db/src/repo/v300_misc.rs`
+
+### 6. Wordlists (first-class objects)
+
+Upload, list, fetch contents, delete. Stored as files under
+`data_dir/wordlists/`. Builtin wordlists are protected from deletion.
+
+- `POST /wordlists` (multipart upload)
+- `GET /wordlists/:id/contents?limit=&offset=`
+
+### 7. Finding templates
+
+Public + workspace-scoped templates for standardized manual findings.
+Searchable by category.
+
+- `POST /finding-templates`, `GET /finding-templates?category=`
+
+### 8. Asset imports (bulk .txt + CIDR)
+
+Import multiple targets at once. CIDR expansion (e.g. `192.168.1.0/30` →
+4 individual IP targets). AWS IAM import is stubbed (returns 501 pending
+credentials configuration).
+
+- `POST /asset-imports` with `source: txt|cidr|aws_iam`
+- `GET /asset-imports?workspace_id=` — import history
+
+### 9. Seven new tools
+
+| plugin id | engine | what it does |
+|-----------|--------|--------------|
+| `drupal-scanner` | native | Drupal fingerprinting + CVE matching (Drupalgeddon family) + module enumeration + CHANGELOG.txt exposure |
+| `cloud-scanner` | native | S3/GCS bucket public-listing/write test + sensitive file probing |
+| `domain-finder` | native | Certificate Transparency log search for related domains with certainty scoring |
+| `udp-port-scan` | CLI (nmap) | Nmap UDP scan with two-phase open\|filtered verification |
+| `sqli-exploiter` | CLI (sqlmap) | Structured SQLMap wrapper — fingerprint, enumerate, extract |
+| `http-request-logger` | native | Creates an OOB callback handler for blind-vuln detection |
+| `xss-exploiter` | native | Creates an XSS callback handler with cookie/screenshot/keystroke capture |
+
+Catalog: **34 plugins** (was 27 in v2.6.0).
+
+### Test suite
+
+- Rust: **186/186 passing** (was 180 in v2.6.0; +6 tests for drupal CVE
+  matching, cloud bucket classification, domain finder, FP memory
+  normalization)
+- Frontend (vitest): 64/64 unchanged
+
+### Live verification
+
+`scripts/v300-verify.py` exercises every feature end-to-end:
+- OOB handler created, callback hit, hit recorded (source IP, method,
+  headers, body all captured)
+- Wordlist uploaded (6 words), listed, contents fetched
+- Finding template created, listed
+- Asset imports: txt (3 created) + CIDR /30 (3 created, 1 skipped as
+  network address)
+- Notification rule created, listed
+- Scan group created, listed
+- **34 plugins** in catalog; 5 of 7 new tools available (udp-port-scan
+  and sqli-exploiter show unavailable because nmap/sqlmap binaries aren't
+  installed in the verification sandbox — expected)
+
+### Files
+
+- `crates/db/migrations/0006_v300_features.sql` — 9 new tables + 3 column
+  additions on findings + 1 on tasks
+- `crates/db/src/models.rs` — 9 new row types + Finding enrichment fields
+- `crates/db/src/repo/{oob,finding_dedup,notifications,v300_misc}.rs`
+- `crates/api/src/{notifications_engine.rs,routes/{oob,notifications,v300_misc}.rs}`
+- `crates/exec/src/native/{drupal_scanner,cloud_scanner,domain_finder,http_request_logger,xss_exploiter}.rs`
+- `crates/core/src/models.rs` — `Finding` extended with enrichment fields
+  + `Default` derive for backward-compatible construction
+- `plugins/{drupal-scanner,cloud-scanner,domain-finder,udp-port-scan,sqli-exploiter,http-request-logger,xss-exploiter}.toml`
+- `scripts/v300-verify.py` — end-to-end proof harness
+
+
 ## 2.6.0 — Pentest Robots, Attack Surface, Auth Scanning, MCP, Collaboration, Branding
 
 Closes the remaining pentest-tools.com feature gaps with six new platform

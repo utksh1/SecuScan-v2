@@ -20,8 +20,11 @@ pub async fn insert_many(
         let id = new_id();
         sqlx::query(
             "INSERT INTO findings (id, task_id, plugin_id, severity, kind, analyst_status, \
-             category, title, description, remediation, proof, url, metadata_json, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, 'new', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             category, title, description, remediation, proof, url, metadata_json, created_at, \
+             group_id, cve, cvss_v3, cvss_vector, epss_score, epss_percentile, cisa_kev, \
+             cwe, owasp, confidence) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 'new', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
+                     NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         )
         .bind(&id)
         .bind(task_id)
@@ -36,6 +39,15 @@ pub async fn insert_many(
         .bind(&f.url)
         .bind(f.metadata.to_string())
         .bind(&ts)
+        .bind(&f.cve)
+        .bind(f.cvss_v3)
+        .bind(&f.cvss_vector)
+        .bind(f.epss_score)
+        .bind(f.epss_percentile)
+        .bind(if f.cisa_kev { 1i64 } else { 0 })
+        .bind(&f.cwe)
+        .bind(&f.owasp)
+        .bind(&f.confidence)
         .execute(&mut *tx)
         .await?;
         ids.push(id);

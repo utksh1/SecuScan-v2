@@ -1,0 +1,62 @@
+# HTTP Request Logger -- OOB callback handler for blind-vuln detection.
+[plugin]
+id = "http-request-logger"
+name = "HTTP Request Logger (OOB)"
+version = "1.0.0"
+description = "Out-of-band callback handler for SSRF/XXE/blind-SQLi/command-injection detection"
+long_description = """
+Creates a unique callback URL on the SecuScan server. Any HTTP request to
+that URL is captured and recorded -- source IP, method, URL, headers, body,
+User-Agent, and timestamp.
+
+Use cases:
+- **SSRF**: embed the callback URL in webhook/API parameters; a hit proves
+  the server fetches attacker-controlled URLs.
+- **XXE**: DOCTYPE entity pointing at the callback URL; a hit proves external
+  entity processing.
+- **Blind SQLi**: PostgreSQL COPY TO PROGRAM with a curl one-liner; MySQL
+  LOAD_FILE with a Windows UNC path (exfiltrates via DNS).
+- **Command injection**: curl/wget the callback URL; a hit proves RCE.
+- **DNS rebinding / TOCTOU monitoring**: track when a target re-resolves.
+
+The handler auto-expires after 60 days. Each handler accepts up to 100
+captured requests. Create multiple handlers for parallel engagements.
+"""
+category = "exploit"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "radio"
+difficulty = "intermediate"
+tags = ["oob", "blind", "ssrf", "xxe", "rce", "callback"]
+
+[engine]
+type = "native"
+native = "http_request_logger"
+timeout_seconds = 30
+
+[[fields]]
+id = "target"
+label = "Handler name (label only -- the actual target is the callback URL)"
+type = "string"
+required = true
+placeholder = "SSRF-test-for-billing-api"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9._-]*$'
+message = "Alphanumeric, dots, dashes, underscores"
+
+[[fields]]
+id = "ttl_hours"
+label = "Handler TTL (hours)"
+type = "integer"
+default = 1440
+min = 1
+max = 1440
+placeholder = "1440 (60 days)"
+
+[safety]
+level = "safe"
+requires_consent = false
+consent_message = "OOB handlers are passive listeners -- no packets are sent to the target."
+allowed_targets = ["any"]
+max_concurrent = 10
+max_per_hour = 100
+capabilities = []

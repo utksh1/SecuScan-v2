@@ -5,6 +5,7 @@ pub mod attack_surface_aggregator;
 pub mod config;
 pub mod error;
 pub mod manager;
+pub mod notifications_engine;
 pub mod report_jobs;
 pub mod reports_render;
 pub mod robot_runtime;

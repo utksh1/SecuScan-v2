@@ -40,6 +40,7 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
         schedule_id: t.schedule_id.map(str::to_string),
         robot_run_id: None,
         auth_profile_id: None,
+        oob_marker: None,
         created_at: now(),
         started_at: None,
         finished_at: None,
@@ -104,7 +105,7 @@ pub async fn list(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<Vec<TaskRo
     let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, created_at, started_at, finished_at \
          FROM tasks \
          WHERE (?1 IS NULL OR user_id = ?1) \
            AND (?2 IS NULL OR status = ?2) \
@@ -240,7 +241,7 @@ pub async fn recent_scoped(
     let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, \
          created_at, started_at, finished_at \
          FROM tasks WHERE (?1 IS NULL OR user_id = ?1) \
          {ws_clause} \
@@ -286,7 +287,7 @@ pub async fn find_previous_run(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, created_at, started_at, finished_at \
          FROM tasks \
          WHERE plugin_id = ?1 AND target IS ?2 AND status = 'completed' \
            AND id != ?3 AND created_at <= ?4 \
@@ -312,7 +313,7 @@ pub async fn list_for_schedule(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, created_at, started_at, finished_at \
          FROM tasks WHERE schedule_id = ?1 \
          ORDER BY created_at DESC LIMIT ?2",
     )

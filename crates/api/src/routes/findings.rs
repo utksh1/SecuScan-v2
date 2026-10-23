@@ -34,6 +34,16 @@ pub fn finding_to_json(f: &FindingRow) -> Value {
         "proof": f.proof,
         "url": f.url,
         "metadata": serde_json::from_str::<Value>(&f.metadata_json).unwrap_or(json!({})),
+        "group_id": f.group_id,
+        "cve": f.cve,
+        "cvss_v3": f.cvss_v3,
+        "cvss_vector": f.cvss_vector,
+        "epss_score": f.epss_score,
+        "epss_percentile": f.epss_percentile,
+        "cisa_kev": f.cisa_kev != 0,
+        "cwe": f.cwe,
+        "owasp": f.owasp,
+        "confidence": f.confidence,
         "created_at": f.created_at,
     })
 }

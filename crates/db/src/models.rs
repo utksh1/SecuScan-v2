@@ -80,6 +80,8 @@ pub struct TaskRow {
     pub robot_run_id: Option<String>,
     /// Auth profile attached to this task (v2.6.0; NULL = unauthenticated).
     pub auth_profile_id: Option<String>,
+    /// v3.0.0 — OOB callback marker (appended to payloads; correlates blind callbacks).
+    pub oob_marker: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -116,6 +118,17 @@ pub struct FindingRow {
     pub url: Option<String>,
     pub metadata_json: String,
     pub created_at: String,
+    // v3.0.0 — dedup + enrichment (nullable for backward compat)
+    pub group_id: Option<String>,
+    pub cve: Option<String>,
+    pub cvss_v3: Option<f64>,
+    pub cvss_vector: Option<String>,
+    pub epss_score: Option<f64>,
+    pub epss_percentile: Option<f64>,
+    pub cisa_kev: i64,
+    pub cwe: Option<String>,
+    pub owasp: Option<String>,
+    pub confidence: Option<String>,
 }
 
 impl FindingRow {
@@ -337,4 +350,130 @@ pub struct BrandingRow {
     pub footer_text: String,
     pub updated_at: String,
     pub updated_by: Option<String>,
+}
+
+// --- v3.0.0 models ---------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct OobHandlerRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub user_id: String,
+    pub name: String,
+    pub kind: String,
+    pub config_json: String,
+    pub secret: String,
+    pub expires_at: String,
+    pub created_at: String,
+    pub hit_count: i64,
+    pub last_hit_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct OobHitRow {
+    pub id: String,
+    pub handler_id: String,
+    pub task_id: Option<String>,
+    pub payload_json: String,
+    pub received_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct FindingGroupRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub plugin_id: String,
+    pub title_norm: String,
+    pub target_fingerprint: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct FpMemoryRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub plugin_id: String,
+    pub title_norm: String,
+    pub target_fingerprint: String,
+    pub decided_by: String,
+    pub decided_at: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct NotificationRuleRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub name: String,
+    pub rules_json: String,
+    pub enabled: bool,
+    pub created_by: String,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct NotificationLogRow {
+    pub id: String,
+    pub rule_id: String,
+    pub task_id: Option<String>,
+    pub finding_id: Option<String>,
+    pub channel: String,
+    pub status: String,
+    pub http_status: Option<i64>,
+    pub error: Option<String>,
+    pub payload_json: String,
+    pub sent_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ScanGroupRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub name: String,
+    pub description: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WordlistRow {
+    pub id: String,
+    pub workspace_id: Option<String>,
+    pub name: String,
+    pub source: String,
+    pub file_path: String,
+    pub word_count: i64,
+    pub size_bytes: i64,
+    pub kind: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct FindingTemplateRow {
+    pub id: String,
+    pub scope: String,
+    pub workspace_id: Option<String>,
+    pub title: String,
+    pub category: String,
+    pub severity: String,
+    pub description: String,
+    pub remediation: String,
+    pub cwe: Option<String>,
+    pub owasp: Option<String>,
+    pub created_by: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct AssetImportRow {
+    pub id: String,
+    pub workspace_id: String,
+    pub source: String,
+    pub summary: String,
+    pub created_count: i64,
+    pub skipped_count: i64,
+    pub created_by: String,
+    pub created_at: String,
 }

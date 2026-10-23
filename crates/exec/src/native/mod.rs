@@ -4,26 +4,45 @@
 //! implement the same contract as CLI wrappers — validated inputs in,
 //! [`Finding`]s and live events out — with strict timeouts and cancellation.
 
+pub mod cloud_scanner;
 pub mod cors_check;
 pub mod dns;
 pub mod dns_lookup;
+pub mod domain_finder;
+pub mod drupal_scanner;
 pub mod email_security;
 pub mod google_dorks;
 pub mod http_headers;
 pub mod http_recon;
+pub mod http_request_logger;
 pub mod password_audit;
 pub mod port_scanner;
 pub mod reverse_dns;
 pub mod subdomain_finder;
 pub mod tls_check;
 pub mod vhost_finder;
+pub mod xss_exploiter;
 
 use crate::events::EventSink;
 use async_trait::async_trait;
 use secuscan_core::models::Finding;
+use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 use tokio_util::sync::CancellationToken;
+
+// --- v3.0.0 global DB pool for native scanners that need persistence ---
+// Set by the API server at startup so OOB-handler-creating scanners can
+// reach the database without changing the NativeScanner trait signature.
+static DB_POOL: OnceLock<SqlitePool> = OnceLock::new();
+
+pub fn set_db_pool(pool: SqlitePool) {
+    let _ = DB_POOL.set(pool);
+}
+
+pub fn current_db_pool() -> Option<&'static SqlitePool> {
+    DB_POOL.get()
+}
 
 /// Execution context handed to native scanners.
 #[derive(Clone)]
@@ -86,6 +105,12 @@ pub fn registry() -> &'static NativeRegistry {
             &vhost_finder::VhostFinderScanner,
             &password_audit::PasswordAuditScanner,
             &google_dorks::GoogleDorksScanner,
+            // v3.0.0 scanners
+            &drupal_scanner::DrupalScanner,
+            &cloud_scanner::CloudScanner,
+            &domain_finder::DomainFinder,
+            &http_request_logger::HttpRequestLogger,
+            &xss_exploiter::XssExploiter,
         ],
     })
 }

@@ -1,0 +1,49 @@
+# Cloud Scanner -- S3/GCS bucket misconfiguration auditor.
+[plugin]
+id = "cloud-scanner"
+name = "Cloud Scanner"
+version = "1.0.0"
+description = "S3 and GCS bucket permission + configuration auditing"
+long_description = """
+Audits object-storage misconfigurations: detects the provider (AWS, GCP, Azure)
+by IP-range fingerprinting, discovers buckets, tests allowed operations (read,
+write, list), and analyzes configuration (ACLs, IAM policies, encryption).
+
+AWS checks: public bucket listing, public read, public write, ACL
+misconfigurations, sensitive files (wp-config backups, keys).
+
+GCS checks: IAM policy issues with allUsers/allAuthenticatedUsers, uniform
+access disabled, logging disabled, versioning/retention disabled, encryption
+unconfigured, missing lifecycle rules.
+
+Runs natively (no external binary required).
+"""
+category = "cloud"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "cloud"
+difficulty = "intermediate"
+tags = ["cloud", "aws", "s3", "gcs", "misconfiguration"]
+
+[engine]
+type = "native"
+native = "cloud_scanner"
+timeout_seconds = 600
+
+[[fields]]
+id = "target"
+label = "Bucket URL or hostname"
+type = "string"
+required = true
+placeholder = "mybucket.s3.amazonaws.com or https://storage.googleapis.com/bucket"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Bucket URL, hostname, or IP"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Only scan systems you own or are explicitly authorized to test."
+allowed_targets = ["any"]
+max_concurrent = 5
+max_per_hour = 30
+capabilities = ["network.connect", "http.request"]

@@ -2,14 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Normalized finding severity, ordered from least to most severe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
-    Info = 0,
-    Low = 1,
-    Medium = 2,
-    High = 3,
-    Critical = 4,
+    #[default]
+    Info,
+    Low,
+    Medium,
+    High,
+    Critical,
 }
 
 impl Severity {
@@ -42,10 +43,11 @@ impl fmt::Display for Severity {
 }
 
 /// How far the platform trusts a finding produced by a scanner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingKind {
     /// Factual observation (open port, discovered header…).
+    #[default]
     Observation,
     /// Scanner suspects an issue; requires analyst confirmation.
     SuspectedIssue,
@@ -185,7 +187,7 @@ impl Phase {
 pub const MAX_FINDINGS_PER_TASK: usize = 5_000;
 
 /// A normalized finding produced by a scanner (native or CLI plugin).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Finding {
     pub title: String,
     pub category: String,
@@ -199,6 +201,34 @@ pub struct Finding {
     /// Free-form metadata object (ports, service names, matched values…).
     #[serde(default = "default_metadata")]
     pub metadata: serde_json::Value,
+    // --- v3.0.0 enrichment (all optional) ---
+    /// CVE identifier (e.g. "CVE-2021-44228").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cve: Option<String>,
+    /// CVSS v3 base score (0.0..=10.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cvss_v3: Option<f64>,
+    /// CVSS v3 vector string (e.g. "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cvss_vector: Option<String>,
+    /// EPSS score (0.0..=1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epss_score: Option<f64>,
+    /// EPSS percentile (0.0..=1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub epss_percentile: Option<f64>,
+    /// Whether this CVE is in CISA's Known Exploited Vulnerabilities catalog.
+    #[serde(default)]
+    pub cisa_kev: bool,
+    /// CWE identifier (e.g. "CWE-79").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwe: Option<String>,
+    /// OWASP Top 10 mapping (e.g. "A03:2021-Injection").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owasp: Option<String>,
+    /// Confidence: 'certain' (exploited) vs 'uncertain' (detected only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
 }
 
 fn default_metadata() -> serde_json::Value {
@@ -223,6 +253,15 @@ impl Finding {
             proof: String::new(),
             url: None,
             metadata: default_metadata(),
+            cve: None,
+            cvss_v3: None,
+            cvss_vector: None,
+            epss_score: None,
+            epss_percentile: None,
+            cisa_kev: false,
+            cwe: None,
+            owasp: None,
+            confidence: None,
         }
     }
 }

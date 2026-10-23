@@ -84,6 +84,11 @@ async fn main() {
     );
 
     let tasks = secuscan_api::manager::TaskManager::start(db.clone(), config.clone());
+
+    // v3.0.0 — register the DB pool with the native scanner runtime so
+    // OOB-handler-creating scanners (http_request_logger, xss_exploiter)
+    // can persist their handlers.
+    secuscan_exec::native::set_db_pool(db.clone());
     let state = Arc::new(AppState {
         db,
         config: config.clone(),

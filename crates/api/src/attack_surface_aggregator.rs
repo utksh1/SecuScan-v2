@@ -187,6 +187,7 @@ mod tests {
             proof: String::new(),
             url: url.map(str::to_string),
             metadata: meta,
+            ..Default::default()
         }
     }
 
