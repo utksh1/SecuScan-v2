@@ -243,6 +243,11 @@ pub enum ParserSpec {
         /// Capture group names copied verbatim into finding metadata.
         #[serde(default)]
         metadata_fields: Vec<String>,
+        /// Lines matching any of these regexes are discarded before the
+        /// main pattern runs — tool diagnostics and run metadata
+        /// (`+ ERROR: …`, `+ Target IP: …`) are not security findings.
+        #[serde(default)]
+        skip_patterns: Vec<String>,
     },
     /// One finding per JSON object line (nuclei-style JSONL output).
     JsonLines {

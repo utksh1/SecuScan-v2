@@ -34,7 +34,10 @@ pub fn parse_output(
             finding,
             severity_rules,
             metadata_fields,
-        } => parse_line_regex(pattern, finding, severity_rules, metadata_fields, output)?,
+            skip_patterns,
+        } => parse_line_regex(
+            pattern, finding, severity_rules, metadata_fields, skip_patterns, output,
+        )?,
         ParserSpec::JsonLines {
             finding,
             severity_map,
@@ -64,10 +67,16 @@ fn parse_line_regex(
     template: &LineFindingTemplate,
     severity_rules: &[SeverityRule],
     metadata_fields: &[String],
+    skip_patterns: &[String],
     output: &str,
 ) -> CoreResult<Vec<Finding>> {
     let re = regex::Regex::new(pattern)
         .map_err(|e| CoreError::Parse(format!("invalid parser pattern: {e}")))?;
+    let skip_res: Vec<regex::Regex> = skip_patterns
+        .iter()
+        .map(|p| regex::Regex::new(p))
+        .collect::<Result<_, _>>()
+        .map_err(|e| CoreError::Parse(format!("invalid skip pattern: {e}")))?;
     let base_severity = Severity::parse(&template.severity).ok_or_else(|| {
         CoreError::Parse(format!("unknown base severity `{}`", template.severity))
     })?;
@@ -76,6 +85,9 @@ fn parse_line_regex(
     for line in output.lines() {
         if findings.len() >= MAX_FINDINGS_PER_TASK {
             break;
+        }
+        if skip_res.iter().any(|re| re.is_match(line)) {
+            continue;
         }
         let Some(caps) = re.captures(line) else {
             continue;
@@ -361,6 +373,7 @@ mod tests {
                 finding: f,
                 severity_rules: r,
                 metadata_fields: m,
+                skip_patterns: vec![],
             },
             &[],
             out,
@@ -393,6 +406,7 @@ mod tests {
                 finding: f,
                 severity_rules: r,
                 metadata_fields: m,
+                skip_patterns: vec![],
             },
             &[rule],
             out,
@@ -477,6 +491,7 @@ mod tests {
                 severity: "low".into(),
             }],
             metadata_fields: vec![],
+            skip_patterns: vec![],
         };
         let findings = parse_output(&spec, &[], "abc").unwrap();
         assert_eq!(findings[0].severity, Severity::Medium);
@@ -510,6 +525,7 @@ mod tests {
                 severity: "medium".into(),
             }],
             metadata_fields: vec!["path".into(), "status".into()],
+            skip_patterns: vec![],
         };
         let out = concat!(
             ".git                 (Status: 301) [Size: 0] [--> /.git/]\n",
@@ -563,6 +579,7 @@ mod tests {
                 },
             ],
             metadata_fields: vec![],
+            skip_patterns: vec![],
         };
         let out = concat!(
             "+ Target IP:          127.0.0.1\n",
@@ -590,6 +607,55 @@ mod tests {
             findings[2].proof,
             "+ [740001] /backup.zip: Potentially interesting backup/cert file found.  [Confidence: 70%]"
         );
+    }
+
+    /// Regression (found running real nikto 2.6.1): nikto's own diagnostics
+    /// — `+ ERROR: Failed to check for updates`, `+ WARN: …`, run metadata
+    /// (`+ Target IP`, `+ Start/End Time`, `+ N host(s) tested`) — matched
+    /// the generic line pattern and became fake "findings". skip_patterns
+    /// drops them before the main regex sees them.
+    #[test]
+    fn nikto_diagnostics_are_skipped() {
+        let spec = ParserSpec::LineRegex {
+            pattern: r"^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$".into(),
+            finding: LineFindingTemplate {
+                title: "{item}".into(),
+                description: Some("{detail}".into()),
+                remediation: None,
+                proof: None,
+                category: Some("Web Server".into()),
+                severity: "info".into(),
+            },
+            severity_rules: vec![],
+            metadata_fields: vec![],
+            skip_patterns: vec![
+                r"^\+\s+(ERROR|WARN):".into(),
+                r"^\+\s+No web server found".into(),
+                r"^\+\s+(Start|End) Time:".into(),
+                r"^\+\s+Target (IP|Hostname|Port|Hostname:Port):".into(),
+                r"^\+\s+\d+ host\(s\) tested".into(),
+            ],
+        };
+        let out = concat!(
+            "- Nikto v2.6.1\n",
+            "+ Target IP:          127.0.0.1\n",
+            "+ Target Port:        8899\n",
+            "+ Start Time:         2026-10-23 11:08 (GMT)\n",
+            "+ Server: SimpleHTTP/0.6 Python/3.12.15\n",
+            "+ ERROR: Failed to check for updates: 400\n",
+            "+ WARN: Could not connect to update server\n",
+            "+ [740001] /backup.zip: Potentially interesting backup/cert file found.  [Confidence: 70%]\n",
+            "+ End Time:           2026-10-23 11:08 (GMT)\n",
+            "+ 1 host(s) tested\n"
+        );
+        let findings = parse_output(&spec, &[], out).unwrap();
+        // only the real check line and the server banner survive
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].title, "Server");
+        assert_eq!(findings[1].title, "/backup.zip");
+        assert!(findings.iter().all(|f| f.title != "ERROR"));
+        assert!(findings.iter().all(|f| f.title != "Target IP"));
+        assert!(findings.iter().all(|f| f.title != "1 host(s) tested"));
     }
 
     #[test]

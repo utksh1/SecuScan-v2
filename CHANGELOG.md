@@ -3,6 +3,27 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.4.2 — parser `skip_patterns`: tool diagnostics are not findings
+
+Running real nikto 2.6.1 against a lab target exposed a parser-quality gap:
+nikto's **own diagnostics** — `+ ERROR: Failed to check for updates: 400`
+(nikto failing to phone home), `+ WARN:` lines — and **run metadata**
+(`+ Target IP`, `+ Target Port`, `+ Start/End Time`, `+ 1 host(s) tested`)
+matched the generic line pattern and became fake findings titled "ERROR",
+"Target IP", etc. A live scan produced 29 rows of which 7 were noise.
+
+- **core**: `line_regex` parsers accept `skip_patterns` — a list of regexes;
+  lines matching any of them are discarded **before** the main pattern runs.
+  Manifests without the key are unaffected (backward compatible), and the
+  validator reports invalid skip regexes at load time.
+- **nikto** (v2.0.2): skips ERROR/WARN diagnostics, "No web server found",
+  Start/End Time, Target IP/Hostname/Port, and the "N host(s) tested"
+  summary. The same lab scan now yields 22 findings — all genuine.
+- Regression test: `nikto_diagnostics_are_skipped` (suite: 116 passing).
+- New evidence in `download/ui-screens/`: scanners catalogue with 12/13
+  real binaries detected, findings/tasks pages populated by live
+  nmap/gobuster/nikto runs.
+
 ## 2.4.1 — real-tool verification: gobuster/nikto parser fixes
 
 Verified the whole platform against **real installed binaries** (nmap 7.95,

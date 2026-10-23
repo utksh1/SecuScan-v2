@@ -89,6 +89,10 @@ aggressive = false
 [parser]
 type = "line_regex"
 pattern = '(?P<item>[^:]+):\s+(?P<detail>.+)$'
+# Optional: lines matching any skip pattern are discarded BEFORE the main
+# pattern runs. Use this to drop tool diagnostics and run metadata that
+# would otherwise masquerade as findings (e.g. nikto's `+ ERROR:` lines).
+skip_patterns = ['^\+\s+(ERROR|WARN):', '^== debug:']
 
 [parser.finding]
 title = "{item}"
@@ -142,7 +146,7 @@ binaries = ["mytool"]             # availability-checked at load & refresh
 | type | behaviour |
 |---|---|
 | `passthrough` | capture output, no findings |
-| `line_regex` | one finding per matching line; `{group}` substitution in templates; `severity_rules` (exact or glob) can only *elevate* severity; `metadata_fields` copies captures into finding metadata |
+| `line_regex` | one finding per matching line; `{group}` substitution in templates; `severity_rules` (exact or glob) can only *elevate* severity; `metadata_fields` copies captures into finding metadata; `skip_patterns` drops diagnostic lines before the main pattern runs |
 | `json_lines` | one finding per JSON-object line; dot-path field mapping (`title_field` required; optional `description_field`, `severity_field`, `url_field`, `proof_field`); `severity_map` translates the tool's own severities |
 
 Static rules run against the whole output regardless of parser type — ideal for

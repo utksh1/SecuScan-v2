@@ -2,7 +2,7 @@
 [plugin]
 id = "nikto"
 name = "Web Server Scan (nikto)"
-version = "2.0.1"
+version = "2.0.2"
 description = "Well-known web misconfigurations, default files and outdated software"
 long_description = """
 Wraps nikto for classic web-server checks: dangerous files, misconfigured
@@ -62,6 +62,16 @@ type = "line_regex"
 # appears to be outdated`); the optional `: detail` group keeps them
 # parseable while severity_rules key off the numeric check id.
 pattern = '^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$'
+# Nikto's own diagnostics and run metadata are not security findings:
+# `+ ERROR: Failed to check for updates` is nikto failing to phone home,
+# and Target IP / Start/End Time / "N host(s) tested" are scan bookkeeping.
+skip_patterns = [
+  '^\+\s+(ERROR|WARN):',
+  '^\+\s+No web server found',
+  '^\+\s+(Start|End) Time:',
+  '^\+\s+Target (IP|Hostname|Port|Hostname:Port):',
+  '^\+\s+\d+ host\(s\) tested',
+]
 
 [parser.finding]
 title = "{item}"

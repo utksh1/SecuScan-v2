@@ -347,6 +347,7 @@ fn validate_parser(m: &PluginManifest, errs: &mut Vec<String>) {
             finding,
             severity_rules,
             metadata_fields,
+            skip_patterns,
         } => {
             let re = match regex::Regex::new(pattern) {
                 Ok(re) => re,
@@ -355,6 +356,11 @@ fn validate_parser(m: &PluginManifest, errs: &mut Vec<String>) {
                     return;
                 }
             };
+            for sp in skip_patterns {
+                if let Err(e) = regex::Regex::new(sp) {
+                    errs.push(format!("parser.skip_patterns: `{sp}` is not a valid regex: {e}"));
+                }
+            }
             if finding.title.trim().is_empty() {
                 errs.push("parser.finding.title must not be empty".into());
             }
