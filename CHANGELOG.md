@@ -3,6 +3,42 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 2.4.0 — recurring scan schedules
+
+Automated recurring scans (pentest-tools.com gap #4):
+
+- New `schedules` domain: a schedule stores the full task admission payload
+  (plugin, inputs, preset, workspace) plus an interval (5 min – 365 days); a
+  background scheduler worker (`scheduler::run_due` on a configurable tick,
+  `SECUSCAN_SCHEDULE_TICK_SECS`, default 30 s) launches a **normal task** every
+  time the interval elapses.
+- Every automated run re-passes the full admission pipeline extracted into
+  `admit_request` (plugin existence/availability/enabled, capability denials,
+  input normalization, consent, workspace, target policy + audit trail) —
+  tightening policy after creation stops future runs instead of blind-firing.
+- Semantics: missed occurrences are skipped (anchor re-anchored to
+  `now + interval`, no catch-up bursts); overlap guard skips an occurrence
+  whose previous task is still queued/running; admission rejections are
+  recorded in `last_error` and retried next interval without disabling the
+  schedule.
+- API: `POST/GET /schedules`, `GET/PATCH/DELETE /schedules/:id`,
+  `POST /schedules/:id/run` (extra occurrence, anchor untouched, bypasses the
+  overlap guard by design), `GET /schedules/:id/runs`. Owner-or-404 access,
+  viewer read-only, `?workspace_id=` scoping; PATCH distinguishes absent vs
+  `null` for `workspace_id`/`preset` (double-Option) so fields can be cleared,
+  and re-runs admission on input changes.
+- Tasks carry `schedule_id` (migration 0004, `ON DELETE SET NULL` — scan
+  history survives schedule deletion); retry preserves it like the workspace.
+- UI: **Schedules** page — table with interval/next-run/last-run (+ task link)
+  /`last_error` visibility, enable toggles, run-now/edit/delete, create+edit
+  form with plugin-typed inputs (shared `FieldInput` component extracted from
+  NewTask), interval presets + custom minutes (client-validated ≥ 5 min),
+  workspace picker, recurring-consent checkbox, and `?create=1&plugin=&target=`
+  deep-link prefill.
+- Fixed while building: `?target=` prefill race in NewTask/Schedules forms
+  (the plugin-defaults seed effect wiped a prefill that landed while the
+  plugins query was still in flight).
+
 ## 2.3.0 — async report jobs, webhooks, PDF/DOCX/XLSX
 
 Background report generation with signed callbacks (pentest-tools.com gaps #6 + #7):

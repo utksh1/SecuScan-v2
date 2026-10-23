@@ -36,6 +36,7 @@ analyst triage workflow, report exports, multi-user access control, and client/p
 | Safety | consent, network policy | consent, network policy **with host canonicalization + audit log**, per-plugin concurrency/hourly limits, argv hardening |
 | Organization | flat task list | **workspaces + first-class targets** (per-client/project scoping of tasks, findings and dashboard) |
 | Run comparison | none | **scan diff**: new / fixed / regressed / improved / unchanged between runs |
+| Automation | none | **recurring schedules**: interval-based scans launched by a background worker, overlap guard, run-now, full re-admission every run |
 
 ## Architecture
 
@@ -142,8 +143,8 @@ record can change). Use IP/CIDR patterns for strict enforcement; see
 ## Testing
 
 ```bash
-cargo test --workspace          # 88 backend tests (unit + integration over real HTTP)
-cd frontend && npm test         # 41 frontend tests
+cargo test --workspace          # 113 backend tests (unit + integration over real HTTP)
+cd frontend && npm test         # 64 frontend tests
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 

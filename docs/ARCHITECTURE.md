@@ -120,6 +120,19 @@ kind (hostname / IP address / URL) is derived server-side. Dynamic query fragmen
 (workspace scope, severity sets) share a running placeholder counter so bind order can
 never drift from placeholder numbering — the class of bug found and fixed in cycle 7.
 
+### Schedules
+
+A schedule persists a full admission payload (plugin, normalized inputs, preset,
+workspace) plus an interval. A single background worker (`scheduler::run_due`, tick
+`SECUSCAN_SCHEDULE_TICK_SECS`) launches a *normal task* through the same admission
+pipeline on every occurrence — policy or plugin changes take effect immediately,
+retroactively, for existing schedules. The anchor is always re-anchored to
+`now + interval` (no catch-up bursts), an occurrence whose previous task is still
+queued/running is skipped, and admission rejections land in `last_error` and retry
+next interval. Tasks carry `schedule_id` (`ON DELETE SET NULL`), so history survives
+schedule deletion. `POST /schedules/:id/run` is an explicit user override: it launches
+an extra occurrence, bypassing the overlap guard, without touching the anchor.
+
 ## Frontend
 
 React 18 + TypeScript strict + Vite + Tailwind CSS + React Query. Auth lives in a context
@@ -130,10 +143,10 @@ almost no local state beyond forms and filters (URL search params).
 
 ## Roadmap (deliberately deferred)
 
-scan diffing (new/fixed/regressed between runs) · CVE/CVSS/EPSS enrichment · async report
-generation with webhooks · DOCX/XLSX/PDF reports · per-check test audit trail · finding
-templates & manual findings · MCP server for AI agents · credential vault ·
-notification/webhook rules · scheduled workflow ticks · saved views · attack-surface
-asset graph · WASM plugin engine (for parsers that genuinely need code) · multi-node
-scan workers. (Workspaces and first-class targets — the top two items from the
-pentest-tools.com gap analysis — shipped in 2.1.0.)
+CVE/CVSS/EPSS/CISA-KEV enrichment · per-check test audit trail · finding templates &
+manual findings · MCP server for AI agents · credential vault · notification/webhook
+rules · scheduled *workflow* runs (plugin schedules shipped) · saved views ·
+attack-surface asset graph · WASM plugin engine (for parsers that genuinely need
+code) · multi-node scan workers. (Gap-analysis items already shipped: workspaces and
+first-class targets in 2.1.0, scan diff in 2.2.0, async reports with webhooks and
+PDF/DOCX/XLSX in 2.3.0, recurring schedules in 2.4.0.)

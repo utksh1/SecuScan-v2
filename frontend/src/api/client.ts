@@ -197,3 +197,38 @@ export const reportApi = {
   ) => request<ReportJob>(`/tasks/${taskId}/reports`, { method: 'POST', body }),
   remove: (id: string) => request<void>(`/reports/${id}`, { method: 'DELETE' }),
 }
+
+// --- recurring scan schedules --------------------------------------------------
+
+import type { Schedule, ScheduleList, Task } from './types'
+
+export const scheduleApi = {
+  list: () => request<ScheduleList>('/schedules'),
+  create: (body: {
+    name: string
+    plugin_id: string
+    inputs: Record<string, unknown>
+    preset?: string
+    interval_seconds: number
+    consent_granted: boolean
+    workspace_id?: string
+  }) => request<Schedule>('/schedules', { method: 'POST', body }),
+  update: (
+    id: string,
+    patch: {
+      name?: string
+      inputs?: Record<string, unknown>
+      preset?: string | null
+      interval_seconds?: number
+      enabled?: boolean
+      workspace_id?: string | null
+    },
+  ) => request<Schedule>(`/schedules/${id}`, { method: 'PATCH', body: patch }),
+  remove: (id: string) => request<void>(`/schedules/${id}`, { method: 'DELETE' }),
+  runNow: (id: string) =>
+    request<{ task_id: string; next_run_at: string }>(`/schedules/${id}/run`, {
+      method: 'POST',
+    }),
+  runs: (id: string) =>
+    request<{ items: Task[]; total: number }>(`/schedules/${id}/runs`),
+}

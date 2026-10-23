@@ -111,6 +111,7 @@ async fn task_and_findings_flow() {
             options_json: "{}",
             workflow_run_id: None,
             workspace_id: None,
+            schedule_id: None,
         },
     )
     .await
@@ -333,6 +334,7 @@ async fn dashboard_counters() {
             options_json: "{}",
             workflow_run_id: None,
             workspace_id: None,
+            schedule_id: None,
         },
     )
     .await

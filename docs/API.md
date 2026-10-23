@@ -186,6 +186,62 @@ Scoping: `GET /tasks`, `GET /findings` and `GET /dashboard/summary` accept
 | GET | `/workflows/:id/runs` | run history |
 | POST | `/workflows/runs/:run_id/cancel` | cancels all active tasks of the run |
 
+## Schedules
+
+Recurring scans (pentest-tools.com "schedule scans"). A schedule stores the
+full task admission payload (plugin, inputs, preset, workspace) plus an
+`interval_seconds`; a background scheduler launches a **normal task** from it
+each time the interval elapses, so every run re-passes the full admission
+pipeline — plugin availability, enabled flags, capability denials and target
+policy. Tightening policy after a schedule was created stops future runs.
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/schedules` | `{name, plugin_id, inputs, preset?, interval_seconds, consent_granted, workspace_id?}` (scanner+) → `201` |
+| GET | `/schedules` | list the caller's (admins see all); `?workspace_id=<id\|none>` |
+| GET | `/schedules/:id` | detail (owner or admin; strangers get 404) |
+| PATCH | `/schedules/:id` | partial update (owner or admin) |
+| DELETE | `/schedules/:id` | delete; past tasks survive with `schedule_id` nulled |
+| POST | `/schedules/:id/run` | launch one extra run now; the recurring anchor is untouched |
+| GET | `/schedules/:id/runs` | run history (newest first, max 50) |
+
+Semantics:
+
+- **Intervals** are 300 s (5 min) to 31 536 000 s (365 days). The first
+  automated run happens one interval after creation.
+- **Missed occurrences are skipped, not replayed** — the anchor is always
+  re-anchored to `now + interval`, so a disabled schedule or server downtime
+  never produces a burst of catch-up scans.
+- **Overlap guard**: if the previous run of a schedule is still queued or
+  running when the next is due, the occurrence is skipped. `POST …/run`
+  intentionally bypasses the guard (explicit user action wins).
+- **Re-anchoring**: changing `interval_seconds`, or re-enabling a disabled
+  schedule, restarts the cadence from `now + interval`. Other edits keep the
+  stored anchor.
+- **PATCH semantics**: absent fields are unchanged; `workspace_id: null`
+  moves the schedule to the Personal scope. Changing `inputs`, `preset` or
+  `workspace_id` re-runs admission, so the stored payload is always
+  admissible; a policy denial is a clean `403`.
+- **Failures**: an admission rejection (plugin disabled, policy change) is
+  recorded in `last_error`, the anchor still advances, and the next interval
+  retries automatically. Failures never disable the schedule.
+- **Consent** is captured once at creation (`consent_granted` follows the
+  same rules as task creation); automated runs re-check policy but not the
+  checkbox.
+
+Tasks launched by a schedule carry `schedule_id`; the field is `null` for
+manual and workflow starts. Example payload:
+
+```json
+{
+  "name": "Daily port sweep",
+  "plugin_id": "port-scanner",
+  "inputs": { "target": "10.0.0.5", "ports": "22,80,443" },
+  "interval_seconds": 86400,
+  "consent_granted": true
+}
+```
+
 ## Dashboard & admin
 
 | Method | Path | Notes |

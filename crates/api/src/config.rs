@@ -24,6 +24,9 @@ pub struct Config {
     pub cookie_secure: bool,
     /// Global cap on simultaneously *running* tasks.
     pub max_concurrent_tasks: usize,
+    /// How often the recurring-scan scheduler wakes to process due
+    /// schedules (seconds).
+    pub schedule_tick_secs: u64,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -90,6 +93,9 @@ impl Config {
             max_concurrent_tasks: env_or("SECUSCAN_MAX_CONCURRENT_TASKS", "8")
                 .parse()
                 .unwrap_or(8),
+            schedule_tick_secs: env_or("SECUSCAN_SCHEDULE_TICK_SECS", "30")
+                .parse()
+                .unwrap_or(30),
         }
     }
 }

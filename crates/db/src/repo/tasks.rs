@@ -16,6 +16,8 @@ pub struct NewTask<'a> {
     pub options_json: &'a str,
     pub workflow_run_id: Option<&'a str>,
     pub workspace_id: Option<&'a str>,
+    /// Recurring schedule that auto-launched this task, if any.
+    pub schedule_id: Option<&'a str>,
 }
 
 pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
@@ -35,14 +37,15 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
         output_truncated: false,
         workflow_run_id: t.workflow_run_id.map(str::to_string),
         workspace_id: t.workspace_id.map(str::to_string),
+        schedule_id: t.schedule_id.map(str::to_string),
         created_at: now(),
         started_at: None,
         finished_at: None,
     };
     sqlx::query(
         "INSERT INTO tasks (id, user_id, plugin_id, plugin_name, target, status, inputs_json, \
-         options_json, output_truncated, workflow_run_id, workspace_id, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11)",
+         options_json, output_truncated, workflow_run_id, workspace_id, schedule_id, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9, ?10, ?11, ?12)",
     )
     .bind(&row.id)
     .bind(&row.user_id)
@@ -54,6 +57,7 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
     .bind(&row.options_json)
     .bind(&row.workflow_run_id)
     .bind(&row.workspace_id)
+    .bind(&row.schedule_id)
     .bind(&row.created_at)
     .execute(pool)
     .await?;
@@ -98,7 +102,7 @@ pub async fn list(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<Vec<TaskRo
     let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, created_at, started_at, finished_at \
          FROM tasks \
          WHERE (?1 IS NULL OR user_id = ?1) \
            AND (?2 IS NULL OR status = ?2) \
@@ -234,7 +238,7 @@ pub async fn recent_scoped(
     let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, created_at, started_at, finished_at \
          FROM tasks WHERE (?1 IS NULL OR user_id = ?1) \
          {ws_clause} \
          ORDER BY created_at DESC LIMIT {p_lim}"
@@ -279,7 +283,7 @@ pub async fn find_previous_run(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, created_at, started_at, finished_at \
          FROM tasks \
          WHERE plugin_id = ?1 AND target IS ?2 AND status = 'completed' \
            AND id != ?3 AND created_at <= ?4 \
@@ -294,4 +298,37 @@ pub async fn find_previous_run(
     .fetch_optional(pool)
     .await
     .map_err(Into::into)
+}
+
+/// Run history for one schedule (newest first), without the output column.
+pub async fn list_for_schedule(
+    pool: &SqlitePool,
+    schedule_id: &str,
+    limit: i64,
+) -> DbResult<Vec<TaskRow>> {
+    sqlx::query_as::<_, TaskRow>(
+        "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
+         exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
+         workspace_id, schedule_id, created_at, started_at, finished_at \
+         FROM tasks WHERE schedule_id = ?1 \
+         ORDER BY created_at DESC LIMIT ?2",
+    )
+    .bind(schedule_id)
+    .bind(limit.clamp(1, 200))
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+/// True while a task launched by this schedule is still queued or running
+/// (the scheduler's overlap guard).
+pub async fn schedule_has_active_task(pool: &SqlitePool, schedule_id: &str) -> DbResult<bool> {
+    let (n,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM tasks \
+         WHERE schedule_id = ?1 AND status IN ('queued', 'running')",
+    )
+    .bind(schedule_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
 }

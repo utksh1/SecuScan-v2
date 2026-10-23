@@ -91,6 +91,16 @@ async fn main() {
         tasks,
     });
 
+    // Recurring-scan scheduler: one background worker processing due
+    // schedules on a fixed tick.
+    {
+        let state = Arc::clone(&state);
+        let tick = config.schedule_tick_secs;
+        tokio::spawn(async move {
+            secuscan_api::scheduler::run_loop(state, tick).await;
+        });
+    }
+
     let app = build_app(state);
 
     let listener = match tokio::net::TcpListener::bind(&config.addr).await {

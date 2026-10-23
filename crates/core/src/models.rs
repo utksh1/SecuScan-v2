@@ -231,3 +231,36 @@ impl Finding {
 pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
+
+/// Shift an RFC 3339 timestamp by `secs` seconds, preserving the canonical
+/// format (UTC, millisecond precision) so lexical comparison stays valid.
+/// An unparseable input falls back to "now + secs" — every timestamp in the
+/// system is written by `now_iso`, so this only guards against corruption.
+pub fn add_seconds_iso(ts: &str, secs: i64) -> String {
+    let base = chrono::DateTime::parse_from_rfc3339(ts)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or_else(|_| chrono::Utc::now());
+    (base + chrono::Duration::seconds(secs)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn add_seconds_roundtrips() {
+        let base = "2026-01-02T03:04:05.678Z";
+        assert_eq!(add_seconds_iso(base, 60), "2026-01-02T03:05:05.678Z");
+        assert_eq!(add_seconds_iso(base, -5), "2026-01-02T03:04:00.678Z");
+        // Result stays lexically comparable with the source.
+        assert!(add_seconds_iso(base, 1).as_str() > base);
+    }
+
+    #[test]
+    fn add_seconds_bad_input_falls_back_to_now_plus() {
+        let out = add_seconds_iso("not-a-timestamp", 300);
+        // Same canonical shape as now_iso: ...T..:..:...Z with millis.
+        assert!(out.ends_with('Z'));
+        assert!(chrono::DateTime::parse_from_rfc3339(&out).is_ok());
+    }
+}

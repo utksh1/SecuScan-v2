@@ -18,6 +18,7 @@
 | `SECUSCAN_CORS_ORIGIN` | *(unset)* | Set for a split-domain frontend (e.g. `https://scans.example.com`). |
 | `SECUSCAN_DENIED_CAPABILITIES` | *(empty)* | Comma list (e.g. `exploit,docker`) — plugins needing these are refused. |
 | `SECUSCAN_MAX_CONCURRENT_TASKS` | `8` | Global running-task cap. |
+| `SECUSCAN_SCHEDULE_TICK_SECS` | `30` | Scheduler wake-up interval for recurring scans (seconds). |
 | `RUST_LOG` | `secuscan=info,tower_http=warn` | Logging. |
 
 ## Build & run (from source)

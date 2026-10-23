@@ -3,8 +3,9 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { Play, ShieldAlert, TerminalSquare, ArrowLeft, ChevronDown } from 'lucide-react'
 import { request, workspaceApi } from '@/api/client'
-import type { Plugin, PluginField } from '@/api/types'
+import type { Plugin } from '@/api/types'
 import { SafetyBadge } from '@/components/SafetyBadge'
+import { FieldInput } from '@/components/FieldInput'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
@@ -47,16 +48,16 @@ export function NewTaskPage() {
   }, [current?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ?target=<name> prefill (e.g. "Scan" button on the Targets page).
-  useEffect(() => {
-    const prefill = params.get('target')
-    if (prefill) setValues((prev) => ({ ...prev, target: prefill }))
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const targetPrefill = params.get('target')
   const plugin = useMemo(
     () => startablePlugins.find((p) => p.id === selectedId) ?? null,
     [startablePlugins, selectedId],
   )
 
-  // Seed form values from defaults / preset when the plugin changes.
+  // Seed form values from defaults / preset when the plugin changes. The
+  // ?target= prefill is folded into the seed (not a separate effect) so it
+  // survives regardless of whether the plugins query resolves before or
+  // after mount — a standalone effect would be wiped by this seed.
   useEffect(() => {
     if (!plugin) return
     const seed: Record<string, string | boolean> = {}
@@ -65,6 +66,7 @@ export function NewTaskPage() {
         seed[f.id] = typeof f.default === 'boolean' ? f.default : String(f.default)
       }
     }
+    if (targetPrefill) seed.target = targetPrefill
     setValues(seed)
     setPreset(null)
     setConsent(false)
@@ -356,70 +358,3 @@ export function NewTaskPage() {
   )
 }
 
-function FieldInput({
-  field,
-  value,
-  onChange,
-}: {
-  field: PluginField
-  value: string | boolean | undefined
-  onChange: (v: string | boolean) => void
-}) {
-  const wide = field.type === 'text' || field.type === 'select'
-  return (
-    <div className={wide ? 'sm:col-span-2' : undefined}>
-      <label htmlFor={`f-${field.id}`} className="label">
-        {field.label}
-        {field.required && <span className="ml-1 text-rose-500">*</span>}
-      </label>
-      {field.type === 'boolean' ? (
-        <label className="flex cursor-pointer items-center gap-2 py-1.5">
-          <input
-            id={`f-${field.id}`}
-            type="checkbox"
-            className="h-4 w-4 accent-brand-600"
-            checked={typeof value === 'boolean' ? value : false}
-            onChange={(e) => onChange(e.target.checked)}
-          />
-          <span className="text-sm text-slate-600">{field.help ?? 'Enabled'}</span>
-        </label>
-      ) : field.type === 'select' ? (
-        <select
-          id={`f-${field.id}`}
-          className="input"
-          value={typeof value === 'string' ? value : ''}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          <option value="">—</option>
-          {field.options?.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-      ) : field.type === 'text' ? (
-        <textarea
-          id={`f-${field.id}`}
-          className="input min-h-[80px]"
-          placeholder={field.placeholder}
-          value={typeof value === 'string' ? value : ''}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      ) : (
-        <input
-          id={`f-${field.id}`}
-          className="input"
-          type={field.type === 'integer' ? 'number' : 'text'}
-          placeholder={field.placeholder}
-          value={typeof value === 'string' ? value : ''}
-          min={field.type === 'integer' ? field.min : undefined}
-          max={field.type === 'integer' ? field.max : undefined}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      )}
-      {field.help && field.type !== 'boolean' && (
-        <p className="mt-1 text-xs text-slate-400">{field.help}</p>
-      )}
-    </div>
-  )
-}

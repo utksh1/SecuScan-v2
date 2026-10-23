@@ -74,6 +74,8 @@ pub struct TaskRow {
     pub workflow_run_id: Option<String>,
     /// Owning workspace; NULL = the synthetic "Personal" scope.
     pub workspace_id: Option<String>,
+    /// Schedule that launched this task (NULL for manual/workflow starts).
+    pub schedule_id: Option<String>,
     pub created_at: String,
     pub started_at: Option<String>,
     pub finished_at: Option<String>,
@@ -207,4 +209,26 @@ impl ReportJobRow {
     pub fn is_active(&self) -> bool {
         self.status == "waiting" || self.status == "in_progress"
     }
+}
+
+/// Recurring scan schedule (see migration 0004 for the model rationale).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct ScheduleRow {
+    pub id: String,
+    pub user_id: String,
+    pub workspace_id: Option<String>,
+    pub name: String,
+    pub plugin_id: String,
+    pub inputs_json: String,
+    pub preset: Option<String>,
+    /// Denormalized display target derived from the normalized inputs.
+    pub target: Option<String>,
+    pub interval_seconds: i64,
+    pub enabled: bool,
+    pub next_run_at: String,
+    pub last_run_at: Option<String>,
+    pub last_task_id: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: Option<String>,
 }

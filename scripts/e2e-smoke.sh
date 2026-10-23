@@ -8,6 +8,7 @@ export SECUSCAN_DB_URL="sqlite:///tmp/e2e-data/e2e.db?mode=rwc"
 export SECUSCAN_ADMIN_EMAIL=e2e@test.local
 export SECUSCAN_ADMIN_PASSWORD=e2e-password-123
 export SECUSCAN_JWT_SECRET=e2e-secret
+export SECUSCAN_SCHEDULE_TICK_SECS=2
 export RUST_LOG=secuscan=info
 
 rm -rf /tmp/e2e-data && mkdir -p /tmp/e2e-data
@@ -231,6 +232,74 @@ echo "severity-filtered xlsx job OK"
 CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8099/api/v1/tasks/$TASK2/reports \
   -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"format":"exe"}')
 [ "$CODE" = "400" ] && echo "invalid report format -> 400 OK"
+
+echo "=== 13. recurring schedules ==="
+# Create a schedule (daily port sweep) via the API.
+SCHED=$(curl -sf -X POST http://127.0.0.1:8099/api/v1/schedules \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"E2E daily sweep","plugin_id":"port-scanner","inputs":{"target":"127.0.0.1","ports":"9933"},"interval_seconds":86400,"consent_granted":true}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+# Interval bounds are enforced.
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8099/api/v1/schedules \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"name":"too fast","plugin_id":"port-scanner","inputs":{"target":"127.0.0.1"},"interval_seconds":30,"consent_granted":true}')
+[ "$CODE" = "400" ] && echo "interval below 5min -> 400 OK"
+
+# Backdate the schedule so the background loop (2s tick) fires it.
+python3 -c "
+import sqlite3
+c = sqlite3.connect('/tmp/e2e-data/e2e.db')
+c.execute('UPDATE schedules SET next_run_at = ? WHERE id = ?', ('2000-01-01T00:00:00.000Z', '$SCHED'))
+c.commit()
+"
+SCHED_TASK=""
+for i in $(seq 1 20); do
+  SCHED_TASK=$(curl -sf "http://127.0.0.1:8099/api/v1/schedules/$SCHED" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin).get('last_task_id') or '')")
+  [ -n "$SCHED_TASK" ] && break
+  sleep 0.5
+done
+[ -n "$SCHED_TASK" ] || { echo "SCHEDULER DID NOT FIRE"; exit 1; }
+echo "background scheduler fired OK (task $SCHED_TASK)"
+
+# The launched task is linked to the schedule and completes for real.
+for i in $(seq 1 40); do
+  SSTATUS=$(curl -sf "http://127.0.0.1:8099/api/v1/tasks/$SCHED_TASK" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])")
+  case "$SSTATUS" in completed|failed|cancelled) break;; esac
+  sleep 0.3
+done
+curl -sf "http://127.0.0.1:8099/api/v1/tasks/$SCHED_TASK" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+t = json.load(sys.stdin)
+assert t['schedule_id'] == '$SCHED', t['schedule_id']
+assert t['status'] == 'completed', t['status']
+print('scheduled task linked + completed OK')
+"
+
+# Run-now launches an extra occurrence without touching the anchor.
+ANCHOR_BEFORE=$(curl -sf "http://127.0.0.1:8099/api/v1/schedules/$SCHED" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['next_run_at'])")
+RUNNOW_TASK=$(curl -sf -X POST "http://127.0.0.1:8099/api/v1/schedules/$SCHED/run" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
+ANCHOR_AFTER=$(curl -sf "http://127.0.0.1:8099/api/v1/schedules/$SCHED" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['next_run_at'])")
+[ "$ANCHOR_BEFORE" = "$ANCHOR_AFTER" ] || { echo "RUN-NOW MOVED THE ANCHOR"; exit 1; }
+echo "run-now OK (anchor untouched, task $RUNNOW_TASK)"
+
+# Run history + patch (disable) + delete keep history intact.
+HIST=$(curl -sf "http://127.0.0.1:8099/api/v1/schedules/$SCHED/runs" -H "authorization: Bearer $TOKEN" | python3 -c "import sys,json; print(json.load(sys.stdin)['total'])")
+[ "$HIST" -ge 2 ] || { echo "RUN HISTORY INCOMPLETE ($HIST)"; exit 1; }
+curl -sf -X PATCH "http://127.0.0.1:8099/api/v1/schedules/$SCHED" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' -d '{"enabled":false}' | python3 -c "
+import sys, json
+s = json.load(sys.stdin)
+assert s['enabled'] is False
+print('schedule disable OK')
+"
+curl -sf -X DELETE "http://127.0.0.1:8099/api/v1/schedules/$SCHED" -H "authorization: Bearer $TOKEN"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8099/api/v1/schedules/$SCHED" -H "authorization: Bearer $TOKEN")
+[ "$CODE" = "404" ] || { echo "SCHEDULE NOT DELETED"; exit 1; }
+curl -sf "http://127.0.0.1:8099/api/v1/tasks/$SCHED_TASK" -H "authorization: Bearer $TOKEN" | python3 -c "
+import sys, json
+t = json.load(sys.stdin)
+assert t['schedule_id'] is None, 'history must survive schedule deletion'
+print('history survives schedule deletion OK')
+"
 
 echo ""
 echo "╔════════════════════════════════════════╗"

@@ -7,6 +7,7 @@ pub mod diff;
 pub mod findings;
 pub mod plugins;
 pub mod reports;
+pub mod schedules;
 pub mod sse;
 pub mod tasks;
 pub mod workflows;
@@ -28,6 +29,7 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(workflows::router())
         .merge(workspaces::router())
         .merge(diff::router())
+        .merge(schedules::router())
         .merge(dashboard::router())
         .merge(admin::router())
         .fallback(fallback_404)

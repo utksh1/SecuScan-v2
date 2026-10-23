@@ -13,6 +13,7 @@ import {
   Layers,
   ChevronDown,
   FileSpreadsheet,
+  CalendarClock,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
@@ -28,6 +29,7 @@ const NAV = [
   { to: '/findings', label: 'Findings', icon: ShieldAlert },
   { to: '/targets', label: 'Targets', icon: Crosshair, end: true },
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
+  { to: '/schedules', label: 'Schedules', icon: CalendarClock },
   { to: '/workflows', label: 'Workflows', icon: GitBranch },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]

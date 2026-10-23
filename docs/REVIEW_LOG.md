@@ -230,3 +230,77 @@ and their tests.
 
 Verified totals after the cycle: 108 backend + 58 frontend tests green, clippy and
 rustfmt clean, tsc clean, production build OK, E2E smoke (12 steps) green.
+
+## Cycle 10 — recurring schedules (line-by-line)
+
+Scope: migration 0004, `repo/schedules.rs`, `scheduler.rs`, `routes/schedules.rs`,
+the `admit_request` extraction from `routes/tasks.rs`, tasks-repo `schedule_id`
+threading, the Schedules frontend surface, and their tests.
+
+**Found & fixed during the cycle**
+
+1. **`double_option` serde helper was a no-op** (self-caught by the integration
+   test): `Option::deserialize(de)?` deserialized the full `Option<Option<T>>`,
+   making JSON `null` indistinguishable from an absent field — `PATCH
+   {"workspace_id": null}` would have silently done nothing in production. Fixed
+   to `<Option<T>>::deserialize(de).map(Some)`; the workspace-clear PATCH is now
+   regression-tested.
+2. **COALESCE-update null trap**: the first `schedules::update` used COALESCE
+   semantics, which cannot *clear* `workspace_id`/`preset` to NULL. Replaced with
+   a merge-then-full-write model (the route loads the row for the auth check
+   anyway), which also made the double-Option semantics above meaningful.
+3. **`?target=` prefill race (pre-existing, in NewTask too)**: the plugin-defaults
+   seed effect replaced state wholesale, so a prefill applied while the plugins
+   query was still in flight was wiped the moment the plugin resolved. Both forms
+   now fold the prefill into the seed. Found by a frontend test that failed only
+   under async plugin resolution.
+4. **Custom-interval edit round-trip**: editing a schedule whose interval is not
+   a preset left the custom-minutes input empty; saving unchanged submitted
+   `interval_seconds: 0` → 400. The input is now prefilled from the stored
+   interval, and `canSubmit` validates the *effective* seconds (NaN/empty/<5 min
+   disable submit) instead of the preset state.
+5. **Silent mutation failures**: run-now/toggle/delete mutations had no `onError`
+   — failures were invisible. All three now surface an `ErrorNote`.
+6. Re-anchor assertion in the CRUD test was directionally wrong (a shorter new
+   interval legitimately moves `next_run_at` *earlier* than the old anchor);
+   replaced with a `now < anchor < now+interval+slack` window check.
+7. Mechanical: needless borrow (`&state`), doc-comment `///` dropped on a wrapped
+   line (syntax error), sqlx `QueryAs` move-after-bind, test-file placeholder
+   edit left in during drafting.
+
+**Verified during the cycle (no changes needed)**
+
+- **Admission fidelity after extraction**: `admit_request` is a verbatim lift of
+  task-admission steps 1–8 (including the policy-audit write on denial);
+  `validate_and_create_task` = `admit_request` + persist. Call sites updated:
+  task create (schedule `None`), retry (preserves `schedule_id` like
+  `workspace_id`), workflow runner (`None`).
+- **No catch-up bursts**: the anchor is always `now + interval` (never
+  `old_anchor + interval`), so downtime or a long-disabled schedule yields one
+  run, not a replay of every missed occurrence.
+- **Overlap guard**: single indexed EXISTS over `tasks.schedule_id` +
+  queued/running; verified deterministically with the sleepy plugin (second due
+  pass → `OverlapSkipped`, still exactly one task).
+- **Failure semantics**: plugin-disable → `Rejected` with `last_error` recorded,
+  anchor advanced (no busy loop), no task created; re-enable + backdate → fires
+  again. `last_task_id` uses COALESCE so a rejection never clears the last
+  launched task.
+- **No partial writes on rejected PATCH**: workspace resolution and admission
+  both happen before the single UPDATE.
+- **History integrity**: `ON DELETE SET NULL` verified end-to-end — deleting a
+  schedule nulls `tasks.schedule_id` while the rows survive; deleting a user
+  cascades schedules away; deleting a workspace detaches (SET NULL) to Personal.
+- **Access control**: owner-or-404 on get/patch/delete/run (no existence leak),
+  viewer 403 on create/run, list caller-scoped (admin all) with
+  `?workspace_id=` parity to tasks; scheduler acts as the owner row so tasks are
+  owned by the schedule owner.
+- **Consent model**: consent captured at creation; automated runs and PATCH
+  re-admissions pass `consent_granted: true` (same convention as retry and
+  workflow steps) while target policy is re-evaluated on every occurrence.
+- **Timestamp math**: `add_seconds_iso` preserves the canonical fixed-width
+  RFC 3339 shape so lexical due-comparison stays valid; unit tests cover
+  round-trip, negative offsets, ordering, and corrupt-input fallback.
+- **Scheduler/user races**: single-worker loop is sequential; the only
+  concurrent launcher is run-now, which deliberately bypasses the overlap guard
+  (documented in both the route and the module docs). `mark_run` failures are
+  logged; worst case is a re-fire next tick, never a lost anchor update.

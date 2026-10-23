@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 struct TestServer {
     pub base: String,
+    pub state: std::sync::Arc<AppState>,
     _db_dir: tempfile::TempDir,
     _plugins_dir: tempfile::TempDir,
 }
@@ -222,6 +223,7 @@ max_per_hour = 0
         cors_origin: None,
         cookie_secure: false,
         max_concurrent_tasks: 4,
+        schedule_tick_secs: 30,
     });
 
     let db = secuscan_db::open(&config.db_url).await.unwrap();
@@ -236,7 +238,7 @@ max_per_hour = 0
         tasks,
     });
 
-    let app: Router = secuscan_api::build_app(state);
+    let app: Router = secuscan_api::build_app(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -245,6 +247,7 @@ max_per_hour = 0
 
     TestServer {
         base: format!("http://{addr}/api/v1"),
+        state,
         _db_dir: db_dir,
         _plugins_dir: plugins_dir,
     }
@@ -2237,4 +2240,528 @@ async fn report_job_severity_filter_and_sync_parity() {
     let id = job["id"].as_str().unwrap().to_string();
     let done = wait_report_terminal(&c, &s.base, &token, &id).await;
     assert_eq!(done["status"], "finished");
+}
+
+// ---------------------------------------------------------------------------
+// Recurring scan schedules
+// ---------------------------------------------------------------------------
+
+/// Backdate a schedule so the next `run_due` pass sees it as due (tests
+/// drive the scheduler deterministically instead of waiting for intervals).
+async fn backdate_schedule(s: &TestServer, id: &str) {
+    sqlx::query("UPDATE schedules SET next_run_at = '2000-01-01T00:00:00.000Z' WHERE id = ?1")
+        .bind(id)
+        .execute(&s.state.db)
+        .await
+        .unwrap();
+}
+
+async fn wait_task_terminal(s: &TestServer, id: &str) -> secuscan_db::models::TaskRow {
+    for _ in 0..100 {
+        if let Ok(t) = secuscan_db::repo::tasks::get(&s.state.db, id).await {
+            if t.status().is_terminal() {
+                return t;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("task {id} did not reach a terminal state in time");
+}
+
+#[tokio::test]
+async fn schedule_crud_and_validation() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // A viewer (read-only) and a second scanner for isolation checks.
+    let resp = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "viewer@test.local", "name": "Viewer", "password": "viewer-pass-123", "role": "viewer"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let resp = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "scanner2@test.local", "name": "Scanner Two", "password": "scanner2-pass-123", "role": "scanner"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let vresp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "scanner2@test.local", "password": "scanner2-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let s2token = vresp.json::<serde_json::Value>().await.unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Validation matrix.
+    let cases = [
+        (
+            serde_json::json!({"name": "", "plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1"}, "interval_seconds": 3600, "consent_granted": true}),
+            400,
+        ),
+        (
+            serde_json::json!({"name": "x", "plugin_id": "no-such-plugin", "inputs": {"target": "127.0.0.1"}, "interval_seconds": 3600, "consent_granted": true}),
+            404,
+        ),
+        (
+            serde_json::json!({"name": "x", "plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1"}, "interval_seconds": 60, "consent_granted": true}),
+            400,
+        ),
+        (
+            serde_json::json!({"name": "x", "plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1"}, "interval_seconds": 999_999_999, "consent_granted": true}),
+            400,
+        ),
+        (
+            serde_json::json!({"name": "x", "plugin_id": "port-scanner", "inputs": {}, "interval_seconds": 3600, "consent_granted": true}),
+            400,
+        ), // missing required target
+    ];
+    for (body, want) in cases {
+        let resp = auth(c.post(format!("{}/schedules", s.base)))
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), want, "body {body}");
+    }
+
+    // A second scanner can create their own schedule (owner = scanner2);
+    // it lands in the Personal scope and is invisible to other users.
+    let resp = c
+        .post(format!("{}/schedules", s.base))
+        .bearer_auth(&s2token)
+        .json(&serde_json::json!({"name": "v", "plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1"}, "interval_seconds": 3600, "consent_granted": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+
+    // Viewer is read-only: schedule creation is forbidden.
+    let vresp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "viewer@test.local", "password": "viewer-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let vtoken = vresp.json::<serde_json::Value>().await.unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let resp = c
+        .post(format!("{}/schedules", s.base))
+        .bearer_auth(&vtoken)
+        .json(&serde_json::json!({"name": "v", "plugin_id": "port-scanner", "inputs": {"target": "127.0.0.1"}, "interval_seconds": 3600, "consent_granted": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Admin creates one in a workspace.
+    let ws_resp = auth(c.post(format!("{}/workspaces", s.base)))
+        .json(&serde_json::json!({"name": "Acme", "description": "test"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ws_resp.status(), 201);
+    let ws_id = ws_resp.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = auth(c.post(format!("{}/schedules", s.base)))
+        .json(&serde_json::json!({
+            "name": "Daily port sweep",
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1", "ports": "80"},
+            "interval_seconds": 86_400,
+            "consent_granted": true,
+            "workspace_id": ws_id,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let sched: serde_json::Value = resp.json().await.unwrap();
+    let sid = sched["id"].as_str().unwrap().to_string();
+    assert_eq!(sched["plugin_id"], "port-scanner");
+    assert_eq!(sched["target"], "127.0.0.1");
+    assert_eq!(sched["interval_seconds"], 86_400);
+    assert_eq!(sched["enabled"], true);
+    assert_eq!(sched["workspace_id"], ws_id);
+    assert!(sched["next_run_at"].as_str().unwrap() > "2026");
+    assert!(sched["last_task_id"].is_null());
+
+    // Listing: admin sees both, scanner2 only their own.
+    let resp = auth(c.get(format!("{}/schedules", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let list: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(list["total"], 2);
+    let resp = c
+        .get(format!("{}/schedules", s.base))
+        .bearer_auth(&s2token)
+        .send()
+        .await
+        .unwrap();
+    let list2: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(list2["total"], 1);
+
+    // Workspace scoping on the list.
+    let resp = auth(c.get(format!("{}/schedules?workspace_id={ws_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let scoped: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(scoped["total"], 1);
+    let resp = auth(c.get(format!("{}/schedules?workspace_id=none", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let personal: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(personal["total"], 1); // scanner2's, which has no workspace
+
+    // Stranger gets 404 (no existence leak), viewer can read nothing of others.
+    let resp = c
+        .get(format!("{}/schedules/{sid}", s.base))
+        .bearer_auth(&s2token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let resp = c
+        .patch(format!("{}/schedules/{sid}", s.base))
+        .bearer_auth(&s2token)
+        .json(&serde_json::json!({"enabled": false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Owner patch: interval change re-anchors next_run_at to ~now + the
+    // NEW interval (the old 24h anchor is discarded, even if that means
+    // the next run moves earlier).
+    let patch_now = secuscan_db::now();
+    let resp = auth(c.patch(format!("{}/schedules/{sid}", s.base)))
+        .json(&serde_json::json!({"interval_seconds": 3_600}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let patched: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(patched["interval_seconds"], 3_600);
+    let after = patched["next_run_at"].as_str().unwrap().to_string();
+    let upper = secuscan_core::models::add_seconds_iso(&patch_now, 3_600 + 120);
+    assert!(
+        after.as_str() > patch_now.as_str() && after.as_str() < upper.as_str(),
+        "interval change must re-anchor to ~now+3600: got {after} (patch at {patch_now})"
+    );
+
+    // Disable + re-enable also re-anchors.
+    let resp = auth(c.patch(format!("{}/schedules/{sid}", s.base)))
+        .json(&serde_json::json!({"enabled": false}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let disabled: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(disabled["enabled"], false);
+    let resp = auth(c.patch(format!("{}/schedules/{sid}", s.base)))
+        .json(&serde_json::json!({"enabled": true}))
+        .send()
+        .await
+        .unwrap();
+    let re_enabled: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(re_enabled["enabled"], true);
+    assert!(
+        re_enabled["next_run_at"].as_str().unwrap() > after.as_str(),
+        "re-enable must re-anchor"
+    );
+
+    // Input change re-validates: missing required field is a clean 400.
+    let resp = auth(c.patch(format!("{}/schedules/{sid}", s.base)))
+        .json(&serde_json::json!({"inputs": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Workspace change to an unknown id is a 404 before anything persists.
+    let resp = auth(c.patch(format!("{}/schedules/{sid}", s.base)))
+        .json(&serde_json::json!({"workspace_id": "no-such-ws"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Explicit null clears the workspace (Personal).
+    let resp = auth(c.patch(format!("{}/schedules/{sid}", s.base)))
+        .json(&serde_json::json!({"workspace_id": null}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let cleared: serde_json::Value = resp.json().await.unwrap();
+    assert!(cleared["workspace_id"].is_null());
+
+    // Delete: stranger 404, owner 204, then 404.
+    let resp = c
+        .delete(format!("{}/schedules/{sid}", s.base))
+        .bearer_auth(&s2token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let resp = auth(c.delete(format!("{}/schedules/{sid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    let resp = auth(c.get(format!("{}/schedules/{sid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+}
+
+#[tokio::test]
+async fn scheduler_fires_overlaps_and_recovers() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // A long-running plugin so the overlap window is deterministic.
+    let resp = auth(c.post(format!("{}/schedules", s.base)))
+        .json(&serde_json::json!({
+            "name": "Sleepy loop",
+            "plugin_id": "sleepy",
+            "inputs": {"target": "127.0.0.1"},
+            "interval_seconds": 3_600,
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let sched: serde_json::Value = resp.json().await.unwrap();
+    let sid = sched["id"].as_str().unwrap().to_string();
+
+    // Not due yet: run_due is a no-op.
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    assert!(outcomes.is_empty(), "{outcomes:?}");
+
+    // Backdate -> fires, creates a task linked to the schedule.
+    backdate_schedule(&s, &sid).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    let task_id = match &outcomes[0] {
+        secuscan_api::scheduler::DueOutcome::Launched(_, t) => t.clone(),
+        other => panic!("expected Launched, got {other:?}"),
+    };
+
+    let resp = auth(c.get(format!("{}/tasks/{task_id}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(task["schedule_id"], sid);
+    assert_eq!(task["plugin_id"], "sleepy");
+    assert_eq!(task["target"], "127.0.0.1");
+
+    // Schedule bookkeeping updated, anchor advanced, no error.
+    let resp = auth(c.get(format!("{}/schedules/{sid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let after: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(after["last_task_id"], task_id);
+    assert!(after["last_run_at"].as_str().is_some());
+    assert!(after["last_error"].is_null());
+    assert!(after["next_run_at"].as_str().unwrap() > "2026");
+
+    // Run history endpoint lists the task.
+    let resp = auth(c.get(format!("{}/schedules/{sid}/runs", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let runs: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(runs["total"], 1);
+    assert_eq!(runs["items"][0]["id"], task_id);
+
+    // Overlap guard: backdate again while the sleepy task is still running.
+    backdate_schedule(&s, &sid).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    assert_eq!(
+        outcomes,
+        vec![secuscan_api::scheduler::DueOutcome::OverlapSkipped(
+            sid.clone()
+        )],
+        "{outcomes:?}"
+    );
+    // Still exactly one task for this schedule.
+    let tasks = secuscan_db::repo::tasks::list_for_schedule(&s.state.db, &sid, 50)
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1);
+
+    // Failure path: disable the plugin, backdate, run_due -> Rejected with
+    // a recorded error and no task; the schedule keeps retrying later.
+    secuscan_db::repo::misc::set_plugin_enabled(&s.state.db, "sleepy", false)
+        .await
+        .unwrap();
+    // Cancel the running task so the overlap guard does not mask the
+    // rejection, then wait for it to settle.
+    let _ = s.state.tasks.cancel(&task_id).await;
+    let _ = wait_task_terminal(&s, &task_id).await;
+    backdate_schedule(&s, &sid).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    match &outcomes[0] {
+        secuscan_api::scheduler::DueOutcome::Rejected(_, msg) => {
+            assert!(msg.contains("disabled"), "unexpected message: {msg}");
+        }
+        other => panic!("expected Rejected, got {other:?}"),
+    }
+    let resp = auth(c.get(format!("{}/schedules/{sid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let rejected: serde_json::Value = resp.json().await.unwrap();
+    let err = rejected["last_error"].as_str().unwrap().to_string();
+    assert!(err.contains("disabled"), "{err}");
+    // Rejection still advanced the anchor (no busy loop).
+    assert!(rejected["next_run_at"].as_str().unwrap() > "2026");
+    let tasks = secuscan_db::repo::tasks::list_for_schedule(&s.state.db, &sid, 50)
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 1, "no new task on rejection");
+
+    // Recovery: re-enable + backdate -> fires again.
+    secuscan_db::repo::misc::set_plugin_enabled(&s.state.db, "sleepy", true)
+        .await
+        .unwrap();
+    backdate_schedule(&s, &sid).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    assert!(matches!(
+        &outcomes[0],
+        secuscan_api::scheduler::DueOutcome::Launched(_, _)
+    ));
+    let tasks = secuscan_db::repo::tasks::list_for_schedule(&s.state.db, &sid, 50)
+        .await
+        .unwrap();
+    assert_eq!(tasks.len(), 2);
+    // Clean up the second sleepy task.
+    let _ = s.state.tasks.cancel(&tasks[0].id).await;
+
+    // Deleting the schedule keeps the task history (schedule_id nulls out).
+    let resp = auth(c.delete(format!("{}/schedules/{sid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    let tasks = secuscan_db::repo::tasks::list_for_schedule(&s.state.db, &sid, 50)
+        .await
+        .unwrap();
+    assert!(
+        tasks.is_empty(),
+        "history detached from the deleted schedule"
+    );
+    let task_row = secuscan_db::repo::tasks::get(&s.state.db, &task_id)
+        .await
+        .unwrap();
+    assert!(task_row.schedule_id.is_none());
+}
+
+#[tokio::test]
+async fn schedule_run_now_endpoint() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // A viewer for the RBAC check.
+    let resp = auth(c.post(format!("{}/admin/users", s.base)))
+        .json(&serde_json::json!({
+            "email": "viewer@test.local", "name": "Viewer", "password": "viewer-pass-123", "role": "viewer"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let vresp = c
+        .post(format!("{}/auth/login", s.base))
+        .json(&serde_json::json!({"email": "viewer@test.local", "password": "viewer-pass-123"}))
+        .send()
+        .await
+        .unwrap();
+    let vtoken = vresp.json::<serde_json::Value>().await.unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let resp = auth(c.post(format!("{}/schedules", s.base)))
+        .json(&serde_json::json!({
+            "name": "Manual kick",
+            "plugin_id": "port-scanner",
+            "inputs": {"target": "127.0.0.1"},
+            "interval_seconds": 86_400,
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let sched: serde_json::Value = resp.json().await.unwrap();
+    let sid = sched["id"].as_str().unwrap().to_string();
+    let anchor_before = sched["next_run_at"].as_str().unwrap().to_string();
+
+    // Viewer cannot run; stranger would 404.
+    let resp = c
+        .post(format!("{}/schedules/{sid}/run", s.base))
+        .bearer_auth(&vtoken)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Owner run-now: 201 with a task; the recurring anchor is untouched.
+    let resp = auth(c.post(format!("{}/schedules/{sid}/run", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+    assert_eq!(body["next_run_at"], anchor_before);
+
+    let task = wait_task_terminal(&s, &task_id).await;
+    assert_eq!(task.status().label(), "completed");
+    assert_eq!(task.schedule_id.as_deref(), Some(sid.as_str()));
+
+    // The manual run is stamped on the schedule but the anchor moved on.
+    let resp = auth(c.get(format!("{}/schedules/{sid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let after: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(after["last_task_id"], task_id);
+    assert_eq!(after["next_run_at"], anchor_before);
+
+    // Run history shows it.
+    let resp = auth(c.get(format!("{}/schedules/{sid}/runs", s.base)))
+        .send()
+        .await
+        .unwrap();
+    let runs: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(runs["total"], 1);
+    assert_eq!(runs["items"][0]["id"], task_id);
 }

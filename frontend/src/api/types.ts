@@ -262,3 +262,29 @@ export interface ReportJobList {
   limit: number
   offset: number
 }
+
+export interface Schedule {
+  id: string
+  user_id: string
+  workspace_id?: string
+  name: string
+  plugin_id: string
+  inputs: Record<string, unknown>
+  preset?: string
+  target?: string
+  interval_seconds: number
+  enabled: boolean
+  next_run_at: string
+  last_run_at?: string
+  last_task_id?: string
+  last_error?: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface ScheduleList {
+  items: Schedule[]
+  total: number
+  limit: number
+  offset: number
+}

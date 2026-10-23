@@ -1,7 +1,9 @@
 //! Task routes: start (with the full validation pipeline), list, detail,
 //! cancel, retry, delete, raw output.
 //!
-//! `validate_and_create_task` is shared with the workflow runner.
+//! `validate_and_create_task` is shared with the workflow runner and the
+//! scheduler; `admit_request` (validation without persistence) is shared
+//! with schedule creation.
 
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
@@ -45,18 +47,25 @@ pub struct StartTaskRequest {
     pub workspace_id: Option<String>,
 }
 
-/// The complete task admission pipeline. Returns the queued task row plus
-/// the normalized inputs (needed by the executor).
-pub async fn validate_and_create_task(
+/// Result of admitting a request through the validation pipeline (no DB
+/// writes yet): the resolved manifest, normalized inputs and the derived
+/// target string.
+pub struct Admitted {
+    pub manifest: Arc<secuscan_core::manifest::PluginManifest>,
+    pub normalized: BTreeMap<String, Value>,
+    pub target: Option<String>,
+}
+
+/// Steps 1-8 of task admission: plugin existence, availability, enabled
+/// flag, capability denials, input normalization (+preset merge), consent,
+/// workspace existence and target policy. Pure with respect to task state —
+/// only policy denials are recorded to the audit trail (they must be, even
+/// for requests that never spawn a task, e.g. schedule creation).
+pub async fn admit_request(
     state: &SharedState,
     user: &CurrentUser,
     req: &StartTaskRequest,
-    workflow_run_id: Option<&str>,
-) -> ApiResult<(
-    TaskRow,
-    Arc<secuscan_core::manifest::PluginManifest>,
-    BTreeMap<String, Value>,
-)> {
+) -> ApiResult<Admitted> {
     // 1) plugin exists
     let manifest = {
         let registry = state.registry.read().await;
@@ -166,15 +175,38 @@ pub async fn validate_and_create_task(
         }
     }
 
-    // 9) persist + spawn
+    Ok(Admitted {
+        manifest,
+        normalized,
+        target: target_value,
+    })
+}
+
+/// The complete task admission pipeline. Returns the queued task row plus
+/// the normalized inputs (needed by the executor).
+pub async fn validate_and_create_task(
+    state: &SharedState,
+    user: &CurrentUser,
+    req: &StartTaskRequest,
+    workflow_run_id: Option<&str>,
+    schedule_id: Option<&str>,
+) -> ApiResult<(
+    TaskRow,
+    Arc<secuscan_core::manifest::PluginManifest>,
+    BTreeMap<String, Value>,
+)> {
+    let admitted = admit_request(state, user, req).await?;
+
+    // persist + spawn
     let row = repo::tasks::create(
         &state.db,
         repo::tasks::NewTask {
             user_id: &user.0.id,
-            plugin_id: &manifest.plugin.id,
-            plugin_name: &manifest.plugin.name,
-            target: target_value.as_deref(),
-            inputs_json: &serde_json::to_string(&normalized).unwrap_or_else(|_| "{}".into()),
+            plugin_id: &admitted.manifest.plugin.id,
+            plugin_name: &admitted.manifest.plugin.name,
+            target: admitted.target.as_deref(),
+            inputs_json: &serde_json::to_string(&admitted.normalized)
+                .unwrap_or_else(|_| "{}".into()),
             options_json: &json!({
                 "preset": req.preset,
                 "consent_granted": req.consent_granted,
@@ -182,11 +214,12 @@ pub async fn validate_and_create_task(
             .to_string(),
             workflow_run_id,
             workspace_id: req.workspace_id.as_deref(),
+            schedule_id,
         },
     )
     .await?;
 
-    Ok((row, manifest, normalized))
+    Ok((row, admitted.manifest, admitted.normalized))
 }
 
 async fn create(
@@ -195,7 +228,7 @@ async fn create(
     Json(req): Json<StartTaskRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
-    let (row, manifest, inputs) = validate_and_create_task(&state, &user, &req, None).await?;
+    let (row, manifest, inputs) = validate_and_create_task(&state, &user, &req, None, None).await?;
     state.tasks.spawn(row.clone(), manifest, inputs).await;
     Ok((StatusCode::CREATED, Json(task_to_json(&row, false))))
 }
@@ -216,6 +249,7 @@ pub fn task_to_json(t: &TaskRow, include_output: bool) -> Value {
         "output_truncated": t.output_truncated,
         "workflow_run_id": t.workflow_run_id,
         "workspace_id": t.workspace_id,
+        "schedule_id": t.schedule_id,
         "created_at": t.created_at,
         "started_at": t.started_at,
         "finished_at": t.finished_at,
@@ -368,7 +402,9 @@ async fn retry(
         consent_granted: true, // consent was granted for the original task
         workspace_id: original.workspace_id.clone(), // keep the workspace
     };
-    let (row, manifest, inputs) = validate_and_create_task(&state, &user, &req, None).await?;
+    let (row, manifest, inputs) =
+        validate_and_create_task(&state, &user, &req, None, original.schedule_id.as_deref())
+            .await?;
     state.tasks.spawn(row.clone(), manifest, inputs).await;
     Ok((StatusCode::CREATED, Json(task_to_json(&row, false))))
 }

@@ -266,9 +266,10 @@ async fn run_workflow(
             consent_granted: true,
             workspace_id: workspace_id.map(str::to_string),
         };
-        let (task, manifest, inputs) = validate_and_create_task(state, user, &req, Some(run_id))
-            .await
-            .map_err(|e| format!("step {} ({}) rejected: {e}", i + 1, step.plugin_id))?;
+        let (task, manifest, inputs) =
+            validate_and_create_task(state, user, &req, Some(run_id), None)
+                .await
+                .map_err(|e| format!("step {} ({}) rejected: {e}", i + 1, step.plugin_id))?;
         repo::workflows::append_run_task(&state.db, run_id, &task.id)
             .await
             .map_err(|e| e.to_string())?;

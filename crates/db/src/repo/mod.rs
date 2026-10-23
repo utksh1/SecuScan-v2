@@ -5,6 +5,7 @@ pub mod api_keys;
 pub mod findings;
 pub mod misc;
 pub mod reports;
+pub mod schedules;
 pub mod tasks;
 pub mod users;
 pub mod workflows;

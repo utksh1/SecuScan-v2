@@ -14,6 +14,7 @@ import { FindingsPage } from '@/pages/Findings'
 import { WorkflowsPage } from '@/pages/Workflows'
 import { TargetsPage } from '@/pages/Targets'
 import { ReportsPage } from '@/pages/Reports'
+import { SchedulesPage } from '@/pages/Schedules'
 import { SettingsPage } from '@/pages/Settings'
 import { EmptyState } from '@/components/ui'
 import { Link } from 'react-router-dom'
@@ -77,6 +78,7 @@ export default function App() {
             <Route path="/findings" element={<FindingsPage />} />
             <Route path="/targets" element={<TargetsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
+            <Route path="/schedules" element={<SchedulesPage />} />
             <Route path="/workflows" element={<WorkflowsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<NotFound />} />
