@@ -184,7 +184,7 @@ export function TaskDetailPage() {
             )}
             {!active && (user?.role === 'admin' || user?.role === 'scanner') && (
               <button className="btn-secondary" onClick={retry}>
-                <RotateCcw className="h-4 w-4" /> Retry
+                <RotateCcw className="h-4 w-4" /> Replay
               </button>
             )}
             <div className="group relative">

@@ -16,6 +16,7 @@ import {
   CalendarClock,
   Zap,
   Network,
+  FileJson,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
@@ -36,6 +37,7 @@ const NAV = [
   { to: '/workflows', label: 'Workflows', icon: GitBranch },
   { to: '/vpn', label: 'VPN', icon: Network },
   { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/api/v1/openapi', label: 'API Spec', icon: FileJson, external: true },
 ]
 
 function WorkspaceSwitcher() {
@@ -143,24 +145,37 @@ export function AppShell({ children }: { children: ReactNode }) {
         <WorkspaceSwitcher />
 
         <nav className="mt-1 flex-1 space-y-1 px-3">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-brand-600/20 text-white'
-                    : 'text-slate-400 hover:bg-surface-sidebar-hover hover:text-slate-100',
-                )
-              }
-            >
-              <item.icon className="h-4 w-4" />
-              {item.label}
-            </NavLink>
-          ))}
+          {NAV.map((item) =>
+            (item as { external?: boolean }).external ? (
+              <a
+                key={item.to}
+                href={item.to}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 transition-colors hover:bg-surface-sidebar-hover hover:text-slate-100"
+              >
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </a>
+            ) : (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-brand-600/20 text-white'
+                      : 'text-slate-400 hover:bg-surface-sidebar-hover hover:text-slate-100',
+                  )
+                }
+              >
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </NavLink>
+            ),
+          )}
         </nav>
 
         <div className="border-t border-slate-800 p-4">

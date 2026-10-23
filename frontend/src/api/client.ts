@@ -177,6 +177,33 @@ export const workspaceApi = {
   removeTarget: (id: string) => request<void>(`/targets/${id}`, { method: 'DELETE' }),
 }
 
+// --- v3.1.2: tasks + targets attack -------------------------------------------
+
+import type { AttackSuite } from './types'
+
+export const taskApi = {
+  get: (id: string) => request<Task>(`/tasks/${id}`),
+  cancel: (id: string) => request<Task>(`/tasks/${id}/cancel`, { method: 'POST' }),
+  // Replay (re-run with the same plugin, inputs, workspace). Consent is
+  // inherited from the original task. The v3.1.1 VPN-aware admission
+  // gate still applies, so a pinned workspace whose tunnel cannot come
+  // up will return 409.
+  retry: (id: string) => request<Task>(`/tasks/${id}/retry`, { method: 'POST' }),
+  remove: (id: string) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
+}
+
+export const targetApi = {
+  attack: (id: string, suite: AttackSuite) =>
+    request<{
+      suite: AttackSuite
+      target_id: string
+      target: string
+      workspace_id: string
+      tasks: { id: string; plugin_id: string; status: string }[]
+      skipped: { plugin_id: string; reason: string }[]
+    }>(`/targets/${id}/attack`, { method: 'POST', body: { suite } }),
+}
+
 // --- async report jobs ---------------------------------------------------------
 
 import type { ReportJob, ReportJobList } from './types'

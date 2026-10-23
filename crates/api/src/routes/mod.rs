@@ -11,12 +11,14 @@ pub mod diff;
 pub mod findings;
 pub mod notifications;
 pub mod oob;
+pub mod openapi;
 pub mod plugins;
 pub mod reports;
 pub mod robots;
 pub mod schedules;
 pub mod sse;
 pub mod tasks;
+pub mod targets_attack;
 pub mod v300_misc;
 pub mod v310;
 pub mod workflows;
@@ -52,6 +54,8 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(notifications::router())
         .merge(v300_misc::router())
         .merge(v310::router())
+        .merge(openapi::router())
+        .merge(targets_attack::router())
         .fallback(fallback_404)
 }
 

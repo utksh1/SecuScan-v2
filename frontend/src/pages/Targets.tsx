@@ -4,10 +4,10 @@
 
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { Crosshair, Plus, Trash2, Pencil, Play, Layers } from 'lucide-react'
-import { workspaceApi } from '@/api/client'
-import type { ScanTarget } from '@/api/types'
+import { Link, useNavigate } from 'react-router-dom'
+import { Crosshair, Plus, Trash2, Pencil, Play, Layers, Swords } from 'lucide-react'
+import { workspaceApi, targetApi } from '@/api/client'
+import type { ScanTarget, AttackSuite } from '@/api/types'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
@@ -38,6 +38,7 @@ export function TargetsPage() {
   const { current, workspaces, selected, select } = useWorkspace()
   const { user } = useAuth()
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const canMutate = user?.role === 'admin' || user?.role === 'scanner'
   const isPersonal = selected === 'personal'
 
@@ -50,6 +51,10 @@ export function TargetsPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [newWsName, setNewWsName] = useState('')
   const [wsError, setWsError] = useState<string | null>(null)
+  // v3.1.2 -- Attack-Target suite picker. Set when the user opens the
+  // per-row attack menu; cleared on submit or dismiss.
+  const [attackPicker, setAttackPicker] = useState<ScanTarget | null>(null)
+  const [attackError, setAttackError] = useState<string | null>(null)
 
   // Targets of the selected workspace (Personal has none by definition).
   const targetsQuery = useQuery({
@@ -92,6 +97,23 @@ export function TargetsPage() {
       qc.invalidateQueries({ queryKey: ['workspaces'] })
     },
     onError,
+  })
+
+  // v3.1.2 -- Launch a curated multi-tool suite against a registered
+  // target. One task per plugin is created in the target's workspace;
+  // the VPN-aware admission gate still applies. We navigate to /tasks
+  // so the user can watch the new tasks progress.
+  const attackTarget = useMutation({
+    mutationFn: ({ id, suite }: { id: string; suite: AttackSuite }) =>
+      targetApi.attack(id, suite),
+    onSuccess: () => {
+      setAttackPicker(null)
+      setAttackError(null)
+      qc.invalidateQueries({ queryKey: ['targets'] })
+      qc.invalidateQueries({ queryKey: ['workspaces'] })
+      navigate('/tasks')
+    },
+    onError: (err: Error) => setAttackError(err.message),
   })
 
   const createWorkspace = useMutation({
@@ -311,6 +333,18 @@ export function TargetsPage() {
                         <Play className="h-4 w-4" />
                       </Link>
                       {canMutate && (
+                        <button
+                          className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                          title="Attack this target — run a curated suite of scanners"
+                          onClick={() => {
+                            setAttackPicker(t)
+                            setAttackError(null)
+                          }}
+                        >
+                          <Swords className="h-4 w-4" />
+                        </button>
+                      )}
+                      {canMutate && (
                         <>
                           <button
                             className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
@@ -367,6 +401,85 @@ export function TargetsPage() {
           <button className="btn-secondary" onClick={() => setEditing(null)}>
             Cancel
           </button>
+        </div>
+      )}
+
+      {/* v3.1.2 -- Attack-Target suite picker */}
+      {attackPicker && (
+        <div className="card space-y-3 p-4">
+          <div className="flex items-start gap-3">
+            <Swords className="mt-1 h-5 w-5 shrink-0 text-rose-600" />
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold text-slate-800">
+                Attack &ldquo;{attackPicker.name}&rdquo;
+              </h3>
+              <p className="text-xs text-slate-500">
+                Pick a curated multi-tool suite. One task per plugin is launched in the
+                target&rsquo;s workspace; the VPN-aware admission gate still applies.
+              </p>
+            </div>
+            <button
+              className="text-xs text-slate-400 hover:text-slate-600"
+              onClick={() => setAttackPicker(null)}
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {([
+              {
+                suite: 'quick' as AttackSuite,
+                title: 'Quick',
+                desc: 'http-recon + http-headers + dns-lookup (hostname) or dns-lookup + nmap (IP)',
+              },
+              {
+                suite: 'web' as AttackSuite,
+                title: 'Web',
+                desc: 'Quick + whatweb + nikto + ssl-scanner (hostname/URL only)',
+              },
+              {
+                suite: 'full' as AttackSuite,
+                title: 'Full',
+                desc: 'Web + subdomain-finder + nmap + wordpress-audit + drupal-scanner',
+              },
+              {
+                suite: 'internal' as AttackSuite,
+                title: 'Internal',
+                desc: 'nmap + smb-enum + ssh-audit (IP only)',
+              },
+            ]).map((opt) => {
+              const disabled =
+                (opt.suite === 'web' && attackPicker.kind === 'ip_address') ||
+                (opt.suite === 'internal' && attackPicker.kind !== 'ip_address')
+              return (
+                <button
+                  key={opt.suite}
+                  className={cn(
+                    'rounded-lg border p-3 text-left transition-colors',
+                    disabled
+                      ? 'cursor-not-allowed border-slate-100 bg-slate-50 text-slate-300'
+                      : 'border-slate-200 bg-white hover:border-rose-300 hover:bg-rose-50',
+                  )}
+                  disabled={disabled || attackTarget.isPending}
+                  onClick={() =>
+                    attackTarget.mutate({ id: attackPicker.id, suite: opt.suite })
+                  }
+                  title={disabled ? 'Not applicable for this target kind' : undefined}
+                >
+                  <div className="text-sm font-semibold text-slate-700">{opt.title}</div>
+                  <div className="mt-1 text-xs text-slate-500">{opt.desc}</div>
+                </button>
+              )
+            })}
+          </div>
+          {attackError && (
+            <div className="rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700" role="alert">
+              {attackError}
+            </div>
+          )}
+          {attackTarget.isPending && (
+            <div className="text-xs text-slate-500">Launching suite…</div>
+          )}
         </div>
       )}
     </div>

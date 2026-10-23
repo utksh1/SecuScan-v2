@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
-import { Search, ChevronRight } from 'lucide-react'
-import { request } from '@/api/client'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
+import { Search, ChevronRight, Zap } from 'lucide-react'
+import { request, sniperApi } from '@/api/client'
 import type { Finding, AnalystStatus } from '@/api/types'
 import { SeverityBadge } from '@/components/SeverityBadge'
 import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
@@ -21,6 +21,7 @@ export function FindingsPage() {
   const { scopeParam } = useWorkspace()
   const [params, setParams] = useSearchParams()
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const { user } = useAuth()
   const severity = params.getAll('severity')
   const status = params.get('analyst_status') ?? ''
@@ -46,7 +47,21 @@ export function FindingsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['findings'] }),
   })
 
+  // v3.1.2 — Launch Sniper against a finding. The Auto-Exploiter picks
+  // an exploit chain based on the finding's category and runs it
+  // step-by-step as real scan tasks. We navigate to /sniper so the user
+  // can watch the chain progress.
+  const sniperMut = useMutation({
+    mutationFn: ({ findingId, workspaceId }: { findingId: string; workspaceId?: string }) =>
+      sniperApi.run(findingId, workspaceId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sniper-runs'] })
+      navigate('/sniper')
+    },
+  })
+
   const canTriage = user?.role === 'admin' || user?.role === 'scanner'
+  const canSnipe = canTriage // same permission gate as triage
 
   function toggleSeverity(sev: string) {
     const next = new URLSearchParams(params)
@@ -144,6 +159,20 @@ export function FindingsPage() {
                   key={f.id}
                   finding={f}
                   canTriage={canTriage}
+                  canSnipe={canSnipe}
+                  sniperPending={sniperMut.isPending}
+                  sniperError={
+                    sniperMut.error && sniperMut.variables?.findingId === f.id
+                      ? sniperMut.error instanceof Error
+                        ? sniperMut.error.message
+                        : 'sniper launch failed'
+                      : null
+                  }
+                  onSnipe={() =>
+                    sniperMut.mutate({
+                      findingId: f.id,
+                    })
+                  }
                   onTriage={(s) => triageMut.mutate({ id: f.id, status: s })}
                 />
               ))}
@@ -158,10 +187,18 @@ export function FindingsPage() {
 function FindingTableEntry({
   finding: f,
   canTriage,
+  canSnipe,
+  sniperPending,
+  sniperError,
+  onSnipe,
   onTriage,
 }: {
   finding: Finding
   canTriage: boolean
+  canSnipe: boolean
+  sniperPending: boolean
+  sniperError: string | null
+  onSnipe: () => void
   onTriage: (status: AnalystStatus) => void
 }) {
   const [open, setOpen] = useState(false)
@@ -189,27 +226,48 @@ function FindingTableEntry({
           </Link>
         </td>
         <td className="td" onClick={(e) => e.stopPropagation()}>
-          <select
-            className={cn(
-              'rounded-md border-0 px-2 py-1 text-xs font-medium ring-1 focus:outline-none',
-              f.analyst_status === 'new' && 'bg-sky-50 text-sky-700 ring-sky-200',
-              f.analyst_status === 'confirmed' && 'bg-rose-50 text-rose-700 ring-rose-200',
-              f.analyst_status === 'false_positive' && 'bg-slate-100 text-slate-500 ring-slate-200',
-              f.analyst_status === 'accepted_risk' && 'bg-amber-50 text-amber-700 ring-amber-200',
-              f.analyst_status === 'fixed' && 'bg-emerald-50 text-emerald-700 ring-emerald-200',
-              f.analyst_status === 'needs_review' && 'bg-violet-50 text-violet-700 ring-violet-200',
+          <div className="flex items-center gap-1.5">
+            <select
+              className={cn(
+                'rounded-md border-0 px-2 py-1 text-xs font-medium ring-1 focus:outline-none',
+                f.analyst_status === 'new' && 'bg-sky-50 text-sky-700 ring-sky-200',
+                f.analyst_status === 'confirmed' && 'bg-rose-50 text-rose-700 ring-rose-200',
+                f.analyst_status === 'false_positive' && 'bg-slate-100 text-slate-500 ring-slate-200',
+                f.analyst_status === 'accepted_risk' && 'bg-amber-50 text-amber-700 ring-amber-200',
+                f.analyst_status === 'fixed' && 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+                f.analyst_status === 'needs_review' && 'bg-violet-50 text-violet-700 ring-violet-200',
+              )}
+              value={f.analyst_status}
+              disabled={!canTriage}
+              onChange={(e) => onTriage(e.target.value as AnalystStatus)}
+              aria-label="Triage"
+            >
+              {TRIAGE.map((t) => (
+                <option key={t} value={t}>
+                  {ANALYST_STATUS_LABEL[t]}
+                </option>
+              ))}
+            </select>
+            {canSnipe && (
+              <button
+                type="button"
+                className={cn(
+                  'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium ring-1 transition-colors',
+                  'bg-violet-50 text-violet-700 ring-violet-200 hover:bg-violet-100',
+                  sniperPending && 'cursor-wait opacity-60',
+                )}
+                disabled={sniperPending}
+                onClick={onSnipe}
+                title="Launch Sniper Auto-Exploiter against this finding"
+              >
+                <Zap className="h-3.5 w-3.5" />
+                Sniper
+              </button>
             )}
-            value={f.analyst_status}
-            disabled={!canTriage}
-            onChange={(e) => onTriage(e.target.value as AnalystStatus)}
-            aria-label="Triage"
-          >
-            {TRIAGE.map((t) => (
-              <option key={t} value={t}>
-                {ANALYST_STATUS_LABEL[t]}
-              </option>
-            ))}
-          </select>
+          </div>
+          {sniperError && (
+            <div className="mt-1 text-xs text-rose-600" role="alert">{sniperError}</div>
+          )}
         </td>
       </tr>
       {open && (

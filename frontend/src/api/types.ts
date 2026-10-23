@@ -244,6 +244,19 @@ export interface SniperRun {
   finished_at?: string
 }
 
+// --- v3.1.2: Attack-Target suites ---------------------------------------------
+
+export type AttackSuite = 'quick' | 'web' | 'full' | 'internal'
+
+export interface AttackTargetResponse {
+  suite: AttackSuite
+  target_id: string
+  target: string
+  workspace_id: string
+  tasks: { id: string; plugin_id: string; status: string }[]
+  skipped: { plugin_id: string; reason: string }[]
+}
+
 export interface PersonalWorkspace {
   id: null
   name: 'Personal'
