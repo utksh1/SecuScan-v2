@@ -44,7 +44,7 @@ argv = [
   # we substitute the value directly (same pattern as the nmap plugin).
   "-s{scan_type}",
   "--if:ports:then:-p:else:-top-ports",
-  "--if:ports:then:{ports}:else:1000",
+  "--if:ports:then:{ports}:else:{top_ports}",
   "--if:service_detection:then:-sV",
   "--if:rate:then:-rate",
   "--if:rate:then:{rate}",
@@ -63,10 +63,19 @@ message = "Must be an IP, hostname, or CIDR range"
 id = "ports"
 label = "Ports"
 type = "string"
-placeholder = "80,443,8000-8005 or leave empty for top-1000"
+placeholder = "80,443,8000-8005 or 1-65535 for all"
 pattern = '^[0-9,\- ]*$'
 message = "Comma-separated ports/ranges"
-help = "Leave empty to scan the top 1000 ports (naabu's default fast preset)."
+help = "Explicit ports override the top-N preset. Use 1-65535 for the full sweep."
+
+[[fields]]
+id = "top_ports"
+label = "Top-N port preset"
+type = "integer"
+default = 1000
+min = 1
+max = 5000
+help = "How many of the most-common ports to scan when no explicit list is given."
 
 [[fields]]
 id = "scan_type"
@@ -154,3 +163,34 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["naabu"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+ports = ""
+top_ports = 100
+rate = 1000
+
+[preset_meta.light]
+label = "Light"
+description = "Top 100 ports at the default packet rate. Seconds-fast exposure triage."
+badge = "fast"
+
+[presets.deep]
+ports = ""
+top_ports = 1000
+rate = 1000
+
+[preset_meta.deep]
+label = "Deep"
+description = "Top 1000 ports at the default packet rate."
+badge = "thorough"
+
+[presets.full]
+ports = "1-65535"
+rate = 2000
+
+[preset_meta.full]
+label = "Full sweep"
+description = "All 65,535 ports at an elevated packet rate. The most complete naabu run."
+badge = "intense"

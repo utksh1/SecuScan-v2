@@ -26,6 +26,12 @@ export interface FieldOption {
   label: string
 }
 
+export interface PresetMeta {
+  label?: string
+  description?: string
+  badge?: string
+}
+
 export interface PluginField {
   id: string
   label: string
@@ -59,6 +65,7 @@ export interface Plugin {
   }
   fields: PluginField[]
   presets: Record<string, Record<string, unknown>>
+  preset_meta?: Record<string, PresetMeta>
   safety: {
     level: SafetyLevel
     requires_consent: boolean

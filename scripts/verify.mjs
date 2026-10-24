@@ -191,6 +191,47 @@ async function main() {
   ok(!!byId["command-injection"], "command-injection (commix) in catalog (v4.1.0)");
   ok(!!byId["secrets-scanner"], "secrets-scanner (gitleaks) in catalog (v4.1.0)");
 
+  // --- v4.2.0: scan profiles (Light/Deep/Custom model) ------------------------
+  section("scan profiles (v4.2.0 presets)");
+  // Every key scanner ships one-click profiles with presentation metadata
+  // (label + description + badge), mirroring the pentest-tools.com
+  // Light/Deep/Custom customization surface.
+  const profileExpectations = [
+    ["port-scanner", ["fast", "light", "deep"]],
+    ["nmap", ["light", "deep", "full-sweep", "top-5000", "stealth", "vuln-scripts"]],
+    ["nuclei", ["kev", "light", "cve", "exposures", "misconfig", "panels", "deep"]],
+    ["fast-port-scan", ["light", "deep", "full"]],
+    ["website-scanner", ["light", "deep"]],
+    ["wordpress-audit", ["light", "deep"]],
+    ["xss-scanner", ["verified", "all-reflections"]],
+    ["sqlmap", ["conservative", "balanced", "aggressive", "exhaustive"]],
+    ["command-injection", ["conservative", "aggressive"]],
+    ["nikto", ["quick", "standard"]],
+    ["testssl", ["quick", "full"]],
+    ["crawler", ["shallow", "deep"]],
+    ["feroxbuster", ["light", "deep"]],
+  ];
+  let profilesTotal = 0;
+  for (const [pid, names] of profileExpectations) {
+    const p = byId[pid];
+    const presetNames = Object.keys(p?.presets ?? {});
+    const missing = names.filter((n) => !presetNames.includes(n));
+    ok(
+      !!p && missing.length === 0,
+      `${pid} ships profiles: ${names.join(", ")}${missing.length ? ` — MISSING: ${missing.join(", ")}` : ""}`,
+    );
+    profilesTotal += presetNames.length;
+  }
+  ok(profilesTotal >= 35, `catalog ships >=35 scan profiles across key scanners (got ${profilesTotal})`);
+  // preset_meta flows through the API: every profiled plugin with meta has
+  // label + description for the UI cards.
+  const nmapMeta = byId["nmap"]?.preset_meta ?? {};
+  ok(
+    nmapMeta.light?.label === "Light" && (nmapMeta.light?.description ?? "").length > 10,
+    "nmap preset_meta carries Light label + description (UI scan-profile cards)",
+  );
+  ok(!!nmapMeta.stealth?.badge, "nmap stealth profile carries a badge token");
+
   // --- OpenAPI ---------------------------------------------------------------
   section("OpenAPI 3.1 spec");
   const { status: oj, json: spec } = await req("GET", "/openapi.json");
@@ -450,6 +491,36 @@ async function main() {
   const { status: dr, json: diff } = await req("GET", `/tasks/${replay.id}/diff`, { token });
   ok(dr === 200 && diff && typeof diff === "object", "GET /tasks/:id/diff -> 200 (auto-baseline = previous run)");
   ok(!!diff?.baseline?.id && diff.baseline.id !== replay.id, "diff auto-baseline is a prior run of the same plugin+target");
+
+  // --- Scan profile end-to-end (v4.2.0) --------------------------------------------
+  section("scan profile task (v4.2.0)");
+  // Launch the native port-scanner with the `fast` profile against the
+  // verify server itself. The admission pipeline must merge the preset
+  // values over the defaults (concurrency=256, timeout_ms=400, top_ports
+  // unchanged) and record the preset name on the task.
+  {
+    const { status: ps, json: ptask } = await req("POST", "/tasks", {
+      token,
+      body: {
+        plugin_id: "port-scanner",
+        inputs: { target: "127.0.0.1", ports: String(PORT) },
+        preset: "fast",
+        consent_granted: true,
+      },
+    });
+    ok(ps === 201 && !!ptask.id, "port-scanner task with preset `fast` accepted (201)");
+    const done = await waitTask(token, ptask.id);
+    ok(done.status === "completed", `preset task completes (status=${done.status})`);
+    // The task detail carries the preset name and the MERGED inputs.
+    const t = await req("GET", `/tasks/${ptask.id}`, { token });
+    ok(t.json.options?.preset === "fast" || t.json.preset === "fast", "task records the preset name");
+    const merged = t.json.inputs ?? {};
+    ok(merged.concurrency === 256, `preset merged concurrency=256 (got ${merged.concurrency})`);
+    ok(merged.timeout_ms === 400, `preset merged timeout_ms=400 (got ${merged.timeout_ms})`);
+    // Explicit inputs win over preset values: ports was supplied by the
+    // caller and must survive the merge untouched.
+    ok(String(merged.ports) === String(PORT), "explicit caller input (ports) wins over preset merge");
+  }
 
   // --- People Hunter ---------------------------------------------------------------
   section("People Hunter");

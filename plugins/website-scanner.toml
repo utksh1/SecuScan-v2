@@ -63,3 +63,26 @@ consent_message = "Sends a bounded crawl plus detection payloads. Only scan syst
 max_concurrent = 2
 max_per_hour = 20
 capabilities = ["network"]
+
+# ---------------------------------------------------------------- profiles ---
+# pentest-tools.com Website Scanner: Light = quick passive-leaning pass
+# (depth 4 / 15 min); Deep = full crawl (depth 10 / 1 h) with every
+# active check. Our native DAST maps depth onto max_pages.
+
+[presets.light]
+max_pages = 8
+timeout_ms = 8000
+
+[preset_meta.light]
+label = "Light"
+description = "Quick 8-page crawl with the passive-leaning check set (headers, cookies, reflections)."
+badge = "fast"
+
+[presets.deep]
+max_pages = 40
+timeout_ms = 20000
+
+[preset_meta.deep]
+label = "Deep"
+description = "Full 40-page crawl with every active canary: TRACE/XST, CRLF, LFI, JWT, NoSQL, X-Forwarded-Host, SSTI."
+badge = "intense"

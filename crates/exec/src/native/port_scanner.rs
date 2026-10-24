@@ -3,7 +3,7 @@
 //! Fields (see `plugins/port-scanner.toml`):
 //! - `target` (string, required) — hostname, IP, or CIDR
 //! - `ports` (string, optional) — e.g. `80,443,8000-8005`; overrides presets
-//! - `top_ports` (select: 100 | 1000, default 100)
+//! - `top_ports` (select: 10 | 100 | 1000, default 100)
 //! - `concurrency` (integer, 1..=1024, default 128)
 //! - `timeout_ms` (integer, 50..=10000, default 800)
 
@@ -61,6 +61,7 @@ impl NativeScanner for PortScanner {
         let ports = parse_ports(get_str_or(inputs, "ports", ""))?;
         let ports = if ports.is_empty() {
             match get_str_or(inputs, "top_ports", "100") {
+                "10" => TOP_100[..10].to_vec(),
                 "1000" => well_known_ports(),
                 _ => TOP_100.to_vec(),
             }

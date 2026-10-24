@@ -288,4 +288,111 @@ allowed_targets = ["127.0.0.1"]
         assert!(reg.is_empty());
         assert!(reg.issues().is_empty());
     }
+
+    // ---- v4.2.0: scan profiles (presets + preset_meta) --------------------
+
+    const WITH_PROFILES: &str = r#"
+[plugin]
+id = "profiled"
+name = "Profiled"
+version = "1.0.0"
+description = "demo with scan profiles"
+category = "network"
+
+[engine]
+type = "cli"
+binary = "cat"
+argv = ["cat", "--if:depth:then:-d", "--if:depth:then:{depth}"]
+timeout_seconds = 30
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+
+[[fields]]
+id = "depth"
+label = "Depth"
+type = "integer"
+default = 1
+
+[presets.light]
+depth = 1
+
+[preset_meta.light]
+label = "Light"
+description = "Quick top-level pass."
+badge = "fast"
+
+[presets.deep]
+depth = 5
+
+[preset_meta.deep]
+label = "Deep"
+description = "Everything, slowly."
+badge = "intense"
+
+[parser]
+type = "passthrough"
+
+[safety]
+level = "safe"
+"#;
+
+    #[test]
+    fn loads_presets_and_preset_meta() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "profiled.toml", WITH_PROFILES);
+        let reg = PluginRegistry::load_dir(tmp.path());
+        assert!(reg.issues().is_empty(), "{:?}", reg.issues());
+        let p = reg.get("profiled").unwrap();
+        assert_eq!(p.presets.len(), 2);
+        assert_eq!(
+            p.presets.get("deep").and_then(|m| m.get("depth")),
+            Some(&serde_json::json!(5))
+        );
+        let light_meta = p.preset_meta.get("light").unwrap();
+        assert_eq!(light_meta.label.as_deref(), Some("Light"));
+        assert_eq!(light_meta.badge.as_deref(), Some("fast"));
+        assert!(light_meta.description.as_deref().unwrap().len() > 10);
+    }
+
+    #[test]
+    fn preset_meta_without_matching_preset_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bad = WITH_PROFILES.replace(
+            "[presets.deep]\ndepth = 5\n",
+            "[presets.deep]\ndepth = 5\n\n[preset_meta.ghost]\nlabel = \"Ghost\"\n",
+        );
+        write(tmp.path(), "profiled.toml", &bad);
+        let reg = PluginRegistry::load_dir(tmp.path());
+        assert_eq!(reg.len(), 0, "invalid manifest must be skipped");
+        assert!(
+            reg.issues()
+                .iter()
+                .any(|i| i.error.contains("preset_meta `ghost`")),
+            "expected a preset_meta mismatch issue, got {:?}",
+            reg.issues()
+        );
+    }
+
+    #[test]
+    fn preset_referencing_unknown_field_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bad = WITH_PROFILES.replace(
+            "[presets.light]\ndepth = 1\n",
+            "[presets.light]\ndepth = 1\nnonsense = true\n",
+        );
+        write(tmp.path(), "profiled.toml", &bad);
+        let reg = PluginRegistry::load_dir(tmp.path());
+        assert_eq!(reg.len(), 0);
+        assert!(
+            reg.issues()
+                .iter()
+                .any(|i| i.error.contains("unknown field `nonsense`")),
+            "expected an unknown-field issue, got {:?}",
+            reg.issues()
+        );
+    }
 }

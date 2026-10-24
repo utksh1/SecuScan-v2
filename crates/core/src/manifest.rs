@@ -27,6 +27,12 @@ pub struct PluginManifest {
     /// Named partial-input bundles the UI can offer as one-click presets.
     #[serde(default)]
     pub presets: BTreeMap<String, BTreeMap<String, serde_json::Value>>,
+    /// Presentation metadata for presets (v4.2.0): human label, one-line
+    /// description of what the profile does, and a small badge token
+    /// (`fast`, `thorough`, `stealth`, ...). Keys must match a `presets`
+    /// entry; the UI falls back to the raw preset name when absent.
+    #[serde(default)]
+    pub preset_meta: BTreeMap<String, PresetMeta>,
     /// Output parser (CLI plugins only; ignored for native plugins).
     #[serde(default)]
     pub parser: ParserSpec,
@@ -45,6 +51,21 @@ pub struct PluginManifest {
     pub missing_binaries: Vec<String>,
     #[serde(skip)]
     pub source: std::path::PathBuf,
+}
+
+/// `[preset_meta.NAME]` — how a preset is presented in the UI.
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresetMeta {
+    /// Human-facing label (defaults to the preset key, capitalized).
+    #[serde(default)]
+    pub label: Option<String>,
+    /// One-line description of what this scan profile does.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Small badge token: `fast` / `thorough` / `stealth` / `intense` / ...
+    #[serde(default)]
+    pub badge: Option<String>,
 }
 
 /// `[plugin]` identity block.

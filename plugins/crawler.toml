@@ -125,3 +125,23 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["katana"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.shallow]
+depth = 2
+concurrency = 10
+
+[preset_meta.shallow]
+label = "Shallow"
+description = "Depth-2 crawl for a quick endpoint inventory of the top-level surface."
+badge = "fast"
+
+[presets.deep]
+depth = 5
+concurrency = 25
+
+[preset_meta.deep]
+label = "Deep"
+description = "Depth-5 crawl at high concurrency — maps forms, JS endpoints, and nested routes."
+badge = "thorough"

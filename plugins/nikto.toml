@@ -28,6 +28,8 @@ argv = [
   "--if:ssl:then:-ssl",
   "--if:port:then:-p",
   "--if:port:then:{port}",
+  "--if:tuning:then:-T",
+  "--if:tuning:then:{tuning}",
   "-nointeractive",
 ]
 
@@ -53,6 +55,15 @@ id = "ssl"
 label = "Force SSL"
 type = "boolean"
 default = false
+
+[[fields]]
+id = "tuning"
+label = "Check categories (-T)"
+type = "string"
+placeholder = "1,2,3,7,8"
+pattern = '^[0-9, ]*$'
+message = "Comma-separated nikto tuning ids (0-9)"
+help = "1 interesting files · 2 misconfig · 3 info disclosure · 4 injection · 5 file retrieval · 6 DoS · 7 server · 8 software · 9 reverse proxy · 0 database. Leave empty for nikto's default (all but DoS)."
 
 [parser]
 type = "line_regex"
@@ -138,3 +149,21 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["nikto"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+tuning = "1,2,3,7,8"
+
+[preset_meta.quick]
+label = "Quick"
+description = "Only the highest-value categories: interesting files, misconfig, info disclosure, server, software."
+badge = "fast"
+
+[presets.standard]
+tuning = ""
+
+[preset_meta.standard]
+label = "Standard"
+description = "nikto's default category set (everything except denial-of-service)."
+badge = "thorough"

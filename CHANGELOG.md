@@ -3,17 +3,103 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
-## Unreleased -- Proper CI: catalog, parser fixtures, E2E, Docker smoke
+## 4.2.0 -- Full scan customization: Light / Deep / Custom scan profiles
 
-- GitHub Actions now cancels stale runs, uses `--locked`, and has four jobs:
-  backend (fmt/clippy/test/validate), frontend, **e2e** (`verify.mjs` against
-  a release server + built SPA), and Docker **health + login + SPA** smoke.
-- New Rust integration tests load the real `plugins/` tree: catalog size,
-  required ids, consent on exploit plugins, native-engine check.
-- Parser fixtures for nuclei, dalfox, httpx, katana, naabu, smuggler,
-  commix, gitleaks, and subzy — a regex tweak that drops findings fails CI
-  without installing those binaries.
-- Frontend: Scanners page search + category filter coverage.
+Direct response to "the input taking is too generic — pentest-tools.com is
+fully customizable, light to deep." Their model, researched from their
+published docs: every scanner offers **Light / Deep / Custom** scan types
+(Light = fast presets + passive-leaning checks; Deep = full coverage + all
+active checks; Custom = every knob exposed), port presets from Top 10 to
+the full 65,535 range, and per-scan technique selection. SecuScan had the
+`presets` mechanism in the manifest schema since v2 but **zero plugins
+defined any** — every scan started from raw, generic form fields. This
+release ships the whole surface.
+
+Also ships the CI hardening batch (catalog + parser-fixture integration
+tests, E2E and Docker smoke jobs in GitHub Actions) that landed
+concurrently with this feature work.
+
+### Scan profiles everywhere (35+ profiles across 13 scanners)
+
+| Plugin | Profiles |
+|--------|----------|
+| `nmap` | Light · Deep · Full sweep · Top 5000 · Stealth · Vuln scripts |
+| `nuclei` | KEV only · Light · CVE checks · Exposures · Misconfig · Panels & logins · Deep |
+| `port-scanner` | Fast · Light · Deep |
+| `fast-port-scan` (naabu) | Light · Deep · Full |
+| `website-scanner` | Light · Deep |
+| `wordpress-audit` | Light · Deep |
+| `xss-scanner` (dalfox) | Verified only · All reflections |
+| `sqlmap` | Conservative · Balanced · Aggressive · Exhaustive |
+| `command-injection` (commix) | Conservative · Aggressive |
+| `nikto` | Quick · Standard |
+| `testssl` | Quick · Full |
+| `crawler` (katana) | Shallow · Deep |
+| `feroxbuster` | Light · Deep |
+
+The `nuclei` profiles map the pentest-tools.com Network Scanner's KEV-only
+and CVE-focused custom modes onto the template engine; `nmap`'s
+Light/Deep mirror their ~187/~3,845-port equivalents.
+
+### nmap: every Port Scanner knob pentest-tools.com exposes
+
+- **Twelve scan techniques** (was 3): SYN, Connect, UDP, ACK, Window,
+  Maimon, NULL, FIN, Xmas, SCTP INIT, SCTP COOKIE-ECHO, IP protocol.
+- **Timing templates** T0 paranoid .. T5 insane (replaces the old
+  safe_mode boolean).
+- **Top-N port preset** as a field (10 / 100 / 1000 / 5000) with explicit
+  list / range / full `1-65535` sweep in the ports field.
+- **Version probe intensity** 0-9, **NSE script categories** (vuln /
+  default,safe / auth,brute / exploit), **traceroute**, and
+  **no-ping (-Pn)** toggles.
+
+### New field-level options on other engines
+
+- `nikto`: check-category tuning (-T) with the id legend in the help text.
+- `testssl`: fast mode (--fast).
+- `fast-port-scan` (naabu): top-N preset field replacing the hardcoded
+  top-1000 default.
+- `port-scanner` (native): Top 10 preset option added to the select.
+
+### `[preset_meta.NAME]` — presentation metadata for profiles
+
+New optional manifest table: `label` (human name), `description` (what
+the profile does), `badge` (`fast` / `thorough` / `intense` /
+`stealth`). Validated (every meta key must match a declared preset),
+serialized through `GET /plugins`, `/plugins/:id` and `/plugins/:id/schema`,
+and rendered by the UI.
+
+### Frontend: Scan profile cards (New Task page)
+
+The flat lowercase preset chips are replaced with a **Scan profile**
+grid: one card per profile showing its icon + badge chip, label,
+description, and the exact values it seeds (`key=value` monospace line),
+plus a dashed **Custom** card that restores defaults for full manual
+configuration. Badges are color-coded (sky = fast, violet = thorough,
+rose = intense, slate = stealth).
+
+### Fixes
+
+- **Attack-target full suite silently skipped nmap**: `inputs_for`
+  passed `ports: "top-1000"`, which never matched the ports field
+  pattern (letters are not valid port syntax) — the nmap task was
+  rejected at admission and skipped with a reason on every `full` /
+  `internal` suite run. Now the suite supplies `top_ports: 1000` +
+  `service_detection: true` (the deep-profile equivalent).
+
+### Tests
+
+- 241/241 Rust (was 238; +3 loader tests: presets + preset_meta parse,
+  preset_meta-without-preset rejected, preset-referencing-unknown-field
+  rejected).
+- 68/68 frontend (was 65; +3: profile cards render labels/badges/Custom,
+  applying a profile seeds the form and sends the preset, switching to
+  Custom clears the preset).
+- verify.mjs: 97/97 (was 75; +13 per-plugin profile expectations, +2
+  preset_meta API assertions, +5 live preset-task assertions: 201 +
+  completion + preset recorded on the task + merged inputs
+  (concurrency=256, timeout_ms=400) + caller-supplied ports winning over
+  the preset merge).
 
 ## 4.1.0 -- Stronger attack vectors: 7 power engines pentest-tools.com lacks
 

@@ -113,3 +113,21 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["dalfox"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.verified]
+only_vulnerable = true
+
+[preset_meta.verified]
+label = "Verified only"
+description = "Report only XSS dalfox asserts is exploitable (type V). Highest signal, fewer findings."
+badge = "fast"
+
+[presets.all-reflections]
+only_vulnerable = false
+
+[preset_meta.all-reflections]
+label = "All reflections"
+description = "Also include plain unverified reflections — useful for hardening reviews and sink hunting."
+badge = "thorough"

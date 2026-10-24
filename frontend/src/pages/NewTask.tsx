@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
-import { Play, ShieldAlert, TerminalSquare, ArrowLeft, ChevronDown } from 'lucide-react'
+import {
+  Play,
+  ShieldAlert,
+  TerminalSquare,
+  ArrowLeft,
+  ChevronDown,
+  Zap,
+  Layers,
+  EyeOff,
+  Gauge,
+  SlidersHorizontal,
+} from 'lucide-react'
 import { request, workspaceApi } from '@/api/client'
 import type { Plugin } from '@/api/types'
 import { SafetyBadge } from '@/components/SafetyBadge'
@@ -10,6 +21,38 @@ import { Spinner, ErrorNote, EmptyState } from '@/components/ui'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
 import { cn } from '@/utils/format'
+
+// Badge token -> (icon, human label, chip classes). Presets without a
+// badge (or with an unknown one) fall back to the neutral style.
+const BADGE_STYLES: Record<
+  string,
+  { icon: typeof Zap; label: string; chip: string }
+> = {
+  fast: {
+    icon: Zap,
+    label: 'fast',
+    chip: 'bg-sky-50 text-sky-700 ring-sky-200',
+  },
+  thorough: {
+    icon: Layers,
+    label: 'thorough',
+    chip: 'bg-violet-50 text-violet-700 ring-violet-200',
+  },
+  intense: {
+    icon: Gauge,
+    label: 'intense',
+    chip: 'bg-rose-50 text-rose-700 ring-rose-200',
+  },
+  stealth: {
+    icon: EyeOff,
+    label: 'stealth',
+    chip: 'bg-slate-100 text-slate-600 ring-slate-300',
+  },
+}
+
+function presetLabel(name: string, meta?: { label?: string }) {
+  return meta?.label ?? name.replace(/(^|-)([a-z])/g, (_, sep, c) => (sep ? ' ' : '') + c.toUpperCase())
+}
 
 export function NewTaskPage() {
   const [params] = useSearchParams()
@@ -73,8 +116,22 @@ export function NewTaskPage() {
     setShowPreview(null)
   }, [plugin?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function applyPreset(name: string) {
+  function applyPreset(name: string | null) {
     if (!plugin) return
+    if (name === null) {
+      // "Custom" — restore the plain defaults so the manual field
+      // configuration starts from a clean slate.
+      const seed: Record<string, string | boolean> = {}
+      for (const f of plugin.fields) {
+        if (f.default != null) {
+          seed[f.id] = typeof f.default === 'boolean' ? f.default : String(f.default)
+        }
+      }
+      if (targetPrefill) seed.target = targetPrefill
+      setValues((prev) => ({ ...seed, target: prev.target ?? seed.target ?? '' }))
+      setPreset(null)
+      return
+    }
     const p = plugin.presets[name]
     const next = { ...values }
     for (const [k, v] of Object.entries(p ?? {})) {
@@ -252,23 +309,86 @@ export function NewTaskPage() {
 
             {Object.keys(plugin.presets).length > 0 && (
               <div className="mb-4">
-                <div className="label">Presets</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {Object.keys(plugin.presets).map((name) => (
-                    <button
-                      key={name}
-                      type="button"
-                      onClick={() => applyPreset(name)}
-                      className={cn(
-                        'chip capitalize transition-colors',
-                        preset === name
-                          ? 'bg-brand-600 text-white'
-                          : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50',
-                      )}
-                    >
-                      {name}
-                    </button>
-                  ))}
+                <div className="label">Scan profile</div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {Object.entries(plugin.presets).map(([name, values]) => {
+                    const meta = plugin.preset_meta?.[name]
+                    const badge = meta?.badge ? BADGE_STYLES[meta.badge] : undefined
+                    const BadgeIcon = badge?.icon ?? Layers
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => applyPreset(name)}
+                        className={cn(
+                          'flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors',
+                          preset === name
+                            ? 'border-brand-500 bg-brand-50/70 ring-1 ring-brand-500'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50',
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md ring-1',
+                            badge
+                              ? badge.chip
+                              : 'bg-slate-100 text-slate-600 ring-slate-200',
+                          )}
+                        >
+                          <BadgeIcon className="h-4 w-4" />
+                        </span>
+                        <span className="min-w-0">
+                          <span className="flex items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-800">
+                              {presetLabel(name, meta)}
+                            </span>
+                            {badge && (
+                              <span
+                                className={cn(
+                                  'rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ring-1',
+                                  badge.chip,
+                                )}
+                              >
+                                {badge.label}
+                              </span>
+                            )}
+                          </span>
+                          {meta?.description && (
+                            <span className="mt-0.5 block text-xs leading-snug text-slate-500">
+                              {meta.description}
+                            </span>
+                          )}
+                          <span className="mt-1 block truncate font-mono text-[10px] text-slate-400">
+                            {Object.entries(values)
+                              .filter(([k]) => k !== 'target')
+                              .map(([k, v]) => `${k}=${String(v)}`)
+                              .join('  ') || 'default values'}
+                          </span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                  {/* Custom: manual configuration, no preset applied. */}
+                  <button
+                    type="button"
+                    onClick={() => applyPreset(null)}
+                    className={cn(
+                      'flex items-start gap-2.5 rounded-lg border p-3 text-left transition-colors',
+                      preset === null
+                        ? 'border-brand-500 bg-brand-50/70 ring-1 ring-brand-500'
+                        : 'border-dashed border-slate-300 bg-white hover:border-slate-400 hover:bg-slate-50',
+                    )}
+                  >
+                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-600 ring-1 ring-slate-200">
+                      <SlidersHorizontal className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="text-sm font-semibold text-slate-800">Custom</span>
+                      <span className="mt-0.5 block text-xs leading-snug text-slate-500">
+                        Configure every option manually below.
+                      </span>
+                    </span>
+                  </button>
                 </div>
               </div>
             )}

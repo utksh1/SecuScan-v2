@@ -125,8 +125,12 @@ fn inputs_for(plugin_id: &str, target: &str) -> BTreeMap<String, Value> {
     // Suite-level hints for plugins that accept them.
     match plugin_id {
         "nmap" => {
-            // Top-1000 ports is the documented "quick" preset.
-            m.insert("ports".to_string(), Value::String("top-1000".into()));
+            // v4.2.0: the suite runs the equivalent of the "deep" profile --
+            // top 1000 ports + service detection. (The old `ports: "top-1000"`
+            // string failed the ports field pattern, so nmap was silently
+            // skipped by the full suite.)
+            m.insert("top_ports".to_string(), json!(1000));
+            m.insert("service_detection".to_string(), json!(true));
         }
         "subdomain-finder" => {
             // Default wordlist is fine; pass-through.
@@ -360,8 +364,12 @@ mod tests {
 
     #[test]
     fn inputs_for_nmap_adds_top_1000_hint() {
+        // v4.2.0: the suite supplies top_ports=1000 + service detection
+        // (valid field ids -- the previous ports="top-1000" string never
+        // passed the ports field pattern).
         let m = inputs_for("nmap", "127.0.0.1");
-        assert_eq!(m.get("ports").and_then(|v| v.as_str()), Some("top-1000"));
+        assert_eq!(m.get("top_ports").and_then(|v| v.as_i64()), Some(1000));
+        assert_eq!(m.get("service_detection").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]

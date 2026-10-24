@@ -2,13 +2,15 @@
 [plugin]
 id = "port-scanner"
 name = "TCP Port Scanner"
-version = "1.0.0"
+version = "1.1.0"
 description = "Asynchronous TCP connect scan with curated top-port presets"
 long_description = """
 Scans TCP ports across a host or a small CIDR range using high-concurrency
-connect probes. Ships curated top-100 and well-known-1024 port sets, live
-progress events, and automatic flagging of high-risk services. Runs natively
-inside the SecuScan process — no external binaries needed.
+connect probes. Ships curated top-10, top-100 and well-known-1024 port
+sets, live progress events, and automatic flagging of high-risk services.
+Runs natively inside the SecuScan process — no external binaries needed.
+One-click profiles: Fast (top 100, short timeout), Light (top 100), Deep
+(well-known 1024, longer timeout for filtered hosts).
 """
 category = "network"
 author = "SecuScan Contributors"
@@ -47,6 +49,7 @@ label = "Port preset"
 type = "select"
 default = "100"
 options = [
+  { value = "10", label = "Top 10 ports" },
   { value = "100", label = "Top 100 ports" },
   { value = "1000", label = "Well-known 1024 ports" },
 ]
@@ -84,3 +87,38 @@ allowed_targets = [
 max_concurrent = 4
 max_per_hour = 60
 capabilities = ["network"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.fast]
+ports = ""
+top_ports = "100"
+concurrency = 256
+timeout_ms = 400
+
+[preset_meta.fast]
+label = "Fast"
+description = "Top 100 ports at high concurrency with a short 400ms probe timeout. Quick liveness + exposure triage."
+badge = "fast"
+
+[presets.light]
+ports = ""
+top_ports = "100"
+concurrency = 128
+timeout_ms = 800
+
+[preset_meta.light]
+label = "Light"
+description = "Top 100 ports with the default balanced probe settings."
+badge = "fast"
+
+[presets.deep]
+ports = ""
+top_ports = "1000"
+concurrency = 256
+timeout_ms = 1500
+
+[preset_meta.deep]
+label = "Deep"
+description = "The full well-known 1024-port set with a longer 1.5s timeout — catches ports behind filtered paths."
+badge = "thorough"

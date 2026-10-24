@@ -103,3 +103,41 @@ capabilities = ["network", "exploit"]
 
 [dependencies]
 binaries = ["sqlmap"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.conservative]
+level = "1"
+risk = "1"
+
+[preset_meta.conservative]
+label = "Conservative"
+description = "Level 1 / risk 1 — the least intrusive confirmation pass. Fewer payloads, minimal side effects."
+badge = "fast"
+
+[presets.balanced]
+level = "2"
+risk = "2"
+
+[preset_meta.balanced]
+label = "Balanced"
+description = "Level 2 / risk 2 — deeper parameter coverage including cookie/header injection points."
+badge = "thorough"
+
+[presets.aggressive]
+level = "3"
+risk = "3"
+
+[preset_meta.aggressive]
+label = "Aggressive"
+description = "Level 3 / risk 3 — all injection points with OR-based payloads. Higher detection, higher impact."
+badge = "intense"
+
+[presets.exhaustive]
+level = "5"
+risk = "3"
+
+[preset_meta.exhaustive]
+label = "Exhaustive"
+description = "Level 5 / risk 3 — every parameter, every technique, every edge case. Slowest and most intrusive."
+badge = "intense"

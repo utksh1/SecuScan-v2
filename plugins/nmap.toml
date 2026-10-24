@@ -1,14 +1,27 @@
-# nmap wrapper — network discovery and port scanning.
+# nmap wrapper — network discovery and port scanning, fully customizable.
+#
+# v4.2.0 mirrors the pentest-tools.com Port Scanner customization surface:
+# scan profiles (Light / Deep / Full sweep / Stealth), top-N port presets
+# (10 / 100 / 1000 / 5000 or an explicit list/range/all), twelve scan
+# techniques, timing templates, version-probe intensity, NSE script
+# categories, traceroute, and no-ping (treat host as up).
 [plugin]
 id = "nmap"
 name = "Network Scanning (nmap)"
-version = "2.0.0"
+version = "3.0.0"
 description = "Host discovery, port enumeration and service detection via nmap"
 long_description = """
-Wraps nmap, the industry standard for network reconnaissance. Supports
-connect/SYN/UDP scan types, explicit port lists or presets, service and OS
-detection. Output is parsed line-by-line into normalized open-port findings,
-with high-risk services flagged automatically.
+Wraps nmap, the industry standard for network reconnaissance. Every knob
+the pentest-tools.com Port Scanner exposes is available here: one-click
+scan profiles (Light, Deep, Full sweep, Stealth, Top 5000), top-N port
+presets (10 / 100 / 1000 / 5000), explicit port lists, ranges or the
+full 1-65535 sweep, twelve scan techniques (SYN, Connect, UDP, ACK,
+Window, Maimon, NULL, FIN, Xmas, SCTP INIT, SCTP COOKIE-ECHO, IP
+protocol), nmap timing templates (T0 paranoid .. T5 insane), version
+probe intensity 0-9, NSE script categories (vuln, default, safe, auth,
+exploit, brute), traceroute, and no-ping mode. Output is parsed
+line-by-line into normalized open-port findings, with high-risk services
+flagged automatically.
 """
 category = "network"
 author = "SecuScan Contributors"
@@ -20,16 +33,22 @@ tags = ["ports", "network", "services"]
 [engine]
 type = "cli"
 binary = "nmap"
-timeout_seconds = 1800
+timeout_seconds = 7200
 output_format = "text"
 argv = [
   "nmap",
-  "--if:safe_mode:then:-T3:else:-T4",
+  "-T{timing}",
   "-s{scan_type}",
   "--if:ports:then:-p:else:--top-ports",
-  "--if:ports:then:{ports}:else:100",
+  "--if:ports:then:{ports}:else:{top_ports}",
   "--if:service_detection:then:-sV",
+  "--if:version_intensity:then:--version-intensity",
+  "--if:version_intensity:then:{version_intensity}",
   "--if:os_detection:then:-O",
+  "--if:traceroute:then:--traceroute",
+  "--if:no_ping:then:-Pn",
+  "--if:scripts:then:--script",
+  "--if:scripts:then:{scripts}",
   "{target}",
 ]
 
@@ -44,29 +63,70 @@ message = "Must be an IP, hostname, or CIDR range"
 
 [[fields]]
 id = "ports"
-label = "Ports"
+label = "Ports (list / range / all)"
 type = "string"
-placeholder = "80,443 or 1-1000"
+placeholder = "22,80,443 or 1-1024 or 1-65535"
 pattern = '^[0-9,\- ]*$'
 message = "Comma-separated ports/ranges, e.g. 80,443,8000-8005"
-help = "Leave empty to scan the top 100 ports."
+help = "Explicit ports override the top-N preset. Use 1-65535 for the full sweep."
+
+[[fields]]
+id = "top_ports"
+label = "Top-N port preset"
+type = "integer"
+default = 100
+min = 1
+max = 5000
+help = "How many of the most-common ports to scan when no explicit list is given (10 / 100 / 1000 / 5000)."
 
 [[fields]]
 id = "scan_type"
-label = "Scan type"
+label = "Scan technique"
 type = "select"
 default = "T"
 options = [
   { value = "S", label = "SYN scan (stealth, needs root)" },
-  { value = "T", label = "Connect scan" },
+  { value = "T", label = "Connect scan (default)" },
   { value = "U", label = "UDP scan" },
+  { value = "A", label = "ACK scan (firewall rules)" },
+  { value = "W", label = "Window scan (TCP Window field)" },
+  { value = "M", label = "Maimon scan (FIN/ACK probe)" },
+  { value = "N", label = "NULL scan (no flags)" },
+  { value = "F", label = "FIN scan (FIN flag only)" },
+  { value = "X", label = "Xmas scan (FIN+PSH+URG)" },
+  { value = "Y", label = "SCTP INIT scan" },
+  { value = "Z", label = "SCTP COOKIE-ECHO scan" },
+  { value = "O", label = "IP protocol scan" },
+]
+
+[[fields]]
+id = "timing"
+label = "Timing template"
+type = "select"
+default = "3"
+options = [
+  { value = "0", label = "T0 paranoid (very slow, evasive)" },
+  { value = "1", label = "T1 sneaky" },
+  { value = "2", label = "T2 polite (slows for shared links)" },
+  { value = "3", label = "T3 normal (default)" },
+  { value = "4", label = "T4 aggressive (fast, reliable LANs)" },
+  { value = "5", label = "T5 insane (fastest, may miss ports)" },
 ]
 
 [[fields]]
 id = "service_detection"
-label = "Service detection (-sV)"
+label = "Detect service version (-sV)"
 type = "boolean"
 default = false
+
+[[fields]]
+id = "version_intensity"
+label = "Version probe intensity (0-9)"
+type = "integer"
+default = 0
+min = 0
+max = 9
+help = "0 = nmap's own default (7). Higher probes more services per port."
 
 [[fields]]
 id = "os_detection"
@@ -75,10 +135,94 @@ type = "boolean"
 default = false
 
 [[fields]]
-id = "safe_mode"
-label = "Safe mode (slow timing)"
+id = "traceroute"
+label = "Traceroute to target"
 type = "boolean"
-default = true
+default = false
+help = "Shows the network path to the target (TCP only)."
+
+[[fields]]
+id = "no_ping"
+label = "Skip host discovery (-Pn)"
+type = "boolean"
+default = false
+help = "Treat the host as up without pinging first."
+
+[[fields]]
+id = "scripts"
+label = "NSE script categories"
+type = "string"
+placeholder = "vuln | default,safe | auth,brute | exploit"
+pattern = '^[a-zA-Z0-9,._-]+$'
+message = "Comma-separated NSE categories or script names"
+help = "Leave empty for no NSE scripts."
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+ports = ""
+top_ports = 100
+service_detection = true
+timing = "4"
+
+[preset_meta.light]
+label = "Light"
+description = "Top 100 ports + service version detection at aggressive timing. Fast triage."
+badge = "fast"
+
+[presets.deep]
+ports = ""
+top_ports = 1000
+service_detection = true
+os_detection = true
+timing = "4"
+
+[preset_meta.deep]
+label = "Deep"
+description = "Top 1000 ports + service version + OS detection at aggressive timing."
+badge = "thorough"
+
+[presets.full-sweep]
+ports = "1-65535"
+service_detection = true
+os_detection = true
+timing = "3"
+
+[preset_meta.full-sweep]
+label = "Full sweep"
+description = "All 65,535 ports with service + OS detection. Slow but leaves nothing unprobed."
+badge = "intense"
+
+[presets.top-5000]
+ports = ""
+top_ports = 5000
+service_detection = true
+timing = "4"
+
+[preset_meta.top-5000]
+label = "Top 5000"
+description = "The 5000 most common ports with service version detection."
+badge = "thorough"
+
+[presets.stealth]
+scan_type = "S"
+timing = "1"
+no_ping = true
+
+[preset_meta.stealth]
+label = "Stealth"
+description = "SYN half-open scan at sneaky timing with host discovery skipped. Evasive profile."
+badge = "stealth"
+
+[presets.vuln-scripts]
+top_ports = 100
+service_detection = true
+scripts = "vuln"
+
+[preset_meta.vuln-scripts]
+label = "Vuln scripts"
+description = "Top 100 ports + the NSE `vuln` script category (CVE-style service checks)."
+badge = "thorough"
 
 [parser]
 type = "line_regex"

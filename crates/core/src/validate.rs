@@ -146,6 +146,29 @@ pub fn validate_manifest(m: &PluginManifest) -> Vec<String> {
         }
     }
 
+    // --- preset_meta (v4.2.0) ----------------------------------------------
+    // Every preset_meta key must reference a declared preset; the UI would
+    // otherwise render a profile card that seeds nothing.
+    for key in m.preset_meta.keys() {
+        if !m.presets.contains_key(key) {
+            errs.push(format!(
+                "preset_meta `{key}` does not match any declared preset"
+            ));
+        }
+    }
+    for (key, meta) in &m.preset_meta {
+        if let Some(label) = &meta.label {
+            if label.trim().is_empty() {
+                errs.push(format!("preset_meta `{key}` label must not be empty"));
+            }
+        }
+        if let Some(desc) = &meta.description {
+            if desc.trim().is_empty() {
+                errs.push(format!("preset_meta `{key}` description must not be empty"));
+            }
+        }
+    }
+
     // --- static rules ------------------------------------------------------
     for (i, r) in m.static_rules.iter().enumerate() {
         if let Err(e) = regex::Regex::new(&r.pattern) {

@@ -27,6 +27,7 @@ argv = [
   "--quiet",
   "--color", "0",
   "--warnings", "off",
+  "--if:fast:then:--fast",
   "{target}",
 ]
 
@@ -38,6 +39,13 @@ required = true
 placeholder = "example.com:443"
 pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_-]*$'
 message = "Host, host:port or URL"
+
+[[fields]]
+id = "fast"
+label = "Fast mode (--fast)"
+type = "boolean"
+default = false
+help = "Skips some checks and omits the slower per-cipher run. Roughly halves the scan time."
 
 [parser]
 type = "passthrough"
@@ -194,3 +202,21 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["testssl.sh"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+fast = true
+
+[preset_meta.quick]
+label = "Quick"
+description = "Fast mode: protocols, cert, and the headline vulnerabilities without the per-cipher sweep."
+badge = "fast"
+
+[presets.full]
+fast = false
+
+[preset_meta.full]
+label = "Full"
+description = "The complete audit: every protocol, every cipher, certificate chain, and the full vulnerability zoo."
+badge = "thorough"

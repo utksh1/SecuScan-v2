@@ -126,3 +126,23 @@ capabilities = ["network", "exploit"]
 
 [dependencies]
 binaries = ["commix"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.conservative]
+level = "1"
+technique = "tbe"
+
+[preset_meta.conservative]
+label = "Conservative"
+description = "Level 1 time-based technique only — blind-safe confirmation with minimal payload traffic."
+badge = "fast"
+
+[presets.aggressive]
+level = "3"
+technique = "tbe,ibe,fbe"
+
+[preset_meta.aggressive]
+label = "Aggressive"
+description = "Level 3 across all three techniques: time-based, interactive DNS callback, and file-based echo markers."
+badge = "intense"

@@ -161,6 +161,7 @@ mod tests {
                 allow_dash: false,
             }],
             presets: BTreeMap::new(),
+            preset_meta: BTreeMap::new(),
             parser: ParserSpec::Passthrough,
             static_rules: vec![],
             safety: SafetySpec {

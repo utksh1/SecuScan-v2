@@ -80,3 +80,21 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["feroxbuster"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+threads = 10
+
+[preset_meta.light]
+label = "Light"
+description = "10 threads — polite content discovery for shared hosting or rate-limited targets."
+badge = "fast"
+
+[presets.deep]
+threads = 40
+
+[preset_meta.deep]
+label = "Deep"
+description = "40 threads — aggressive recursive discovery when the target can take the load."
+badge = "intense"

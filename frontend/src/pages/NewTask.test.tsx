@@ -27,7 +27,22 @@ const PLUGINS = {
         },
         { id: 'safe_mode', label: 'Safe mode', type: 'boolean', required: false, default: true },
       ],
-      presets: { quick: { target: '127.0.0.1' } },
+      presets: {
+        quick: { target: '127.0.0.1', safe_mode: false },
+        deep: { safe_mode: true },
+      },
+      preset_meta: {
+        quick: {
+          label: 'Quick',
+          description: 'Fast top-port triage profile.',
+          badge: 'fast',
+        },
+        deep: {
+          label: 'Deep',
+          description: 'Full port set with longer timeouts.',
+          badge: 'thorough',
+        },
+      },
       safety: {
         level: 'safe',
         requires_consent: true,
@@ -147,6 +162,70 @@ describe('NewTaskPage', () => {
     await userEvent.click(screen.getByRole('button', { name: /preview command/i }))
     await waitFor(() => {
       expect(screen.getByText('native:port_scanner')).toBeInTheDocument()
+    })
+  })
+
+  it('renders scan profile cards with labels, badges and a Custom option', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText(/TCP Port Scanner/)).toBeInTheDocument()
+    })
+    // Profile cards render the human labels + badges from preset_meta.
+    expect(screen.getByText('Quick')).toBeInTheDocument()
+    expect(screen.getByText('Deep')).toBeInTheDocument()
+    expect(screen.getByText(/fast top-port triage profile/i)).toBeInTheDocument()
+    expect(screen.getAllByText('fast').length).toBeGreaterThan(0) // badge chip
+    expect(screen.getByText('Custom')).toBeInTheDocument()
+  })
+
+  it('applying a profile seeds the form and sends the preset with the task', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText(/TCP Port Scanner/)).toBeInTheDocument()
+    })
+    // Click the Quick profile card.
+    await userEvent.click(screen.getByRole('button', { name: /quick/i }))
+    // The target field is seeded from the preset.
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^target/i)).toHaveValue('127.0.0.1')
+    })
+    await userEvent.click(screen.getByRole('checkbox', { name: /authorized to scan/i }))
+    await userEvent.click(screen.getByRole('button', { name: /start scan/i }))
+
+    await waitFor(() => {
+      const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as unknown as [string, RequestInit][]
+      const taskCall = calls.find(([u]) => String(u).endsWith('/tasks'))
+      expect(taskCall).toBeTruthy()
+      if (!taskCall) throw new Error('no task call recorded')
+      const body = JSON.parse(taskCall[1].body as string)
+      expect(body.preset).toBe('quick')
+      expect(body.inputs.target).toBe('127.0.0.1')
+      expect(body.inputs.safe_mode).toBe(false)
+    })
+  })
+
+  it('switching back to Custom clears the preset selection', async () => {
+    renderPage()
+    await waitFor(() => {
+      expect(screen.getByText(/TCP Port Scanner/)).toBeInTheDocument()
+    })
+    await userEvent.click(screen.getByRole('button', { name: /quick/i }))
+    await waitFor(() => {
+      expect(screen.getByLabelText(/^target/i)).toHaveValue('127.0.0.1')
+    })
+    // Switch to Custom.
+    await userEvent.click(screen.getByRole('button', { name: /custom/i }))
+    await userEvent.click(screen.getByRole('checkbox', { name: /authorized to scan/i }))
+    await userEvent.type(screen.getByLabelText(/^target/i), '127.0.0.1')
+    await userEvent.click(screen.getByRole('button', { name: /start scan/i }))
+
+    await waitFor(() => {
+      const calls = (fetch as ReturnType<typeof vi.fn>).mock.calls as unknown as [string, RequestInit][]
+      const taskCall = calls.find(([u]) => String(u).endsWith('/tasks'))
+      expect(taskCall).toBeTruthy()
+      if (!taskCall) throw new Error('no task call recorded')
+      const body = JSON.parse(taskCall[1].body as string)
+      expect(body.preset).toBeUndefined()
     })
   })
 })

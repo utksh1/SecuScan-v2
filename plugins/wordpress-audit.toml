@@ -88,3 +88,23 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["nuclei"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+templates = ""
+concurrency = 15
+
+[preset_meta.light]
+label = "Light"
+description = "The core WordPress template tag set: version disclosure, xmlrpc, debug logs. Fast triage."
+badge = "fast"
+
+[presets.deep]
+templates = ""
+concurrency = 25
+
+[preset_meta.deep]
+label = "Deep"
+description = "The full WordPress tag set — core, plugins, themes, exposures and misconfigurations — at high concurrency."
+badge = "thorough"

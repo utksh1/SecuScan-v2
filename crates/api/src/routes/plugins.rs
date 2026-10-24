@@ -63,6 +63,7 @@ pub fn manifest_to_json(m: &PluginManifest, enabled: bool) -> Value {
         "engine": engine,
         "fields": m.fields.iter().map(field_to_json).collect::<Vec<_>>(),
         "presets": m.presets,
+        "preset_meta": m.preset_meta,
         "safety": {
             "level": m.safety.level.label(),
             "requires_consent": m.safety.requires_consent,
@@ -165,6 +166,7 @@ async fn schema(
         "id": m.plugin.id,
         "fields": m.fields.iter().map(field_to_json).collect::<Vec<_>>(),
         "presets": m.presets,
+        "preset_meta": m.preset_meta,
     })))
 }
 

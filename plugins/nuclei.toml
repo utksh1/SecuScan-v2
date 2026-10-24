@@ -161,3 +161,73 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["nuclei"]
+
+# ---------------------------------------------------------------- profiles ---
+# The pentest-tools.com Network Scanner offers Light / Deep / KEV-only /
+# CVE-focused custom scans; these profiles map that model onto the
+# template-library engine (14k templates: 3.5k CVE, 1.5k KEV, exposures,
+# misconfigs, panels, default logins).
+
+[presets.kev]
+severity = "high,critical"
+tags = "kev"
+concurrency = 25
+
+[preset_meta.kev]
+label = "KEV only"
+description = "Only actively-exploited (CISA KEV catalog) templates, high/critical severity. The fastest high-signal run."
+badge = "fast"
+
+[presets.light]
+severity = "high,critical"
+concurrency = 25
+
+[preset_meta.light]
+label = "Light"
+description = "High + critical severities across the full template library. Skips the low-signal noise."
+badge = "fast"
+
+[presets.cve]
+tags = "cve"
+concurrency = 25
+
+[preset_meta.cve]
+label = "CVE checks"
+description = "The 3,500+ CVE-matching templates across all severities."
+badge = "thorough"
+
+[presets.exposures]
+tags = "exposure"
+concurrency = 25
+
+[preset_meta.exposures]
+label = "Exposures"
+description = "Exposed files, backups, .env, git directories, database dumps and similar disclosures."
+badge = "thorough"
+
+[presets.misconfig]
+tags = "misconfig"
+concurrency = 25
+
+[preset_meta.misconfig]
+label = "Misconfigurations"
+description = "Insecure service and platform configurations: open admin panels, permissive settings, debug modes."
+badge = "thorough"
+
+[presets.panels]
+tags = "panel,default-login"
+concurrency = 25
+
+[preset_meta.panels]
+label = "Panels & logins"
+description = "Admin panels, login pages and default-credential checks."
+badge = "fast"
+
+[presets.deep]
+severity = "unknown,info,low,medium,high,critical"
+concurrency = 15
+
+[preset_meta.deep]
+label = "Deep"
+description = "The entire 14k-template library at every severity, from info to critical. Slowest, most complete run."
+badge = "intense"

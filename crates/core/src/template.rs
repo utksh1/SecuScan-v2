@@ -389,6 +389,7 @@ mod tests {
                 allow_dash: false,
             }],
             presets: Default::default(),
+            preset_meta: Default::default(),
             parser: ParserSpec::Passthrough,
             static_rules: vec![],
             safety: SafetySpec {
