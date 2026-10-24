@@ -284,6 +284,7 @@ async fn health_and_auth_flow() {
     assert_eq!(resp.status(), 200);
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ok");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
 
     // unauthenticated plugin list is rejected
     let resp = c.get(format!("{}/plugins", s.base)).send().await.unwrap();

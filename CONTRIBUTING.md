@@ -26,10 +26,18 @@ cd frontend && npm ci && npm test # 41 tests
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo run -q -p secuscan-cli --locked -- plugins validate ./plugins
 cd frontend && npm run typecheck && npm test && npm run build
+# after unit jobs pass: release server + SPA, then product-surface E2E
+cargo build --locked --release --bin secuscan-server
+node scripts/verify.mjs
 ```
+
+Parser fixtures for the power-engine plugins live in
+`crates/core/tests/plugin_parsers.rs`. A new CLI plugin that emits findings
+should add a sample of its real output there.
 
 ## Adding a plugin
 

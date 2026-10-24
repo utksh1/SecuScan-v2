@@ -3,6 +3,18 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## Unreleased -- Proper CI: catalog, parser fixtures, E2E, Docker smoke
+
+- GitHub Actions now cancels stale runs, uses `--locked`, and has four jobs:
+  backend (fmt/clippy/test/validate), frontend, **e2e** (`verify.mjs` against
+  a release server + built SPA), and Docker **health + login + SPA** smoke.
+- New Rust integration tests load the real `plugins/` tree: catalog size,
+  required ids, consent on exploit plugins, native-engine check.
+- Parser fixtures for nuclei, dalfox, httpx, katana, naabu, smuggler,
+  commix, gitleaks, and subzy — a regex tweak that drops findings fails CI
+  without installing those binaries.
+- Frontend: Scanners page search + category filter coverage.
+
 ## 4.1.0 -- Stronger attack vectors: 7 power engines pentest-tools.com lacks
 
 Direct response to "the plugins are too weak, make them stronger than
