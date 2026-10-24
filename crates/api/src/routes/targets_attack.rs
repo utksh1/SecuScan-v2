@@ -11,8 +11,8 @@
 //! | suite     | hostname/url                                  | ip_address                                |
 //! |-----------|-----------------------------------------------|-------------------------------------------|
 //! | quick     | http-recon + http-headers + dns-lookup       | dns-lookup + nmap (top-100)               |
-//! | web       | quick + website-scanner + param-finder + js-analyzer + nuclei + whatweb + nikto + testssl | (rejected; use quick or internal) |
-//! | full      | web + xss-scanner + api-scanner + subdomain-finder + nmap top-1000 + wordpress-audit + drupal-scanner | nmap top-1000 + smb-enum + ssh-audit + service-defaults |
+//! | web       | quick + website-scanner + param-finder + js-analyzer + nuclei + whatweb + nikto + testssl + http-probe + crawler | (rejected; use quick or internal) |
+//! | full      | web + xss-scanner + api-scanner + subdomain-finder + nmap top-1000 + wordpress-audit + drupal-scanner + subdomain-takeover + http-smuggling + http-probe + crawler | nmap + fast-port-scan + smb-enum + ssh-audit + service-defaults |
 //! | internal  | (rejected; use full)                          | nmap + smb-enum + ssh-audit + service-defaults |
 //!
 //! Every plugin is launched through the standard
@@ -61,6 +61,11 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "whatweb",
             "nikto",
             "testssl",
+            // v4.1.0: http-probe gives fast tech-stack fingerprint +
+            // title/status; katana crawls the surface to discover
+            // endpoints Sniper can pivot on.
+            "http-probe",
+            "crawler",
         ]),
         ("web", "ip_address") => Err(ApiError::BadRequest(
             "the `web` suite requires a hostname or URL target -- use `quick` or `internal` for IP targets".into(),
@@ -82,8 +87,23 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "nmap",
             "wordpress-audit",
             "drupal-scanner",
+            // v4.1.0 power engines -- pentest-tools.com has no
+            // equivalent for any of these. (command-injection and
+            // secrets-scanner are kept as standalone plugins because
+            // they require a URL-with-parameter or filesystem-path
+            // input the generic suite cannot supply.)
+            "subdomain-takeover",
+            "http-smuggling",
+            "http-probe",
+            "crawler",
         ]),
-        ("full", "ip_address") => Ok(vec!["nmap", "smb-enum", "ssh-audit", "service-defaults"]),
+        ("full", "ip_address") => Ok(vec![
+            "nmap",
+            "fast-port-scan",
+            "smb-enum",
+            "ssh-audit",
+            "service-defaults",
+        ]),
         ("internal", "ip_address") => Ok(vec!["nmap", "smb-enum", "ssh-audit", "service-defaults"]),
         ("internal", "hostname" | "url") => Err(ApiError::BadRequest(
             "the `internal` suite requires an IP target -- use `full` for hostname targets".into(),
@@ -306,9 +326,31 @@ mod tests {
     }
 
     #[test]
-    fn pick_suite_full_ip_is_internal_three() {
+    fn pick_suite_web_includes_v410_recon_engines() {
+        // v4.1.0: web suite gains http-probe + crawler.
+        let web = pick_suite("web", "hostname").unwrap();
+        assert!(web.contains(&"http-probe"), "web suite must include http-probe (v4.1.0)");
+        assert!(web.contains(&"crawler"), "web suite must include crawler (v4.1.0)");
+    }
+
+    #[test]
+    fn pick_suite_full_includes_v410_attack_engines() {
+        // v4.1.0: full suite gains the attack engines pentest-tools.com
+        // has no equivalent for. (command-injection and secrets-scanner
+        // are kept as standalone plugins because they require inputs
+        // the generic suite cannot supply.)
+        let full = pick_suite("full", "url").unwrap();
+        assert!(full.contains(&"subdomain-takeover"), "full suite must include subdomain-takeover");
+        assert!(full.contains(&"http-smuggling"), "full suite must include http-smuggling");
+        assert!(full.contains(&"http-probe"));
+        assert!(full.contains(&"crawler"));
+    }
+
+    #[test]
+    fn pick_suite_full_ip_includes_fast_port_scan() {
+        // v4.1.0: IP full suite gains fast-port-scan (naabu) alongside nmap.
         let p = pick_suite("full", "ip_address").unwrap();
-        assert_eq!(p, vec!["nmap", "smb-enum", "ssh-audit", "service-defaults"]);
+        assert_eq!(p, vec!["nmap", "fast-port-scan", "smb-enum", "ssh-audit", "service-defaults"]);
     }
 
     #[test]

@@ -176,6 +176,56 @@ pub fn chains() -> Vec<SniperChain> {
                 step("Security header audit", "http-headers", &[]),
             ],
         },
+        // --- v4.1.0: Subdomain Takeover -- subzy re-verification.
+        // The source finding already carries the takeover URL + service;
+        // subzy re-runs focused on the same hostname to confirm the
+        // dangling CNAME is still claimable. Then http-recon probes the
+        // edge to fingerprint the actual NXDOMAIN/404 marker the SaaS
+        // provider emits when the resource has been freed.
+        SniperChain {
+            category_match: "Subdomain Takeover",
+            steps: vec![
+                step("subzy re-verification", "subdomain-takeover", &[]),
+                step("Edge fingerprint (http-recon)", "http-recon", &[]),
+            ],
+        },
+        // --- v4.1.0: HTTP Request Smuggling -- smuggler re-verification.
+        // The source finding carries the verified class (CL.TE / TE.CL /
+        // TE.TE); smuggler re-runs in verbose mode against the same
+        // endpoint to capture the exact desync payload, then a DAST pass
+        // refreshes context around the affected endpoint.
+        SniperChain {
+            category_match: "Smuggling",
+            steps: vec![
+                step("smuggler re-verification (verbose)", "http-smuggling", &[]),
+                step("Website DAST refresh", "website-scanner", &[]),
+            ],
+        },
+        // --- v4.1.0: Command Injection -- commix verbose re-verification.
+        // The source finding carries the verified parameter + technique;
+        // commix re-runs in verbose mode to capture the exact payload
+        // that achieved execution, then a DAST pass refreshes context.
+        SniperChain {
+            category_match: "Command Injection",
+            steps: vec![
+                step("commix verbose re-verification", "command-injection", &[
+                    ("level", json!(2)),
+                ]),
+                step("Website DAST refresh", "website-scanner", &[]),
+            ],
+        },
+        // --- v4.1.0: Secret Exposure -- gitleaks re-scan + JS analyser
+        // follow-up. The source finding already carries the matched
+        // secret + rule + path; gitleaks re-runs to confirm the secret
+        // still resolves, and js-analyzer sweeps the affected host for
+        // other JS-embedded secret patterns.
+        SniperChain {
+            category_match: "Secret",
+            steps: vec![
+                step("gitleaks re-verification", "secrets-scanner", &[]),
+                step("JS secret-pattern sweep", "js-analyzer", &[]),
+            ],
+        },
         // --- Web (catch-all): headers + recon + fuzz ---
         SniperChain {
             category_match: "HTTP",
@@ -368,6 +418,47 @@ mod tests {
         assert_eq!(ids, vec!["nuclei", "website-scanner", "http-headers"]);
         // The nuclei step focuses on high/critical severities.
         assert_eq!(c.steps[0].inputs.get("severity"), Some(&json!("high,critical")));
+    }
+
+    #[test]
+    fn pick_chain_subdomain_takeover_runs_subzy_then_recon() {
+        // v4.1.0: subdomain-takeover findings get subzy re-verification +
+        // http-recon edge fingerprint.
+        let c = pick_chain("Subdomain Takeover").unwrap();
+        assert_eq!(c.category_match, "Subdomain Takeover");
+        let ids: Vec<&str> = c.steps.iter().map(|s| s.plugin_id).collect();
+        assert_eq!(ids, vec!["subdomain-takeover", "http-recon"]);
+    }
+
+    #[test]
+    fn pick_chain_smuggling_runs_smuggler_then_dast() {
+        // v4.1.0: request-smuggling findings get smuggler re-verification +
+        // DAST refresh.
+        let c = pick_chain("Request Smuggling").unwrap();
+        assert_eq!(c.category_match, "Smuggling");
+        let ids: Vec<&str> = c.steps.iter().map(|s| s.plugin_id).collect();
+        assert_eq!(ids, vec!["http-smuggling", "website-scanner"]);
+    }
+
+    #[test]
+    fn pick_chain_command_injection_runs_commix_then_dast() {
+        // v4.1.0: command-injection findings get commix verbose re-verification +
+        // DAST refresh. The commix step escalates level to 2.
+        let c = pick_chain("Command Injection").unwrap();
+        assert_eq!(c.category_match, "Command Injection");
+        let ids: Vec<&str> = c.steps.iter().map(|s| s.plugin_id).collect();
+        assert_eq!(ids, vec!["command-injection", "website-scanner"]);
+        assert_eq!(c.steps[0].inputs.get("level"), Some(&json!(2)));
+    }
+
+    #[test]
+    fn pick_chain_secret_exposure_runs_gitleaks_then_js_analyzer() {
+        // v4.1.0: secret-exposure findings get gitleaks re-verification +
+        // js-analyzer sweep.
+        let c = pick_chain("Secret Exposure").unwrap();
+        assert_eq!(c.category_match, "Secret");
+        let ids: Vec<&str> = c.steps.iter().map(|s| s.plugin_id).collect();
+        assert_eq!(ids, vec!["secrets-scanner", "js-analyzer"]);
     }
 
     #[test]

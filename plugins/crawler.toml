@@ -1,0 +1,127 @@
+# katana wrapper -- next-generation crawler (v4.1.0 Power Engine).
+#
+# projectdiscovery/katana is the strongest open-source web crawler:
+# standard + headless modes, scope-aware recursion, automatic form
+# submission, JS endpoint extraction, route-aware crawling for
+# SPA frameworks. Each JSONL result line is an endpoint discovered
+# during the crawl with its HTTP method, source (anchor/form/js),
+# and tag attributes.
+[plugin]
+id = "crawler"
+name = "Web Crawler (katana)"
+version = "1.0.0"
+description = "Next-gen crawler: standard + headless, JS endpoint extraction, form submission"
+long_description = """
+Wraps projectdiscovery/katana, the strongest open-source web crawler.
+katana supports standard (HTTP-only) and headless (Chrome) modes,
+scope-aware recursion, automatic form submission, JS endpoint
+extraction, and route-aware crawling for SPA frameworks (React,
+Vue, Angular). Each JSONL result line carries the discovered
+endpoint, the HTTP method, the source (anchor/form/js), and the
+response status. Findings land in the `Crawled Endpoint` category;
+ Sniper chains can pick them up to launch nuclei + param-finder
+against each discovered URL.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "spider"
+difficulty = "intermediate"
+tags = ["crawler", "recon", "spider"]
+
+[engine]
+type = "cli"
+binary = "katana"
+timeout_seconds = 1200
+output_format = "json_lines"
+argv = [
+  "katana",
+  "-u", "{target}",
+  "-jc",
+  "-silent",
+  "-d", "{depth}",
+  "-c", "{concurrency}",
+  "--if:headless:then:-headless",
+  "--if:scope:then:-cs",
+  "--if:scope:then:{scope}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a URL"
+
+[[fields]]
+id = "depth"
+label = "Crawl depth"
+type = "integer"
+default = 3
+min = 1
+max = 10
+
+[[fields]]
+id = "concurrency"
+label = "Concurrency"
+type = "integer"
+default = 10
+min = 1
+max = 50
+
+[[fields]]
+id = "headless"
+label = "Headless (Chrome) mode"
+type = "boolean"
+default = false
+help = "Enable for SPA frameworks. Requires Chrome installed on the server."
+
+[[fields]]
+id = "scope"
+label = "Crawl scope (substring)"
+type = "string"
+placeholder = "example.com"
+pattern = '^[a-zA-Z0-9.*-]+$'
+message = "Domain substring to keep crawling within"
+
+[parser]
+type = "json_lines"
+
+[parser.finding]
+# katana JSONL per-line: {request: {endpoint, method}, response: {status_code, ...}, source: ...}
+title_field = "request.endpoint"
+description_field = "request.method"
+severity_field = "response.status_code"
+url_field = "request.endpoint"
+proof_fields = ["request.endpoint", "source"]
+category = "Crawled Endpoint"
+kind = "suspected_issue"
+metadata_fields = [
+  "request.method",
+  "source",
+  "response.status_code",
+  "response.body",
+  "tag",
+  "attribute",
+]
+
+[parser.severity_map]
+"200" = "info"
+"301" = "info"
+"302" = "info"
+"401" = "low"
+"403" = "low"
+"500" = "medium"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "katana actively crawls the target site (may submit forms, follow links, execute JS in headless mode). Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["katana"]

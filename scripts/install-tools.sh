@@ -247,12 +247,85 @@ if [ ! -f "$TOOLS/wordlists/common.txt" ]; then
     log "SecLists wordlists linked"
 else log "wordlists: present"; fi
 
+# --------------------------------------------------------- v4.1.0 engines ---
+# Seven additional power engines wired in v4.1.0 "Stronger Attack Vectors":
+#   subzy        subdomain takeover (pentest-tools.com has nothing like this)
+#   httpx        fast HTTP probe + tech fingerprint + title/status
+#   katana       next-gen crawler (replaces legacy spiders)
+#   naabu        fast port scanner (top ports in seconds, faster than nmap)
+#   smuggler     HTTP request smuggling (CL.TE / TE.CL / TE.TE detection)
+#   commix       command injection (auto-exploitation of OS-cmd-inj sinks)
+#   gitleaks     secrets detection (AWS/GitHub/Slack/JWT/key patterns)
+#
+# All seven ship pre-built linux_amd64 Go binaries on GitHub releases, so the
+# gh_asset helper handles them without per-tool ceremony.
+
+install_go_binary() {
+    # install_go_binary OWNER REPO BINARY_NAME ASSET_SUBSTR
+    # Re-usable installer for Go-release binaries (one binary inside the archive).
+    local owner="$1" repo="$2" bin="$3" substr="$4"
+    if have "$bin" || [ -x "$OPT/$repo/$bin" ]; then
+        log "$bin: present"
+        return 0
+    fi
+    if gh_asset "$owner" "$repo" "$substr" "$OPT/$repo"; then
+        # The asset may ship the binary at top level, in a versioned dir, or
+        # under a config-style subdir -- walk the tree and symlink the first
+        # executable we find.
+        local found=""
+        for b in "$OPT/$repo/$bin" "$OPT/$repo"/*/"$bin" "$OPT/$repo"/*/*/"$bin"; do
+            if [ -x "$b" ] && [ -f "$b" ]; then found="$b"; break; fi
+        done
+        if [ -n "$found" ]; then
+            ln -sfn "$found" "$BIN/$bin"
+            log "$bin -> $found"
+        else
+            warn "$bin: asset extracted but binary not located"
+        fi
+    else
+        warn "$bin install failed (no asset matched '$substr')"
+    fi
+}
+
+# subzy -- L4ys/subzy: subdomain takeover checker (Go).
+install_go_binary "L4ys" "subzy" "subzy" "linux_amd64"
+
+# httpx -- projectdiscovery/httpx: fast HTTP probe + tech fingerprint.
+# PD release naming convention: <tool>_<version>_linux_amd64.zip
+install_go_binary "projectdiscovery" "httpx" "httpx" "linux_amd64.zip"
+
+# katana -- projectdiscovery/katana: next-generation crawler.
+install_go_binary "projectdiscovery" "katana" "katana" "linux_amd64.zip"
+
+# naabu -- projectdiscovery/naabu: fast port scanner.
+install_go_binary "projectdiscovery" "naabu" "naabu" "linux_amd64.zip"
+
+# smuggler --defparam/smuggler: HTTP request smuggling scanner (Go).
+# Releases ship as smuggler_Linux_x86_64.tar.gz with a single `smuggler` bin.
+install_go_binary "defparam" "smuggler" "smuggler" "Linux_x86_64"
+
+# commix -- commixproject/commix is Python; use the Go port
+# 1N3/commix ships pre-built binaries since v3.7.
+# Fallback: clone the python repo + python wrapper (like sqlmap).
+if ! have commix && [ ! -d "$OPT/commix" ]; then
+    git clone --depth 1 https://github.com/commixproject/commix.git "$OPT/commix" >/dev/null 2>&1 || warn "commix clone failed"
+    cat > "$BIN/commix" <<EOF
+#!/bin/sh
+exec python3 "$OPT/commix/commix.py" --batch "\$@"
+EOF
+    chmod +x "$BIN/commix"
+    log "commix cloned + wrapper (python3 + --batch)"
+else log "commix: present"; fi
+
+# gitleaks -- gitleaks/gitleaks: secrets detection (Go, single binary).
+install_go_binary "gitleaks" "gitleaks" "gitleaks" "linux-amd64.tar.gz"
+
 # ------------------------------------------------------------------ report ---
 log "=========================================================="
 log "tool availability (with $BIN on PATH):"
 export PATH="$BIN:$PATH"
 MISSING=0
-for t in nmap nikto nuclei gobuster sqlmap whatweb ffuf subfinder dalfox testssl.sh wafw00f whois traceroute; do
+for t in nmap nikto nuclei gobuster sqlmap whatweb ffuf subfinder dalfox testssl.sh wafw00f whois traceroute subzy httpx katana naabu smuggler commix gitleaks; do
     if have "$t"; then
         printf '  \033[1;32m%-12s OK\033[0m  (%s)\n' "$t" "$(command -v "$t")"
     else

@@ -167,7 +167,10 @@ async function main() {
   section("plugin catalog");
   const { json: cat } = await req("GET", "/plugins", { token });
   const plugins = cat.items ?? [];
-  ok(plugins.length >= 43, `catalog has >=43 plugins (got ${plugins.length})`);
+  // v4.0.0 shipped 43 plugins; v4.1.0 adds 7 power engines (subdomain-takeover,
+  // http-probe, crawler, fast-port-scan, http-smuggling, command-injection,
+  // secrets-scanner) -> catalog now contains >=50 plugins.
+  ok(plugins.length >= 50, `catalog has >=50 plugins (got ${plugins.length})`);
   const byId = Object.fromEntries(plugins.map((p) => [p.id, p]));
   ok(!!byId["people-hunter"]?.available, "people-hunter available");
   ok(!!byId["xss-exploiter"]?.available, "xss-exploiter available");
@@ -179,6 +182,14 @@ async function main() {
   ok(!!byId["param-finder"]?.available, "param-finder available");
   ok(!!byId["js-analyzer"]?.available, "js-analyzer available");
   ok(!!byId["feroxbuster"], "feroxbuster in catalog");
+  // v4.1.0 power engines -- pentest-tools.com has no equivalent for any of these.
+  ok(!!byId["subdomain-takeover"], "subdomain-takeover (subzy) in catalog (v4.1.0)");
+  ok(!!byId["http-probe"], "http-probe (httpx) in catalog (v4.1.0)");
+  ok(!!byId["crawler"], "crawler (katana) in catalog (v4.1.0)");
+  ok(!!byId["fast-port-scan"], "fast-port-scan (naabu) in catalog (v4.1.0)");
+  ok(!!byId["http-smuggling"], "http-smuggling (smuggler) in catalog (v4.1.0)");
+  ok(!!byId["command-injection"], "command-injection (commix) in catalog (v4.1.0)");
+  ok(!!byId["secrets-scanner"], "secrets-scanner (gitleaks) in catalog (v4.1.0)");
 
   // --- OpenAPI ---------------------------------------------------------------
   section("OpenAPI 3.1 spec");
@@ -215,12 +226,13 @@ async function main() {
   // suite wiring, and the Vulnerability Sniper chain. Skipped (not
   // failed) when the engines are not installed.
   section("Power engines (nuclei + dalfox)");
-  const haveNuclei = await (async () => {
-    try { await execFileChecked("nuclei", ["-version"]); return true; } catch { return false; }
-  })();
-  const haveDalfox = await (async () => {
-    try { await execFileChecked("dalfox", ["--help"]); return true; } catch { return false; }
-  })();
+  // execFileChecked resolves to true (exit 0) or false (non-zero exit /
+  // spawn error / ENOENT). The earlier `await (async () => { try { ... return
+  // true } catch { return false } })()` wrapper was a no-op: execFileChecked
+  // never throws, so the wrapper always returned true and engine tests ran
+  // even when the engines were absent -- producing misleading FAIL lines.
+  const haveNuclei = await execFileChecked("nuclei", ["-version"]);
+  const haveDalfox = await execFileChecked("dalfox", ["--help"]);
   if (!haveNuclei || !haveDalfox) {
     console.log(`  SKIP  nuclei=${haveNuclei} dalfox=${haveDalfox} — install via scripts/install-tools.sh`);
   }
@@ -318,6 +330,18 @@ async function main() {
   }
 
   // Suite wiring: web suite includes nuclei, full includes nuclei + xss-scanner.
+  // v4.1.0: web suite also includes http-probe + crawler; full suite includes
+  // subdomain-takeover + http-smuggling + http-probe + crawler; IP full suite
+  // includes fast-port-scan. The launched list only contains engines whose
+  // binaries are installed; missing binaries are returned in `skipped`.
+  // v4.1.0 power engines -- direct boolean resolution (see note above on
+  // execFileChecked). Each probe is selected to be safe (no network) and
+  // to exit 0 on a healthy install.
+  const haveHttpx = await execFileChecked("httpx", ["-version"]);
+  const haveKatana = await execFileChecked("katana", ["-version"]);
+  const haveNaabu = await execFileChecked("naabu", ["-version"]);
+  const haveSubzy = await execFileChecked("subzy", ["--help"]);
+  const haveSmuggler = await execFileChecked("smuggler", ["-h"]);
   if (haveNuclei && vulnAppUp) {
     const { status: tu, json: urlTarget } = await req("POST", `/workspaces/${wsId}/targets`, {
       token, body: { name: "http://127.0.0.1:8899", description: "vuln app" },
@@ -329,6 +353,11 @@ async function main() {
       ok(sw === 201, "web suite on URL target -> 201");
       const launched = (webSuite.tasks ?? []).map((t) => t.plugin_id);
       ok(launched.includes("nuclei"), `web suite launches nuclei (launched: ${launched.join(",")})`);
+      // v4.1.0: when the new engines are installed, the web suite must
+      // launch them (suite membership is asserted by the Rust unit
+      // tests; this proves the runtime admission pipeline accepts them).
+      if (haveHttpx) ok(launched.includes("http-probe"), "web suite launches http-probe when httpx installed (v4.1.0)");
+      if (haveKatana) ok(launched.includes("crawler"), "web suite launches crawler when katana installed (v4.1.0)");
       const { status: sf, json: fullSuite } = await req("POST", `/targets/${urlTarget.id}/attack`, {
         token, body: { suite: "full" },
       });
@@ -336,8 +365,24 @@ async function main() {
         const fl = (fullSuite.tasks ?? []).map((t) => t.plugin_id);
         ok(fl.includes("nuclei"), "full suite launches nuclei");
         if (haveDalfox) ok(fl.includes("xss-scanner"), "full suite launches xss-scanner (dalfox)");
+        if (haveSubzy) ok(fl.includes("subdomain-takeover"), "full suite launches subdomain-takeover when subzy installed (v4.1.0)");
+        if (haveSmuggler) ok(fl.includes("http-smuggling"), "full suite launches http-smuggling when smuggler installed (v4.1.0)");
+        if (haveHttpx) ok(fl.includes("http-probe"), "full suite launches http-probe when httpx installed (v4.1.0)");
+        if (haveKatana) ok(fl.includes("crawler"), "full suite launches crawler when katana installed (v4.1.0)");
       }
       ok(true, `web suite skipped: ${(webSuite.skipped ?? []).length} plugin(s) with reasons`);
+    }
+  }
+
+  // v4.1.0: when naabu is installed, the IP full suite must launch
+  // fast-port-scan alongside nmap. The IP target already exists.
+  if (haveNaabu) {
+    const { status: ff, json: fullIpSuite } = await req("POST", `/targets/${ipTarget.id}/attack`, {
+      token, body: { suite: "full" },
+    });
+    if (ff === 201) {
+      const fl = (fullIpSuite.tasks ?? []).map((t) => t.plugin_id);
+      ok(fl.includes("fast-port-scan"), "full suite on IP launches fast-port-scan when naabu installed (v4.1.0)");
     }
   }
 

@@ -1,0 +1,98 @@
+# subzy wrapper -- subdomain takeover checker (v4.1.0 Power Engine).
+#
+# Subdomain takeover is a class of bug that pentest-tools.com does not
+# cover at all: when a DNS CNAME points at a decommissioned SaaS edge
+# (GitHub Pages, Heroku, S3, Azure, etc.), an attacker who claims the
+# freed resource can serve arbitrary content from the victim's
+# hostname. subzy fingerprints the CNAME against a known-vulnerable
+# service signature set and asserts exploitability when the edge
+# returns the canonical NXDOMAIN / 404 marker.
+[plugin]
+id = "subdomain-takeover"
+name = "Subdomain Takeover (subzy)"
+version = "1.0.0"
+description = "Detects claimable subdomain takeovers (GitHub Pages, Heroku, S3, Azure, ...)"
+long_description = """
+Wraps L4ys/subzy, the strongest open-source subdomain takeover checker.
+subzy fingerprints each CNAME against a built-in service signature
+catalog (GitHub Pages, Heroku, AWS S3 / CloudFront, Azure, Fastly,
+Pantheon, Tumbler, Shopify, etc.) and asserts exploitability when the
+edge returns the canonical NXDOMAIN / 404 marker the service emits
+when the resource has been freed. Findings land in the `Subdomain
+Takeover` category so the Sniper Auto-Exploiter takeover chain can
+re-verify with subzy focused on the affected hostname.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "link-off"
+difficulty = "intermediate"
+tags = ["takeover", "dns", "subdomain"]
+
+[engine]
+type = "cli"
+binary = "subzy"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "subzy",
+  "run",
+  "--target", "{target}",
+  "--hide-fails",
+  "--if:timeout:then:--timeout",
+  "--if:timeout:then:{timeout}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL or hostname"
+type = "string"
+required = true
+placeholder = "https://sub.example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a URL or hostname"
+
+[[fields]]
+id = "timeout"
+label = "Per-host timeout (seconds)"
+type = "integer"
+default = 10
+min = 1
+max = 60
+
+[parser]
+type = "line_regex"
+# subzy prints logrus-formatted lines. The vulnerable-result line looks
+# like one of:
+#   ERRO[0000] Vulnerable subdomain found: https://sub.example.com Service=GitHub Pages Domain=example.github.io
+#   WARN[...] Vulnerable: https://sub.example.com (Service: GitHub Pages, CNAME: example.github.io)
+# We capture the URL and the service token via NAMED groups (the
+# validator only allows named-group references in templates).
+pattern = '(?i)vulnerable.*?(?P<url>https?://[^\s,)]+).*?(?:service[=:]?\s*|Service=)(?P<service>[A-Za-z][A-Za-z0-9._ -]+?)(?:[,\s]|$)'
+
+[parser.finding]
+title = "Subdomain takeover: {url} via {service}"
+description = "Subdomain {url} points at a decommissioned {service} edge. An attacker who claims the freed resource can serve arbitrary content from the victim hostname."
+remediation = "Remove the dangling DNS CNAME, or re-claim the resource at the SaaS provider, or restrict the CNAME to a resource you control."
+proof = "Vulnerable: {url} ({service})"
+category = "Subdomain Takeover"
+severity = "high"
+
+[[static_rules]]
+pattern = '(?i)vulnerable.*subdomain'
+title = "Subdomain takeover detected by subzy"
+severity = "high"
+description = "subzy fingerprinted a CNAME pointing at a freed SaaS edge that an attacker can claim."
+remediation = "Delete the dangling CNAME or reclaim the resource at the provider."
+category = "Subdomain Takeover"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "subzy sends HTTP probes to verify takeover candidates. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["subzy"]

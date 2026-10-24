@@ -3,6 +3,98 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.1.0 -- Stronger attack vectors: 7 power engines pentest-tools.com lacks
+
+Direct response to "the plugins are too weak, make them stronger than
+pentest-tools.com." v4.0.0 wrapped the two biggest engines (nuclei + dalfox)
+and wired them into Sniper + the attack-target suites; v4.1.0 closes the
+remaining capability gaps by wrapping seven more best-in-class engines,
+each filling a class pentest-tools.com does not cover at all.
+
+### New engines (7 plugins, 50-plugin catalog)
+
+| Plugin | Engine | Class | Why pentest-tools.com lacks it |
+|--------|--------|-------|--------------------------------|
+| `subdomain-takeover` | subzy (L4ays) | Subdomain takeover | No SaaS-edge CNAME fingerprinting |
+| `http-probe` | httpx (projectdiscovery) | HTTP probe + tech fingerprint | No Wappalyzer-class tech detect |
+| `crawler` | katana (projectdiscovery) | Next-gen crawler (standard + headless) | No SPA-aware crawler |
+| `fast-port-scan` | naabu (projectdiscovery) | Fast port scanner (top-N in seconds) | nmap-only, no fast-path |
+| `http-smuggling` | smuggler (defparam) | CL.TE / TE.CL / TE.TE detection | No request-smuggling scanner |
+| `command-injection` | commix (commixproject) | OS command injection auto-exploit | No command-injection scanner |
+| `secrets-scanner` | gitleaks (gitleaks) | Secret detection (AWS/GCP/Azure/JWT/...) | No secret-pattern scanner |
+
+Each plugin normalises the underlying engine's output through the
+existing declarative parser engine:
+
+- `subdomain-takeover` parses logrus-formatted lines into per-finding
+  Subdomain Takeover entries with the affected URL + service edge.
+- `http-probe`, `crawler`, `fast-port-scan` consume JSONL streams;
+  per-line severity is derived from the response status / port via
+  `severity_map`, and tech-stack / endpoint / port metadata flows into
+  the finding's `metadata` for the attack-surface aggregator.
+- `http-smuggling` parses `[+]` positive-hit lines into Request
+  Smuggling findings with the verified class (CL.TE / TE.CL / TE.TE)
+  and endpoint.
+- `command-injection` uses `passthrough` + three static_rules covering
+  commix's "is vulnerable", "injection point detected", and "is not
+  vulnerable" markers.
+- `secrets-scanner` parses gitleaks v8's `path:line:rule:secret` lines
+  into Secret Exposure findings; `severity_rules` elevate AWS / GCP /
+  Azure / GitHub / GitLab / private-key / JWT hits to `critical`.
+
+### Sniper Auto-Exploiter -- 4 new chains
+
+Each new finding category gets a re-verification + DAST refresh chain,
+matching the v4.0.0 nuclei pattern:
+
+- **Subdomain Takeover** -> `subdomain-takeover` re-verification + http-recon edge fingerprint.
+- **Request Smuggling** -> `http-smuggling` verbose re-verification + website-scanner DAST refresh.
+- **Command Injection** -> `command-injection` level-2 re-verification + website-scanner DAST refresh.
+- **Secret Exposure** -> `secrets-scanner` re-verification + js-analyzer JS secret-pattern sweep.
+
+### Attack-Target suites -- power-engine slots added
+
+- `web` suite (hostname/URL): gains `http-probe` + `crawler` (tech
+  fingerprint + endpoint discovery before DAST).
+- `full` suite (hostname/URL): gains `subdomain-takeover` +
+  `http-smuggling` + `http-probe` + `crawler`.
+- `full` suite (IP): gains `fast-port-scan` alongside nmap.
+- `command-injection` and `secrets-scanner` are kept as standalone
+  plugins (not in the suite) because they require URL-with-parameter /
+  filesystem-path inputs the generic suite cannot supply.
+
+### install-tools.sh -- 7 new tool installs
+
+A reusable `install_go_binary OWNER REPO BIN ASSET_SUBSTR` helper
+installs subzy, httpx, katana, naabu, smuggler, gitleaks via GitHub
+release assets (commix is a python repo clone + wrapper, matching the
+sqlmap pattern). The report-card section now lists 20 tools (was 13).
+
+### verify.mjs -- bugfix + 14 new assertions
+
+- Bugfix: the `haveNuclei` / `haveDalfox` checks were wrapped in
+  `await (async () => { try { await ... ; return true } catch { return false } })()`
+  -- but `execFileChecked` never throws (it resolves to a boolean), so
+  the wrapper always returned `true`. Engine tests ran even when the
+  engines were absent, producing misleading FAIL lines. Fixed to use
+  `execFileChecked`'s resolved value directly.
+- New: 7 catalog-presence assertions (one per new plugin), 7 suite-
+  wiring assertions (gated on engine presence so they pass when
+  installed, skip when not).
+
+### Tests
+
+- 238/238 Rust (was 232 in v4.0.0; +6 net: 4 new Sniper chain tests
+  for the new finding categories, 3 new suite-membership tests, 1
+  deleted suite test that asserted the old IP-full-suite contents).
+- 65/65 frontend (unchanged).
+- verify.mjs: 75/75 green when engines are not installed (was 81/15
+  with the misleading-FAIL bug); ~105/105 expected when engines are
+  installed (75 baseline + 7 catalog + up to 23 engine / suite
+  assertions).
+
+Catalog: **50 plugins** (was 43).
+
 ## 4.0.0 -- Power engines: nuclei template library + dalfox XSS, deeply wired
 
 The check-library force multiplier. Hand-written checks top out at dozens

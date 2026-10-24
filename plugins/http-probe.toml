@@ -1,0 +1,126 @@
+# httpx wrapper -- fast HTTP probing & tech fingerprint (v4.1.0 Power Engine).
+#
+# projectdiscovery/httpx is the strongest open-source HTTP prober: it
+# accepts a target list, follows redirects, fingerprints the
+# webserver + framework + CDN + WAF via Wappalyzer tech detection,
+# extracts the response title and status code, and probes HTTPS
+# fallback. Each JSONL line carries all of that; we normalise it
+# into a single "Web Service Discovered" finding per live endpoint,
+# with the tech stack + status + title in metadata.
+[plugin]
+id = "http-probe"
+name = "HTTP Probe (httpx)"
+version = "1.0.0"
+description = "Fast HTTP probing, title/status extraction, tech-stack fingerprint"
+long_description = """
+Wraps projectdiscovery/httpx, the strongest open-source HTTP probe.
+httpx accepts a target list, follows redirects, fingerprints the
+webserver + framework + CDN + WAF via Wappalyzer tech detection,
+extracts the response title and status code, and probes HTTPS
+fallback. Each JSONL result line carries the resolved IP, the
+final URL after redirects, the response status, the page title,
+the detected tech stack, the CDN, the WAF (if any), and the
+response body hash. Findings land in the `Web Service` category so
+Sniper can follow up with nuclei + website-scanner against the
+confirmed-live endpoint.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "globe"
+difficulty = "beginner"
+tags = ["recon", "http", "fingerprint"]
+
+[engine]
+type = "cli"
+binary = "httpx"
+timeout_seconds = 600
+output_format = "json_lines"
+argv = [
+  "httpx",
+  "-u", "{target}",
+  "-json",
+  "-silent",
+  "-title",
+  "-tech-detect",
+  "-status-code",
+  "-follow-redirects",
+  "-threads", "{threads}",
+  "--if:timeout:then:-timeout",
+  "--if:timeout:then:{timeout}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL or hostname"
+type = "string"
+required = true
+placeholder = "https://example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a URL or hostname"
+
+[[fields]]
+id = "threads"
+label = "Threads"
+type = "integer"
+default = 10
+min = 1
+max = 50
+
+[[fields]]
+id = "timeout"
+label = "Per-host timeout (seconds)"
+type = "integer"
+default = 10
+min = 1
+max = 60
+
+[parser]
+type = "json_lines"
+
+[parser.finding]
+# httpx JSONL per-line: {url, status_code, title, tech, host, scheme, ...}
+title_field = "title"
+description_field = "url"
+severity_field = "status_code"
+url_field = "url"
+proof_fields = ["url", "scheme", "webserver"]
+category = "Web Service"
+kind = "suspected_issue"
+# Tech stack + status + title flow into metadata for the attack-surface
+# aggregator and Sniper's follow-up step selection.
+metadata_fields = [
+  "tech",
+  "webserver",
+  "cdn",
+  "host",
+  "scheme",
+  "status_code",
+  "title",
+  "content_type",
+  "method",
+  "vhost",
+]
+
+# HTTP status codes map to platform severities; httpx emits the numeric
+# status_code field, so the parser maps it through this table.
+[parser.severity_map]
+"200" = "info"
+"301" = "info"
+"302" = "info"
+"401" = "low"
+"403" = "low"
+"404" = "info"
+"500" = "medium"
+"503" = "medium"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "httpx sends HTTP HEAD/GET probes. Only scan authorized targets."
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["httpx"]

@@ -1,0 +1,156 @@
+# naabu wrapper -- fast port scanner (v4.1.0 Power Engine).
+#
+# projectdiscovery/naabu is the strongest open-source fast port
+# scanner: SYN/connect scan with masscan-class throughput on the
+# top-1000, top-100, or arbitrary port ranges, IPv6 support, and
+# nmap-style service integration via `-sV`. For top-N scans it
+# finishes in seconds where nmap takes minutes. JSONL output gives
+# us ip, port, host per line.
+[plugin]
+id = "fast-port-scan"
+name = "Fast Port Scan (naabu)"
+version = "1.0.0"
+description = "High-throughput port scanner for top-N or custom port ranges"
+long_description = """
+Wraps projectdiscovery/naabu, the strongest open-source fast port
+scanner. naabu does SYN or connect() scanning with masscan-class
+throughput on the top-100, top-1000, or arbitrary port ranges, with
+optional `-sV` service integration via nmap. For top-N scans it
+finishes in seconds where nmap takes minutes; for full-range scans
+it scales linearly with no nmap's NSE overhead. Each JSONL result
+line carries the resolved IP, the open port, and the hostname.
+Findings land in the `Network Service` category so Sniper can
+follow up with nmap service detection + ssh-audit + smb-enum on
+the confirmed-open ports.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "zap"
+difficulty = "intermediate"
+tags = ["ports", "network", "recon"]
+
+[engine]
+type = "cli"
+binary = "naabu"
+timeout_seconds = 900
+output_format = "json_lines"
+argv = [
+  "naabu",
+  "-host", "{target}",
+  "-json",
+  "-silent",
+  # scan_type is a select; conditionals can't reference select fields, so
+  # we substitute the value directly (same pattern as the nmap plugin).
+  "-s{scan_type}",
+  "--if:ports:then:-p:else:-top-ports",
+  "--if:ports:then:{ports}:else:1000",
+  "--if:service_detection:then:-sV",
+  "--if:rate:then:-rate",
+  "--if:rate:then:{rate}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "192.168.1.1, lab.local, or 10.0.0.0/24"
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
+message = "Must be an IP, hostname, or CIDR range"
+
+[[fields]]
+id = "ports"
+label = "Ports"
+type = "string"
+placeholder = "80,443,8000-8005 or leave empty for top-1000"
+pattern = '^[0-9,\- ]*$'
+message = "Comma-separated ports/ranges"
+help = "Leave empty to scan the top 1000 ports (naabu's default fast preset)."
+
+[[fields]]
+id = "scan_type"
+label = "Scan type"
+type = "select"
+default = "c"
+options = [
+  { value = "s", label = "SYN scan (stealth, needs root)" },
+  { value = "c", label = "Connect scan" },
+]
+
+[[fields]]
+id = "service_detection"
+label = "Service detection (-sV, via nmap)"
+type = "boolean"
+default = false
+
+[[fields]]
+id = "rate"
+label = "Packets per second (0 = unlimited)"
+type = "integer"
+default = 1000
+min = 0
+max = 100000
+
+[parser]
+type = "json_lines"
+
+[parser.finding]
+# naabu JSONL per-line: {ip, port, host, ...}
+title_field = "port"
+description_field = "ip"
+severity_field = "port"
+url_field = "ip"
+proof_fields = ["ip", "port", "host"]
+category = "Network Service"
+kind = "suspected_issue"
+metadata_fields = [
+  "ip",
+  "port",
+  "host",
+  "name",
+  "service.name",
+]
+
+[parser.severity_map]
+"22" = "low"
+"23" = "low"
+"21" = "low"
+"25" = "info"
+"53" = "info"
+"80" = "info"
+"110" = "low"
+"135" = "low"
+"139" = "low"
+"143" = "low"
+"443" = "info"
+"445" = "low"
+"993" = "info"
+"995" = "info"
+"1433" = "low"
+"1521" = "low"
+"3306" = "low"
+"3389" = "low"
+"5432" = "low"
+"5900" = "low"
+"6379" = "low"
+"9200" = "low"
+"27017" = "low"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "naabu sends SYN/connect probes at high rate. Only scan authorized targets; rate-limit on shared networks."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 2
+max_per_hour = 20
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["naabu"]

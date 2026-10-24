@@ -1,0 +1,128 @@
+# commix wrapper -- command injection auto-exploiter (v4.1.0 Power Engine).
+#
+# commix (commixproject/commix) is the strongest open-source command
+# injection scanner: it fuzzes every parameter with a battery of
+# OS-command-injection payloads (Unix + Windows), verifies
+# execution by triggering a side-effect (sleep, echo marker, DNS
+# callback), and supports blind / semi-blind / reflected contexts.
+# pentest-tools.com has no equivalent -- this is a clear capability
+# gap we close.
+[plugin]
+id = "command-injection"
+name = "Command Injection (commix)"
+version = "1.0.0"
+description = "Auto-exploits OS command injection sinks (Unix/Windows, blind/semi-blind/reflected)"
+long_description = """
+Wraps commixproject/commix, the strongest open-source OS command
+injection scanner. commix fuzzes every parameter with a battery of
+OS-command-injection payloads (Unix + Windows), verifies execution
+by triggering a measurable side-effect (sleep delay, echo marker,
+DNS callback), and supports blind / semi-blind / reflected
+contexts. Findings land in the `Command Injection` category;
+Sniper chains re-verify with commix in verbose mode and capture
+the verified payload as proof.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "terminal"
+difficulty = "advanced"
+tags = ["injection", "rce", "exploit"]
+
+[engine]
+type = "cli"
+binary = "commix"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "commix",
+  "--url={target}",
+  "--batch",
+  "--level={level}",
+  "--technique={technique}",
+  "--if:cookie:then:--cookie",
+  "--if:cookie:then:{cookie}",
+  "--if:headers:then:-H",
+  "--if:headers:then:{headers}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL with parameter"
+type = "string"
+required = true
+placeholder = "http://lab.local/ping?q=127.0.0.1"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~\[\]-]*$'
+message = "Must be a full URL including the parameter to test"
+
+[[fields]]
+id = "level"
+label = "Level"
+type = "select"
+default = "1"
+options = [
+  { value = "1", label = "1 — conservative (default)" },
+  { value = "2", label = "2" },
+  { value = "3", label = "3 — extensive" },
+]
+
+[[fields]]
+id = "technique"
+label = "Technique"
+type = "select"
+default = "tbe"
+options = [
+  { value = "tbe", label = "time-based (default; works blind)" },
+  { value = "ibe", label = "interactive-based (DNS callback)" },
+  { value = "fbe", label = "file-based (echo marker to a file)" },
+  { value = "tbe,ibe,fbe", label = "all three (most thorough)" },
+]
+
+[[fields]]
+id = "cookie"
+label = "Cookie header (optional)"
+type = "string"
+placeholder = "session=abc123"
+
+[[fields]]
+id = "headers"
+label = "Extra headers (optional)"
+type = "string"
+placeholder = "X-Api-Key: abc"
+
+[parser]
+type = "passthrough"
+
+[[static_rules]]
+pattern = '(?i)the.*parameter.*seems.*vulnerable.*to.*command.*injection'
+title = "Command injection confirmed by commix"
+severity = "critical"
+description = "commix verified that a parameter in the target URL is injectable. The exact payload + technique is in the raw output."
+remediation = "Avoid passing user input to shell interpreters. If unavoidable, use a strict allowlist of values and shell-escape every input; prefer language-native exec() with arg-vector invocation (no shell)."
+category = "Command Injection"
+
+[[static_rules]]
+pattern = '(?i)\(\*\).*injection.*point.*detected'
+title = "Injection point detected by commix"
+severity = "high"
+description = "commix flagged an injection point. See the raw output for the parameter and the technique."
+remediation = "Avoid passing user input to shell interpreters; use language-native exec() with arg-vector invocation."
+category = "Command Injection"
+
+[[static_rules]]
+pattern = '(?i)is not vulnerable'
+title = "No command injection found by commix"
+severity = "info"
+description = "commix found no injectable parameters at the configured level/technique. Higher levels test more payloads and edge cases."
+category = "Command Injection"
+
+[safety]
+level = "exploit"
+requires_consent = true
+consent_message = "EXPLICIT AUTHORIZATION REQUIRED: commix actively exploits command injection and may execute OS commands on the target. Use only on systems you own or are contracted to test."
+max_concurrent = 1
+max_per_hour = 4
+capabilities = ["network", "exploit"]
+
+[dependencies]
+binaries = ["commix"]

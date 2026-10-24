@@ -1,0 +1,113 @@
+# smuggler wrapper -- HTTP request smuggling scanner (v4.1.0 Power Engine).
+#
+# HTTP request smuggling (CL.TE / TE.CL / TE.TE) is a class of bug
+# pentest-tools.com does not cover at all: front-end and back-end
+# servers disagree on where the request body ends, allowing an
+# attacker to prefix the next user's request with attacker-controlled
+# bytes (session hijack, cache poisoning, auth bypass). defparam/
+# smuggler automates CL.TE / TE.CL / TE.TE probe generation against
+# a single URL or a Burp-style request file.
+[plugin]
+id = "http-smuggling"
+name = "HTTP Smuggling (smuggler)"
+version = "1.0.0"
+description = "Detects CL.TE / TE.CL / TE.TE HTTP request smuggling"
+long_description = """
+Wraps defparam/smuggler, the strongest open-source HTTP request
+smuggling scanner. smuggler automates the time-of-check-to-time-of-use
+probe generation for the three canonical smuggling classes:
+CL.TE (front-end uses Content-Length, back-end uses Transfer-Encoding),
+TE.CL (the reverse), and TE.TE (obfuscation of the TE header). Each
+hit is a verified smuggling vector with the exact payload that
+reproduces the desync. Findings land in the `Request Smuggling`
+category; Sniper chains re-verify with smuggler focused on the
+affected endpoint before reporting.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "arrow-right-left"
+difficulty = "advanced"
+tags = ["smuggling", "web", "injection"]
+
+[engine]
+type = "cli"
+binary = "smuggler"
+timeout_seconds = 600
+output_format = "text"
+argv = [
+  "smuggler",
+  "-u", "{target}",
+  "-q",
+  # method is a select; conditionals can't reference select fields, so we
+  # pass `-m {method}` directly (smuggler's method flag takes the next
+  # arg as the value).
+  "-m", "{method}",
+  "--if:timeout:then:-t",
+  "--if:timeout:then:{timeout}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com/"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a URL"
+
+[[fields]]
+id = "method"
+label = "HTTP method to test"
+type = "select"
+default = "POST"
+options = [
+  { value = "POST", label = "POST (default for body-based smuggling)" },
+  { value = "GET", label = "GET" },
+  { value = "PUT", label = "PUT" },
+  { value = "BREW", label = "BREW (custom method)" },
+]
+
+[[fields]]
+id = "timeout"
+label = "Per-probe timeout (seconds)"
+type = "integer"
+default = 5
+min = 1
+max = 30
+
+[parser]
+type = "line_regex"
+# smuggler's positive hits look like:
+#   [+] Found CL.TE smuggling on endpoint / with method POST
+#   [+] TE.CL Confirmed
+# We use NAMED capture groups (the validator only allows named-group
+# references in templates).
+pattern = '(?i)\[\+\].*?(?P<class>CL\.TE|TE\.CL|TE\.TE)\s*(?:smuggling|confirmed|found)?\s*(?:on|against)?\s*(?:endpoint\s*)?(?P<endpoint>[^\s,]*)?'
+
+[parser.finding]
+title = "HTTP {class} request smuggling"
+description = "smuggler verified a {class} request-smuggling vector on endpoint {endpoint}. An attacker can prefix the next user's request with attacker-controlled bytes (session hijack, cache poisoning, auth bypass)."
+remediation = "Reject malformed Transfer-Encoding headers and any request that contains both Content-Length and Transfer-Encoding. Disambiguate by enforcing one and only one body-length mechanism in the back-end."
+proof = "{class} smuggling on {endpoint}"
+category = "Request Smuggling"
+severity = "high"
+
+[[static_rules]]
+pattern = '(?i)\[\+\].*(CL\.TE|TE\.CL|TE\.TE).*'
+title = "HTTP request smuggling vector confirmed by smuggler"
+severity = "high"
+description = "smuggler verified a request-smuggling vector. The exact CL.TE / TE.CL / TE.TE class is shown in the raw output."
+remediation = "Reject requests with both Content-Length and Transfer-Encoding. Force the back-end to honour a single body-length mechanism."
+category = "Request Smuggling"
+
+[safety]
+level = "exploit"
+requires_consent = true
+consent_message = "EXPLICIT AUTHORIZATION REQUIRED: smuggler sends crafted desync probes that can interfere with other users on shared infrastructure (proxies, CDNs, load balancers). Use only on systems you own or are contracted to test."
+max_concurrent = 1
+max_per_hour = 4
+capabilities = ["network", "exploit"]
+
+[dependencies]
+binaries = ["smuggler"]
