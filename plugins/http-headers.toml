@@ -2,7 +2,7 @@
 [plugin]
 id = "http-headers"
 name = "HTTP Security Headers"
-version = "1.0.0"
+version = "1.1.0"
 description = "Checks missing security headers, cookie flags and HTTPS redirect"
 long_description = """
 Fetches a URL and audits the response against widely accepted hardening
@@ -55,3 +55,23 @@ consent_message = "Sends a small number of benign GET/OPTIONS requests to the ta
 max_concurrent = 4
 max_per_hour = 120
 capabilities = ["network"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+follow_redirects = false
+timeout_ms = 5000
+
+[preset_meta.quick]
+label = "Quick"
+description = "Audit the first response only — no redirect chasing, 5s timeout. Seconds-fast triage of the immediate headers."
+badge = "fast"
+
+[presets.full]
+follow_redirects = true
+timeout_ms = 15000
+
+[preset_meta.full]
+label = "Full"
+description = "Follow up to 5 redirects and audit the final landing page. Catches hardening gaps hidden behind a redirect chain."
+badge = "thorough"

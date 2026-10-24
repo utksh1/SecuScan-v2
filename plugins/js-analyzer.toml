@@ -2,7 +2,7 @@
 [plugin]
 id = "js-analyzer"
 name = "JavaScript Analyzer"
-version = "1.0.0"
+version = "1.1.0"
 description = "Harvest same-origin JS for API paths, source maps, and redacted secret patterns"
 long_description = """
 Fetches the landing page and a bounded set of same-origin .js files.
@@ -54,3 +54,23 @@ consent_message = "Fetches HTML and same-origin JavaScript. Only scan authorized
 max_concurrent = 3
 max_per_hour = 40
 capabilities = ["network"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+max_scripts = 3
+timeout_ms = 6000
+
+[preset_meta.light]
+label = "Light"
+description = "First 3 same-origin scripts, 6s per-request timeout. Seconds-fast triage of the obvious bundle."
+badge = "fast"
+
+[presets.deep]
+max_scripts = 20
+timeout_ms = 15000
+
+[preset_meta.deep]
+label = "Deep"
+description = "Up to 20 same-origin scripts, 15s per-request timeout. Walks the full bundle chain; catches lazy-loaded chunks Light skips."
+badge = "intense"

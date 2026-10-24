@@ -2,7 +2,7 @@
 [plugin]
 id = "param-finder"
 name = "Hidden Parameter Finder"
-version = "1.0.0"
+version = "1.1.0"
 description = "Discover accepted query parameters via canary reflection and response deltas"
 long_description = """
 In-process port of the x8 hidden-parameter technique. Baselines the URL,
@@ -54,3 +54,23 @@ consent_message = "Sends one extra query parameter per name. Only scan authorize
 max_concurrent = 2
 max_per_hour = 30
 capabilities = ["network"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+max_params = 30
+timeout_ms = 6000
+
+[preset_meta.light]
+label = "Light"
+description = "Top 30 common parameter names, 6s per-request timeout. Seconds-fast triage of the obvious hidden inputs."
+badge = "fast"
+
+[presets.deep]
+max_params = 80
+timeout_ms = 15000
+
+[preset_meta.deep]
+label = "Deep"
+description = "Full 80-name candidate list, 15s per-request timeout. Slowest but catches the long-tail parameters Light skips."
+badge = "intense"

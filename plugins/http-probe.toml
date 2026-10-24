@@ -10,7 +10,7 @@
 [plugin]
 id = "http-probe"
 name = "HTTP Probe (httpx)"
-version = "1.0.0"
+version = "1.1.0"
 description = "Fast HTTP probing, title/status extraction, tech-stack fingerprint"
 long_description = """
 Wraps projectdiscovery/httpx, the strongest open-source HTTP probe.
@@ -23,6 +23,12 @@ the detected tech stack, the CDN, the WAF (if any), and the
 response body hash. Findings land in the `Web Service` category so
 Sniper can follow up with nuclei + website-scanner against the
 confirmed-live endpoint.
+
+v4.2.1 adds two one-click scan profiles (Light / Deep) that mirror
+the pentest-tools.com customization surface — Light issues HEAD
+probes at 25 threads with no redirect following (seconds-fast
+triage), Deep issues GET probes at 50 threads with full redirect
+chasing.
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -44,10 +50,10 @@ argv = [
   "-title",
   "-tech-detect",
   "-status-code",
-  "-follow-redirects",
-  "-threads", "{threads}",
-  "--if:timeout:then:-timeout",
-  "--if:timeout:then:{timeout}",
+  "-x", "{method}",
+  "-t", "{threads}",
+  "-timeout", "{timeout}",
+  "--if:follow_redirects:then:-follow-redirects",
 ]
 
 [[fields]]
@@ -58,6 +64,16 @@ required = true
 placeholder = "https://example.com"
 pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
 message = "Must be a URL or hostname"
+
+[[fields]]
+id = "method"
+label = "HTTP method"
+type = "select"
+default = "GET"
+options = [
+  { value = "GET", label = "GET (full body, slower)" },
+  { value = "HEAD", label = "HEAD (headers only, fastest)" },
+]
 
 [[fields]]
 id = "threads"
@@ -74,6 +90,13 @@ type = "integer"
 default = 10
 min = 1
 max = 60
+
+[[fields]]
+id = "follow_redirects"
+label = "Follow redirects"
+type = "boolean"
+default = true
+help = "Chase 3xx redirect chains. Disabled in the Light profile."
 
 [parser]
 type = "json_lines"
@@ -124,3 +147,27 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["httpx"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+method = "HEAD"
+threads = 25
+timeout = 5
+follow_redirects = false
+
+[preset_meta.light]
+label = "Light"
+description = "HEAD probes at 25 threads, 5s timeout, no redirect following. Seconds-fast liveness triage."
+badge = "fast"
+
+[presets.deep]
+method = "GET"
+threads = 50
+timeout = 15
+follow_redirects = true
+
+[preset_meta.deep]
+label = "Deep"
+description = "GET probes at 50 threads, 15s timeout, full redirect chain. Slower but captures tech stack on the final landing page."
+badge = "intense"

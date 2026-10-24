@@ -2,13 +2,19 @@
 [plugin]
 id = "subfinder"
 name = "Subdomain Finder (subfinder, passive)"
-version = "1.0.0"
+version = "1.1.0"
 description = "Passive subdomain discovery from public data sources"
 long_description = """
 Wraps subfinder for passive subdomain enumeration: it queries dozens of
 public sources (certificate transparency, DNS aggregators, search archives)
 without touching the target's own infrastructure. No API keys required for
 the default sources.
+
+v4.2.1 adds three one-click scan profiles (Light / Standard / Exhaustive)
+that mirror the pentest-tools.com customization surface — Light runs a
+flat non-recursive query against the default source set, Standard adds
+recursive enumeration of discovered zones, Exhaustive also surfaces
+wildcard-parked hosts (filtered by default to reduce noise).
 """
 category = "recon"
 author = "SecuScan Contributors"
@@ -27,6 +33,7 @@ argv = [
   "-d", "{target}",
   "-silent",
   "--if:exclude_wildcard:then:-nW",
+  "--if:recursive:then:-recursive",
 ]
 
 [[fields]]
@@ -43,6 +50,14 @@ id = "exclude_wildcard"
 label = "Filter wildcard hosts"
 type = "boolean"
 default = true
+help = "Drop hosts that resolve to a wildcard-parked IP. Disabled in the Exhaustive profile."
+
+[[fields]]
+id = "recursive"
+label = "Recursive enumeration"
+type = "boolean"
+default = false
+help = "Re-run subfinder against each discovered zone. Disabled in Light, enabled in Standard and Exhaustive."
 
 [parser]
 type = "line_regex"
@@ -68,3 +83,32 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["subfinder"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+recursive = false
+exclude_wildcard = true
+
+[preset_meta.light]
+label = "Light"
+description = "Flat non-recursive query against the default source set, wildcards filtered. Seconds-fast passive triage."
+badge = "fast"
+
+[presets.standard]
+recursive = true
+exclude_wildcard = true
+
+[preset_meta.standard]
+label = "Standard"
+description = "Recursive enumeration of discovered zones, wildcards still filtered. The historical default depth."
+badge = "thorough"
+
+[presets.exhaustive]
+recursive = true
+exclude_wildcard = false
+
+[preset_meta.exhaustive]
+label = "Exhaustive"
+description = "Recursive enumeration, wildcards surfaced (no -nW). Most complete coverage but adds parked-host noise."
+badge = "intense"

@@ -192,11 +192,14 @@ async function main() {
   ok(!!byId["secrets-scanner"], "secrets-scanner (gitleaks) in catalog (v4.1.0)");
 
   // --- v4.2.0: scan profiles (Light/Deep/Custom model) ------------------------
-  section("scan profiles (v4.2.0 presets)");
+  section("scan profiles (v4.2.0+ presets)");
   // Every key scanner ships one-click profiles with presentation metadata
   // (label + description + badge), mirroring the pentest-tools.com
-  // Light/Deep/Custom customization surface.
+  // Light/Deep/Custom customization surface. v4.2.1 extended coverage to
+  // 19 more scanners (smb-enum, ssh-audit, api-scanner, subdomain-finder,
+  // and the rest of the catalog's active scanners).
   const profileExpectations = [
+    // v4.2.0 baseline (13 scanners, 39 profiles)
     ["port-scanner", ["fast", "light", "deep"]],
     ["nmap", ["light", "deep", "full-sweep", "top-5000", "stealth", "vuln-scripts"]],
     ["nuclei", ["kev", "light", "cve", "exposures", "misconfig", "panels", "deep"]],
@@ -210,6 +213,26 @@ async function main() {
     ["testssl", ["quick", "full"]],
     ["crawler", ["shallow", "deep"]],
     ["feroxbuster", ["light", "deep"]],
+    // v4.2.1 follow-up batch (19 scanners)
+    ["smb-enum", ["quick", "standard", "deep"]],
+    ["ssh-audit", ["quick", "standard", "deep"]],
+    ["api-scanner", ["quick", "standard", "deep"]],
+    ["subdomain-finder", ["passive", "standard", "deep"]],
+    ["ffuf", ["quick", "deep"]],
+    ["gobuster", ["quick", "deep"]],
+    ["http-probe", ["light", "deep"]],
+    ["whatweb", ["passive", "polite", "aggressive", "heavy"]],
+    ["waf-detect", ["quick", "deep"]],
+    ["http-smuggling", ["quick", "full"]],
+    ["secrets-scanner", ["quick", "full"]],
+    ["subdomain-takeover", ["quick", "full"]],
+    ["subfinder", ["light", "standard", "exhaustive"]],
+    ["service-defaults", ["quick", "standard", "deep"]],
+    ["http-headers", ["quick", "full"]],
+    ["vhost-finder", ["light", "deep"]],
+    ["domain-finder", ["light", "deep"]],
+    ["param-finder", ["light", "deep"]],
+    ["js-analyzer", ["light", "deep"]],
   ];
   let profilesTotal = 0;
   for (const [pid, names] of profileExpectations) {
@@ -223,6 +246,8 @@ async function main() {
     profilesTotal += presetNames.length;
   }
   ok(profilesTotal >= 35, `catalog ships >=35 scan profiles across key scanners (got ${profilesTotal})`);
+  // v4.2.1: the follow-up batch alone adds at least 28 profiles (3+3+3+3+2+2+2+4+2+2+2+2+3+3+2+2+2+2+2 = 44).
+  ok(profilesTotal >= 80, `v4.2.1 follow-up batch pushes total profiles >=80 (got ${profilesTotal})`);
   // preset_meta flows through the API: every profiled plugin with meta has
   // label + description for the UI cards.
   const nmapMeta = byId["nmap"]?.preset_meta ?? {};
@@ -231,6 +256,42 @@ async function main() {
     "nmap preset_meta carries Light label + description (UI scan-profile cards)",
   );
   ok(!!nmapMeta.stealth?.badge, "nmap stealth profile carries a badge token");
+  // v4.2.1: the follow-up scanners also expose full preset_meta. Spot-check
+  // the four user-named plugins (smb-enum, ssh-audit, api-scanner,
+  // subdomain-finder) plus one CLI scanner from the wider batch.
+  const smbMeta = byId["smb-enum"]?.preset_meta ?? {};
+  ok(
+    smbMeta.deep?.label === "Deep" && (smbMeta.deep?.description ?? "").length > 10 && !!smbMeta.deep?.badge,
+    "smb-enum deep preset_meta carries label + description + badge (v4.2.1)",
+  );
+  const sshMeta = byId["ssh-audit"]?.preset_meta ?? {};
+  ok(
+    sshMeta.quick?.label === "Quick" && !!sshMeta.quick?.badge,
+    "ssh-audit quick preset_meta carries label + badge (v4.2.1)",
+  );
+  const apiMeta = byId["api-scanner"]?.preset_meta ?? {};
+  ok(
+    apiMeta.standard?.label === "Standard" && (apiMeta.standard?.description ?? "").length > 10,
+    "api-scanner standard preset_meta carries label + description (v4.2.1)",
+  );
+  const subMeta = byId["subdomain-finder"]?.preset_meta ?? {};
+  ok(
+    subMeta.passive?.label === "Passive" && subMeta.passive?.badge === "stealth",
+    "subdomain-finder passive preset_meta carries label + stealth badge (v4.2.1)",
+  );
+  const ffufMeta = byId["ffuf"]?.preset_meta ?? {};
+  ok(
+    ffufMeta.deep?.label === "Deep" && !!ffufMeta.deep?.badge,
+    "ffuf deep preset_meta carries label + badge (v4.2.1 CLI scanner batch)",
+  );
+  // v4.2.1: api-scanner's Deep profile toggles probe_verb_tamper on and
+  // caps max_operations at 80. This is the kind of merged-inputs behavior
+  // the preset engine must round-trip through the API.
+  const apiDeepPreset = byId["api-scanner"]?.presets?.deep ?? {};
+  ok(
+    apiDeepPreset.probe_verb_tamper === true && apiDeepPreset.max_operations === 80,
+    "api-scanner deep preset merges probe_verb_tamper=true + max_operations=80 (v4.2.1)",
+  );
 
   // --- OpenAPI ---------------------------------------------------------------
   section("OpenAPI 3.1 spec");

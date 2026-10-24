@@ -2,7 +2,7 @@
 [plugin]
 id = "vhost-finder"
 name = "Virtual Host Finder"
-version = "1.0.0"
+version = "1.1.0"
 description = "Find virtual hosts served by the same web server (Host header fuzz)"
 long_description = """
 Sends requests to the target server with many candidate `Host:` headers and
@@ -64,3 +64,23 @@ max_per_hour = 20
 capabilities = ["network"]
 
 [dependencies]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+max_labels = 100
+timeout_ms = 5000
+
+[preset_meta.light]
+label = "Light"
+description = "100 candidate vhost labels, 5s per-request timeout. Fastest triage; covers the common admin/staging/dev set."
+badge = "fast"
+
+[presets.deep]
+max_labels = 2000
+timeout_ms = 15000
+
+[preset_meta.deep]
+label = "Deep"
+description = "2000 candidate vhost labels, 15s per-request timeout. Slowest but catches the long tail of forgotten staging hosts."
+badge = "intense"

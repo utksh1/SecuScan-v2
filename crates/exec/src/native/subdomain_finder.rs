@@ -55,9 +55,16 @@ impl NativeScanner for SubdomainFinderScanner {
         }
         let max_labels = get_i64_or(inputs, "max_labels", 500).clamp(1, 5000) as usize;
         let use_ct = super::get_bool_or(inputs, "use_ct_logs", true);
+        let enable_bruteforce = super::get_bool_or(inputs, "enable_bruteforce", true);
         let wordlist_path = super::get_str_or(inputs, "wordlist", "");
 
-        let labels = load_labels(wordlist_path, max_labels)?;
+        // The DNS brute-force wordlist is only loaded when the profile
+        // enables it (Passive profile sets enable_bruteforce=false).
+        let labels: Vec<String> = if enable_bruteforce {
+            load_labels(wordlist_path, max_labels)?
+        } else {
+            Vec::new()
+        };
         let server = dns::system_server()
             .ok_or_else(|| "no DNS server available (resolv.conf empty?)".to_string())?;
 
@@ -93,17 +100,21 @@ impl NativeScanner for SubdomainFinderScanner {
         }
 
         // ---- active: DNS brute-force ------------------------------------------
-        ctx.sink
-            .emit(crate::events::TaskEvent::Info(format!(
-                "resolving {} candidate labels against {}",
-                labels.len(),
-                server
-            )))
-            .await;
+        if enable_bruteforce {
+            ctx.sink
+                .emit(crate::events::TaskEvent::Info(format!(
+                    "resolving {} candidate labels against {}",
+                    labels.len(),
+                    server
+                )))
+                .await;
 
-        let active = brute_force(&domain, &labels, server, &ctx.cancel).await;
-        for (name, ips) in active {
-            found.push((name, ips));
+            let active = brute_force(&domain, &labels, server, &ctx.cancel).await;
+            for (name, ips) in active {
+                found.push((name, ips));
+            }
+        } else if !use_ct {
+            return Err("both crt.sh and DNS brute-force are disabled — pick at least one source".into());
         }
 
         // ---- dedupe + report ---------------------------------------------------

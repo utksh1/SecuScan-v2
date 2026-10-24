@@ -2,13 +2,19 @@
 [plugin]
 id = "subdomain-finder"
 name = "Subdomain Finder"
-version = "1.0.0"
+version = "1.1.0"
 description = "Enumerate subdomains via DNS brute-force plus the crt.sh CT log"
 long_description = """
 Two discovery passes: a passive certificate-transparency query against
 crt.sh, and an active DNS brute-force over a curated ~300-name common list
 (or a custom wordlist file). Resolved hosts become observations to feed into
 the rest of the scan scope.
+
+v4.2.1 adds three one-click scan profiles (Passive / Standard / Deep) that
+mirror the pentest-tools.com customization surface — Passive queries crt.sh
+only (zero traffic to the target's nameservers), Standard adds the
+embedded ~300-name DNS brute list (the historical default), Deep extends
+the brute list to 2000 candidate labels.
 """
 category = "recon"
 author = "SecuScan Contributors"
@@ -46,12 +52,21 @@ type = "integer"
 default = 500
 min = 1
 max = 5000
+help = "Caps the DNS brute-force wordlist. Passive profile disables brute entirely; Standard=300, Deep=2000."
 
 [[fields]]
 id = "use_ct_logs"
 label = "Query crt.sh (passive)"
 type = "boolean"
 default = true
+help = "Pull candidate names from the public certificate-transparency log. Zero traffic to the target."
+
+[[fields]]
+id = "enable_bruteforce"
+label = "DNS brute-force (active)"
+type = "boolean"
+default = true
+help = "Resolve candidate labels against the target's nameserver. Disabled in the Passive profile."
 
 [safety]
 level = "safe"
@@ -62,3 +77,35 @@ max_per_hour = 30
 capabilities = ["network"]
 
 [dependencies]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.passive]
+use_ct_logs = true
+enable_bruteforce = false
+max_labels = 1
+
+[preset_meta.passive]
+label = "Passive"
+description = "crt.sh certificate-transparency only. Zero DNS traffic to the target's nameserver — safe for pre-engagement recon."
+badge = "stealth"
+
+[presets.standard]
+use_ct_logs = true
+enable_bruteforce = true
+max_labels = 300
+
+[preset_meta.standard]
+label = "Standard"
+description = "crt.sh + the embedded ~300-name common DNS brute list. The historical default."
+badge = "thorough"
+
+[presets.deep]
+use_ct_logs = true
+enable_bruteforce = true
+max_labels = 2000
+
+[preset_meta.deep]
+label = "Deep"
+description = "crt.sh + an extended 2000-label DNS brute-force pass. Slowest but most complete coverage."
+badge = "intense"

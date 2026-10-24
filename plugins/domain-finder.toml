@@ -2,7 +2,7 @@
 [plugin]
 id = "domain-finder"
 name = "Domain Finder"
-version = "1.0.0"
+version = "1.1.0"
 description = "Find related domains via Certificate Transparency, BuiltWith, and reverse WHOIS"
 long_description = """
 Discovers domains owned by the same organization using three techniques with
@@ -57,3 +57,21 @@ allowed_targets = ["*"]
 max_concurrent = 5
 max_per_hour = 30
 capabilities = ["network.connect", "http.request"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.light]
+min_certainty = 50
+
+[preset_meta.light]
+label = "Light"
+description = "High-confidence matches only (certainty ≥ 50). CT-log Organization matches and reverse-WHOIS exact-email hits; suppresses the noisy tracking-ID and suffix look-alike rows."
+badge = "fast"
+
+[presets.deep]
+min_certainty = 20
+
+[preset_meta.deep]
+label = "Deep"
+description = "Lower threshold (certainty ≥ 20). Includes BuiltWith-style tracking-ID matches and suffix look-alikes; more results, more noise to triage."
+badge = "intense"

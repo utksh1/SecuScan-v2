@@ -2,12 +2,17 @@
 [plugin]
 id = "ffuf"
 name = "URL Fuzzer (ffuf)"
-version = "1.0.0"
+version = "1.1.0"
 description = "Discover hidden paths with ffuf and a wordlist"
 long_description = """
 Wraps ffuf for fast content discovery: fuzzes the FUZZ placeholder in the
 target URL against a wordlist and reports every match with status and size.
 The default match filter keeps only successful/interesting response codes.
+
+v4.2.1 adds two one-click scan profiles (Quick / Deep) that mirror the
+pentest-tools.com customization surface — Quick runs a flat common-wordlist
+pass at 40 threads with no recursion (seconds), Deep doubles the thread
+count and enables two-level recursion with extended match codes.
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -25,9 +30,11 @@ argv = [
   "ffuf",
   "-u", "{target}",
   "-w", "{wordlist}",
-  "-mc", "200,204,301,302,307,401,403,405,500",
-  "--if:threads:then:-t",
-  "--if:threads:then:{threads}",
+  "-mc", "{match_codes}",
+  "-t", "{threads}",
+  "--if:recursion:then:-recursion",
+  "--if:recursion:then:-recursion-depth",
+  "--if:recursion:then:{recursion_depth}",
 ]
 
 [[fields]]
@@ -46,8 +53,18 @@ label = "Wordlist path"
 type = "string"
 default = "/usr/share/wordlists/dirb/common.txt"
 placeholder = "~/tools/wordlists/common.txt"
-pattern = '^[/~a-zA-Z0-9._-]*$'
+pattern = '^[/~a-zA-Z0-9._-]+$'
 message = "Path to a wordlist file"
+
+[[fields]]
+id = "match_codes"
+label = "Match HTTP status codes"
+type = "string"
+default = "200,204,301,302,307,401,403,405,500"
+placeholder = "200,204,301,302,307,401,403,405,500"
+pattern = '^[0-9, ]+$'
+message = "Comma-separated HTTP status codes"
+help = "ffuf -mc. Deep profile extends to all 2xx/3xx/4xx/5xx for fuller coverage."
 
 [[fields]]
 id = "threads"
@@ -56,6 +73,22 @@ type = "integer"
 default = 40
 min = 1
 max = 200
+
+[[fields]]
+id = "recursion"
+label = "Recursive fuzzing"
+type = "boolean"
+default = false
+help = "Re-fuzz discovered directories. Disabled in Quick, enabled in Deep."
+
+[[fields]]
+id = "recursion_depth"
+label = "Recursion depth"
+type = "integer"
+default = 2
+min = 1
+max = 5
+help = "How many directory levels to descend when recursion is enabled."
 
 [parser]
 type = "line_regex"
@@ -87,3 +120,29 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["ffuf"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+wordlist = "/usr/share/wordlists/dirb/common.txt"
+match_codes = "200,204,301,302,307,401,403,405,500"
+threads = 40
+recursion = false
+recursion_depth = 1
+
+[preset_meta.quick]
+label = "Quick"
+description = "Flat common-wordlist pass at 40 threads, no recursion. Seconds-fast triage of obvious paths."
+badge = "fast"
+
+[presets.deep]
+wordlist = "/usr/share/wordlists/dirb/common.txt"
+match_codes = "200,204,301,302,307,401,403,405,500"
+threads = 80
+recursion = true
+recursion_depth = 2
+
+[preset_meta.deep]
+label = "Deep"
+description = "Doubles thread count and enables two-level recursion. Walks discovered directories one level deeper."
+badge = "intense"

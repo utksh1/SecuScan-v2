@@ -2,13 +2,18 @@
 [plugin]
 id = "waf-detect"
 name = "WAF Detector (wafw00f)"
-version = "1.0.0"
+version = "1.1.0"
 description = "Fingerprint web application firewalls in front of a site"
 long_description = """
 Wraps wafw00f, which sends benign probe requests and matches responses
 against signatures of 200+ WAF products (Cloudflare, Akamai, ModSecurity,
 AWS WAF, Imperva, ...). Knowing the WAF in front of a target shapes the
 rest of the engagement.
+
+v4.2.1 adds two one-click scan profiles (Quick / Deep) that mirror the
+pentest-tools.com customization surface — Quick reports the single best-matching
+WAF (one round of probes), Deep uses wafw00f's -a flag to enumerate every
+WAF signature that fires.
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -26,6 +31,7 @@ argv = [
   "wafw00f",
   "{target}",
   "-v",
+  "--if:find_all:then:-a",
 ]
 
 [[fields]]
@@ -36,6 +42,13 @@ required = true
 placeholder = "https://example.com"
 pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_-]*$'
 message = "Must be a URL"
+
+[[fields]]
+id = "find_all"
+label = "Find all WAFs (-a)"
+type = "boolean"
+default = false
+help = "Iterate every signature instead of stopping at the first match. Disabled in Quick, enabled in Deep."
 
 [parser]
 type = "line_regex"
@@ -68,3 +81,21 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["wafw00f"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+find_all = false
+
+[preset_meta.quick]
+label = "Quick"
+description = "Single best-match WAF fingerprint. One round of probes — fastest path to the headline answer."
+badge = "fast"
+
+[presets.deep]
+find_all = true
+
+[preset_meta.deep]
+label = "Deep"
+description = "Enumerate every WAF signature that fires (-a). Slower but uncovers layered / chained WAFs."
+badge = "intense"

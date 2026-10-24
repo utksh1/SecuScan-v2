@@ -2,12 +2,21 @@
 [plugin]
 id = "smb-enum"
 name = "SMB Enumeration"
-version = "1.0.0"
+version = "1.1.0"
 description = "Enumerate SMB shares, OS, and signing on TCP/445 via nmap scripts"
 long_description = """
-Runs nmap against TCP 445 with smb-os-discovery, smb-enum-shares and
-smb2-security-mode. Use only on authorized internal hosts. Signing-disabled
-and guest-accessible shares are raised as findings.
+Runs nmap against TCP 445 (and optionally 139 for NetBIOS) with a
+configurable bundle of SMB NSE scripts: smb-os-discovery, smb-enum-shares,
+smb2-security-mode, and (in the Deep profile) smb-enum-users /
+smb-enum-sessions / smb-enum-groups / smb-enum-domains. Use only on
+authorized internal hosts. Signing-disabled and guest-accessible shares
+are raised as findings.
+
+v4.2.1 adds three one-click scan profiles (Quick / Standard / Deep) that
+mirror the pentest-tools.com Light/Deep/Custom customization surface —
+Quick checks only SMB signing (seconds), Standard adds OS discovery and
+share enumeration (the historical default), Deep extends to users,
+sessions, groups, and domains across both 139 and 445.
 """
 category = "network"
 author = "SecuScan Contributors"
@@ -23,9 +32,10 @@ timeout_seconds = 600
 output_format = "text"
 argv = [
   "nmap",
-  "-p", "445",
+  "-p", "{ports}",
   "-sV",
-  "--script", "smb-os-discovery,smb-enum-shares,smb2-security-mode",
+  "--script", "{scripts}",
+  "--if:os_detection:then:-O",
   "{target}",
 ]
 
@@ -38,13 +48,40 @@ placeholder = "192.168.1.10"
 pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
 message = "Must be an IP, hostname, or CIDR range"
 
+[[fields]]
+id = "ports"
+label = "Ports"
+type = "string"
+default = "445"
+placeholder = "445 or 139,445"
+pattern = '^[0-9,\- ]+$'
+message = "Comma-separated TCP ports"
+help = "TCP 445 is modern SMB; add 139 for legacy NetBIOS (Deep profile)."
+
+[[fields]]
+id = "scripts"
+label = "NSE script bundle"
+type = "string"
+default = "smb-os-discovery,smb-enum-shares,smb2-security-mode"
+placeholder = "smb-os-discovery,smb-enum-shares,smb2-security-mode"
+pattern = '^[a-zA-Z0-9_.,-]+$'
+message = "Comma-separated nmap NSE script names"
+help = "Quick = smb2-security-mode. Standard = smb-os-discovery,smb-enum-shares,smb2-security-mode. Deep = adds smb-enum-users,smb-enum-sessions,smb-enum-groups,smb-enum-domains."
+
+[[fields]]
+id = "os_detection"
+label = "OS fingerprint (-O)"
+type = "boolean"
+default = false
+help = "Run nmap OS detection alongside the SMB scripts. Requires raw-socket privileges."
+
 [parser]
 type = "line_regex"
-pattern = '(?P<port>445)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
+pattern = '(?P<port>445|139)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
 
 [parser.finding]
 title = "SMB service open on {port}/{proto} ({service})"
-description = "TCP 445 is open. Review the raw output for share names, guest access, and SMB signing."
+description = "TCP {port} is open. Review the raw output for share names, guest access, and SMB signing."
 remediation = "Disable guest access, require SMB signing, restrict 445 to management networks."
 proof = "{proto} port {port} is OPEN ({service})"
 category = "Network Service"
@@ -75,3 +112,35 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["nmap"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+ports = "445"
+scripts = "smb2-security-mode"
+os_detection = false
+
+[preset_meta.quick]
+label = "Quick"
+description = "Sign-only check on TCP 445: smb2-security-mode flags signing-disabled in seconds. No share enumeration."
+badge = "fast"
+
+[presets.standard]
+ports = "445"
+scripts = "smb-os-discovery,smb-enum-shares,smb2-security-mode"
+os_detection = false
+
+[preset_meta.standard]
+label = "Standard"
+description = "OS discovery + share enumeration + signing check on TCP 445. The historical default."
+badge = "thorough"
+
+[presets.deep]
+ports = "139,445"
+scripts = "smb-os-discovery,smb-enum-shares,smb-enum-users,smb-enum-sessions,smb-enum-groups,smb-enum-domains,smb2-security-mode"
+os_detection = true
+
+[preset_meta.deep]
+label = "Deep"
+description = "Full SMB+NetBIOS sweep across 139 and 445: shares, users, sessions, groups, domains, OS fingerprint, signing. Longest run."
+badge = "intense"

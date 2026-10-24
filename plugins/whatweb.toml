@@ -2,12 +2,18 @@
 [plugin]
 id = "whatweb"
 name = "Tech Fingerprint (whatweb)"
-version = "2.0.0"
+version = "2.1.0"
 description = "Identify websites' technology stacks and versions"
 long_description = """
 Wraps whatweb to fingerprint the target's technology stack: frameworks,
 servers, CMS, analytics and more. Each recognized technology becomes an
 informational observation useful for later, targeted checks.
+
+v4.2.1 exposes four one-click scan profiles that map directly to whatweb's
+aggression levels (1–4), mirroring the pentest-tools.com Light/Deep
+customization surface — Passive sends a single stealthy request, Heavy
+adds plugin greedy matching, HTTP request smuggling probes, and cookie
+extraction.
 """
 category = "recon"
 author = "SecuScan Contributors"
@@ -49,6 +55,7 @@ options = [
   { value = "3", label = "Aggressive" },
   { value = "4", label = "Heavy" },
 ]
+help = "1 = single stealthy request. 4 = plugin greedy + smuggling probes + cookie extraction."
 
 [parser]
 type = "line_regex"
@@ -74,3 +81,37 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["whatweb"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.passive]
+aggression = "1"
+
+[preset_meta.passive]
+label = "Passive"
+description = "Aggression 1: a single stealthy request, no plugin greedy matching. Default whatweb behavior."
+badge = "stealth"
+
+[presets.polite]
+aggression = "2"
+
+[preset_meta.polite]
+label = "Polite"
+description = "Aggression 2: adds a second request for plugin greedy matching when the first hits a redirect."
+badge = "fast"
+
+[presets.aggressive]
+aggression = "3"
+
+[preset_meta.aggressive]
+label = "Aggressive"
+description = "Aggression 3: plugin greedy matching, URL probe, HTTP request smuggling probes, cookie extraction."
+badge = "thorough"
+
+[presets.heavy]
+aggression = "4"
+
+[preset_meta.heavy]
+label = "Heavy"
+description = "Aggression 4: maximum plugin greedy matching + every active probe. Heaviest request load."
+badge = "intense"

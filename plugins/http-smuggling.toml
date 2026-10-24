@@ -1,7 +1,7 @@
 # smuggler wrapper -- HTTP request smuggling scanner (v4.1.0 Power Engine).
 #
 # HTTP request smuggling (CL.TE / TE.CL / TE.TE) is a class of bug
-# pentest-tools.com does not cover at all: front-end and back-end
+# that pentest-tools.com does not cover at all: front-end and back-end
 # servers disagree on where the request body ends, allowing an
 # attacker to prefix the next user's request with attacker-controlled
 # bytes (session hijack, cache poisoning, auth bypass). defparam/
@@ -10,7 +10,7 @@
 [plugin]
 id = "http-smuggling"
 name = "HTTP Smuggling (smuggler)"
-version = "1.0.0"
+version = "1.1.0"
 description = "Detects CL.TE / TE.CL / TE.TE HTTP request smuggling"
 long_description = """
 Wraps defparam/smuggler, the strongest open-source HTTP request
@@ -22,6 +22,12 @@ hit is a verified smuggling vector with the exact payload that
 reproduces the desync. Findings land in the `Request Smuggling`
 category; Sniper chains re-verify with smuggler focused on the
 affected endpoint before reporting.
+
+v4.2.1 adds two one-click scan profiles (Quick / Full) that mirror the
+pentest-tools.com customization surface — Quick uses the canonical POST
+method with a tight 5s per-probe timeout, Full switches to the longer
+15s timeout with GET-based smuggling attempts (some desyncs only fire
+on GETs through cache layers).
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -43,8 +49,7 @@ argv = [
   # pass `-m {method}` directly (smuggler's method flag takes the next
   # arg as the value).
   "-m", "{method}",
-  "--if:timeout:then:-t",
-  "--if:timeout:then:{timeout}",
+  "-t", "{timeout}",
 ]
 
 [[fields]]
@@ -111,3 +116,23 @@ capabilities = ["network", "exploit"]
 
 [dependencies]
 binaries = ["smuggler"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+method = "POST"
+timeout = 5
+
+[preset_meta.quick]
+label = "Quick"
+description = "POST-based smuggling probes with a 5s per-probe timeout. Fastest triage; misses GET-only desyncs."
+badge = "fast"
+
+[presets.full]
+method = "GET"
+timeout = 15
+
+[preset_meta.full]
+label = "Full"
+description = "GET-based smuggling probes with a 15s per-probe timeout. Catches GET-only desyncs through cache layers."
+badge = "intense"

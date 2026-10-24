@@ -2,14 +2,21 @@
 [plugin]
 id = "api-scanner"
 name = "API Scanner"
-version = "1.0.0"
+version = "1.1.0"
 description = "OpenAPI/Postman/GraphQL: unauth GETs, rate-limit, verb tamper, secret keys"
 long_description = """
 Offline-first API scanner. Loads a spec from disk, URL, or common
-unauthenticated paths (/openapi.json, /swagger.json). Documented GETs
-are probed for missing rate-limit headers, credential-like JSON keys,
-and unauthenticated DELETE on read paths. GraphQL introspection is a
-single POST; a schema in the response is a validated finding.
+unauthenticated paths (/openapi.json, /swagger.json, /api-docs). Documented
+GETs are probed for missing rate-limit headers, credential-like JSON keys,
+and unauthenticated DELETE on read paths (verb tamper). GraphQL
+introspection is a single POST; a schema in the response is a validated
+finding.
+
+v4.2.1 adds three one-click scan profiles (Quick / Standard / Deep) that
+mirror the pentest-tools.com customization surface — Quick loads the spec
+and probes up to 10 GETs (no verb tamper, no GraphQL), Standard extends
+to 40 GETs and adds GraphQL introspection, Deep adds the unauthenticated
+DELETE verb-tamper pass on every successful GET.
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -37,6 +44,7 @@ id = "spec_path"
 label = "Spec file path (optional)"
 type = "string"
 placeholder = "/path/to/openapi.json"
+pattern = '^[/a-zA-Z0-9._~:-]*$'
 help = "OpenAPI 2/3 JSON or YAML, or a Postman collection. Works fully offline."
 
 [[fields]]
@@ -44,6 +52,30 @@ id = "spec_url"
 label = "Spec URL (optional)"
 type = "string"
 placeholder = "https://api.example.com/openapi.json"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$|^$'
+
+[[fields]]
+id = "max_operations"
+label = "Max operations to probe"
+type = "integer"
+default = 40
+min = 1
+max = 200
+help = "Caps the number of spec paths probed. Quick=10, Standard=40, Deep=80."
+
+[[fields]]
+id = "probe_verb_tamper"
+label = "Verb-tamper probe (DELETE on GET)"
+type = "boolean"
+default = true
+help = "Sends an unauthenticated DELETE against every successful GET path. Disabled in Quick and Standard profiles."
+
+[[fields]]
+id = "probe_graphql"
+label = "GraphQL introspection probe"
+type = "boolean"
+default = true
+help = "POSTs an introspection query to /graphql. Disabled in the Quick profile."
 
 [[fields]]
 id = "timeout_ms"
@@ -60,3 +92,38 @@ consent_message = "Probes documented GET endpoints and GraphQL introspection. On
 max_concurrent = 2
 max_per_hour = 30
 capabilities = ["network"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+max_operations = 10
+probe_verb_tamper = false
+probe_graphql = false
+timeout_ms = 8000
+
+[preset_meta.quick]
+label = "Quick"
+description = "Spec parse + up to 10 unauthenticated GET probes. No verb tamper, no GraphQL. Fastest triage."
+badge = "fast"
+
+[presets.standard]
+max_operations = 40
+probe_verb_tamper = false
+probe_graphql = true
+timeout_ms = 10000
+
+[preset_meta.standard]
+label = "Standard"
+description = "Spec parse + 40 GET probes + GraphQL introspection. Skips the DELETE verb-tamper pass."
+badge = "thorough"
+
+[presets.deep]
+max_operations = 80
+probe_verb_tamper = true
+probe_graphql = true
+timeout_ms = 15000
+
+[preset_meta.deep]
+label = "Deep"
+description = "Standard plus the unauthenticated DELETE verb-tamper pass on every successful GET. Most complete coverage."
+badge = "intense"

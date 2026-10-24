@@ -2,12 +2,17 @@
 [plugin]
 id = "gobuster"
 name = "Directory Discovery (gobuster)"
-version = "2.0.1"
+version = "2.1.0"
 description = "Discover hidden paths and files with a wordlist"
 long_description = """
 Wraps gobuster's `dir` mode to brute-force web paths from a wordlist. Found
 paths become observations; the wordlist and extensions are configurable and
 the default preset is intentionally conservative.
+
+v4.2.1 adds two one-click scan profiles (Quick / Deep) that mirror the
+pentest-tools.com customization surface — Quick runs the common wordlist at
+10 threads with no extensions, Deep adds the standard extension set
+(php,bak,old,txt,json) and quintuples the thread count.
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -29,8 +34,8 @@ argv = [
   "--no-error",
   "--if:extensions:then:-x",
   "--if:extensions:then:{extensions}",
-  "--if:threads:then:-t",
-  "--if:threads:then:{threads}",
+  "-t", "{threads}",
+  "--if:follow_redirects:then:-r",
 ]
 
 [[fields]]
@@ -57,8 +62,9 @@ id = "extensions"
 label = "Extensions"
 type = "string"
 placeholder = "php,bak,old"
-pattern = '^[a-zA-Z0-9, ]*$'
+pattern = '^[a-zA-Z0-9, ]*$|^$'
 message = "Comma-separated extensions"
+help = "Empty in the Quick profile; Deep adds php,bak,old,txt,json."
 
 [[fields]]
 id = "threads"
@@ -67,6 +73,13 @@ type = "integer"
 default = 10
 min = 1
 max = 100
+
+[[fields]]
+id = "follow_redirects"
+label = "Follow redirects (-r)"
+type = "boolean"
+default = false
+help = "Follow 3xx redirects. Disabled in Quick, enabled in Deep."
 
 [parser]
 type = "line_regex"
@@ -99,3 +112,27 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["gobuster"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+wordlist = "/usr/share/wordlists/dirb/common.txt"
+extensions = ""
+threads = 10
+follow_redirects = false
+
+[preset_meta.quick]
+label = "Quick"
+description = "Common wordlist, 10 threads, no extensions, no redirect following. Lowest request volume."
+badge = "fast"
+
+[presets.deep]
+wordlist = "/usr/share/wordlists/dirb/common.txt"
+extensions = "php,bak,old,txt,json"
+threads = 50
+follow_redirects = true
+
+[preset_meta.deep]
+label = "Deep"
+description = "Adds the standard extension set (php,bak,old,txt,json), 5x thread count, and follows redirects."
+badge = "intense"

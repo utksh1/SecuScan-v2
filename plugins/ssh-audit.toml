@@ -2,13 +2,19 @@
 [plugin]
 id = "ssh-audit"
 name = "SSH Audit"
-version = "1.0.0"
+version = "1.1.0"
 description = "Audit SSH host keys, auth methods, and weak algorithms on TCP/22"
 long_description = """
-Runs nmap ssh2-enum-algos, ssh-auth-methods and ssh-hostkey against port 22.
-Weak ciphers, password-only auth, and missing public-key auth are surfaced
-from the script output. Fully offline; uses the nmap binary already required
-for the network suite.
+Runs nmap ssh2-enum-algos, ssh-auth-methods and ssh-hostkey against port 22
+(Standard profile). Weak ciphers, password-only auth, and missing public-key
+auth are surfaced from the script output. Fully offline; uses the nmap
+binary already required for the network suite.
+
+v4.2.1 adds three one-click scan profiles (Quick / Standard / Deep) that
+mirror the pentest-tools.com customization surface — Quick enumerates
+algorithms only (seconds), Standard adds auth-method and host-key checks
+(the historical default), Deep adds ssh-publickey-acceptance and the
+ssh2-brute loader (NSE-driven, not a dictionary attack).
 """
 category = "network"
 author = "SecuScan Contributors"
@@ -24,9 +30,9 @@ timeout_seconds = 300
 output_format = "text"
 argv = [
   "nmap",
-  "-p", "22",
+  "-p", "{ports}",
   "-sV",
-  "--script", "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey",
+  "--script", "{scripts}",
   "{target}",
 ]
 
@@ -39,13 +45,33 @@ placeholder = "192.168.1.10"
 pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
 message = "Must be an IP, hostname, or CIDR range"
 
+[[fields]]
+id = "ports"
+label = "Ports"
+type = "string"
+default = "22"
+placeholder = "22 or 22,2222"
+pattern = '^[0-9,\- ]+$'
+message = "Comma-separated TCP ports"
+help = "SSH is normally on 22; add 2222 for shifted instances."
+
+[[fields]]
+id = "scripts"
+label = "NSE script bundle"
+type = "string"
+default = "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey"
+placeholder = "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey"
+pattern = '^[a-zA-Z0-9_.,-]+$'
+message = "Comma-separated nmap NSE script names"
+help = "Quick = ssh2-enum-algos. Standard = adds ssh-auth-methods + ssh-hostkey. Deep = adds ssh-publickey-acceptance + ssh2-brute loader."
+
 [parser]
 type = "line_regex"
-pattern = '(?P<port>22)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
+pattern = '(?P<port>22|2222)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
 
 [parser.finding]
 title = "SSH service open on {port}/{proto} ({service})"
-description = "TCP 22 is open. Review raw output for kex/cipher lists and advertised auth methods."
+description = "TCP {port} is open. Review raw output for kex/cipher lists and advertised auth methods."
 remediation = "Disable password auth if possible; remove CBC, MD5, and ssh-dss; keep current OpenSSH."
 proof = "{proto} port {port} is OPEN ({service})"
 category = "Network Service"
@@ -84,3 +110,32 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["nmap"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+ports = "22"
+scripts = "ssh2-enum-algos"
+
+[preset_meta.quick]
+label = "Quick"
+description = "Algorithm enumeration only: kex / cipher / MAC lists in seconds. No auth-method or host-key check."
+badge = "fast"
+
+[presets.standard]
+ports = "22"
+scripts = "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey"
+
+[preset_meta.standard]
+label = "Standard"
+description = "Algorithms + advertised auth methods + host-key fingerprint. The historical default."
+badge = "thorough"
+
+[presets.deep]
+ports = "22,2222"
+scripts = "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey,ssh-publickey-acceptance,ssh2-brute"
+
+[preset_meta.deep]
+label = "Deep"
+description = "Standard plus ssh-publickey-acceptance (verifies offered keys are accepted) and the ssh2-brute loader (NSE-driven, not a dictionary attack). Also probes port 2222."
+badge = "intense"

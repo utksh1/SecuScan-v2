@@ -3,6 +3,91 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.2.1 -- Scan profiles for the remaining scanners
+
+Direct follow-up to v4.2.0's scan-profile rollout. v4.2.0 covered the 13
+"headliner" scanners (nmap, nuclei, port-scanner, fast-port-scan,
+website-scanner, wordpress-audit, xss-scanner, sqlmap, command-injection,
+nikto, testssl, crawler, feroxbuster); this release extends the same
+Light/Deep/Custom customization surface to the **remaining 19 active
+scanners** the user called out by name (`smb-enum`, `ssh-audit`,
+`api-scanner`, `subdomain-finder`) plus every other scanner in the catalog
+that has a meaningful depth dimension.
+
+### Scan profiles for 19 more scanners (44 new profiles)
+
+| Plugin | Profiles |
+|--------|----------|
+| `smb-enum` | Quick · Standard · Deep |
+| `ssh-audit` | Quick · Standard · Deep |
+| `api-scanner` | Quick · Standard · Deep |
+| `subdomain-finder` | Passive · Standard · Deep |
+| `ffuf` | Quick · Deep |
+| `gobuster` | Quick · Deep |
+| `http-probe` (httpx) | Light · Deep |
+| `whatweb` | Passive · Polite · Aggressive · Heavy |
+| `waf-detect` (wafw00f) | Quick · Deep |
+| `http-smuggling` (smuggler) | Quick · Full |
+| `secrets-scanner` (gitleaks) | Quick · Full |
+| `subdomain-takeover` (subzy) | Quick · Full |
+| `subfinder` | Light · Standard · Exhaustive |
+| `service-defaults` | Quick · Standard · Deep |
+| `http-headers` | Quick · Full |
+| `vhost-finder` | Light · Deep |
+| `domain-finder` | Light · Deep |
+| `param-finder` | Light · Deep |
+| `js-analyzer` | Light · Deep |
+
+Combined with v4.2.0's 39 profiles, the catalog now ships **83 named scan
+profiles across 32 scanners** — every active scanner in the catalog that
+has a real depth axis offers one-click Light/Deep/Custom customization
+matching the pentest-tools.com model.
+
+### Native engine extensions
+
+- **api-scanner** gains three profile knobs (`max_operations`,
+  `probe_verb_tamper`, `probe_graphql`) honored by the native Rust
+  engine: Quick skips the GraphQL probe and the DELETE verb-tamper pass,
+  Standard adds GraphQL but skips verb tamper, Deep enables every
+  active check and caps operations at 80.
+- **subdomain-finder** gains `enable_bruteforce` honored by the native
+  engine: the Passive profile queries crt.sh only with zero DNS traffic
+  to the target's nameserver (safe for pre-engagement recon), Standard
+  adds the embedded ~300-name DNS brute list, Deep extends to 2000
+  labels.
+
+### What's NOT profiled (and why)
+
+A handful of scanners intentionally have no profiles because their
+depth axis is degenerate or would require invasive native rewrites for
+marginal value:
+
+- `ping`, `traceroute`, `whois`, `reverse-dns` — single-purpose passive
+  tools with no meaningful depth dimension.
+- `dns-lookup` — single-record-type lookup (the user picks ONE record
+  type per task). Profiles would be redundant with the existing
+  `record_type` select.
+- `tls-check` — single rustls handshake; a deep/quick split would
+  require rewriting the native module to enumerate protocols and
+  ciphers individually.
+- `http-recon`, `drupal-scanner`, `cloud-scanner`, `google-dorks`,
+  `people-hunter`, `cors-check`, `email-security`, `password-audit` —
+  either a single fixed check pass or only one tunable knob whose
+  "profile" would be a one-field triviality. Their existing fields
+  remain fully user-tunable.
+
+### Tests
+
+- 253 Rust tests pass (was 241 in v4.2.0; the existing preset loader
+  tests cover the new plugins without modification).
+- 68 frontend tests pass (unchanged from v4.2.0; the NewTask profile
+  card grid renders preset_meta from any plugin that exposes it, so
+  the new scanners appear automatically).
+- verify.mjs ships 7 new profile assertions covering the four
+  user-named plugins' preset_meta, the api-scanner deep-preset
+  merged-inputs contract, and a catalog-wide total-profiles ≥80
+  guard.
+
 ## 4.2.0 -- Full scan customization: Light / Deep / Custom scan profiles
 
 Direct response to "the input taking is too generic — pentest-tools.com is

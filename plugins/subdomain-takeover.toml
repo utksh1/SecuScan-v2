@@ -10,7 +10,7 @@
 [plugin]
 id = "subdomain-takeover"
 name = "Subdomain Takeover (subzy)"
-version = "1.0.0"
+version = "1.1.0"
 description = "Detects claimable subdomain takeovers (GitHub Pages, Heroku, S3, Azure, ...)"
 long_description = """
 Wraps L4ys/subzy, the strongest open-source subdomain takeover checker.
@@ -21,6 +21,12 @@ edge returns the canonical NXDOMAIN / 404 marker the service emits
 when the resource has been freed. Findings land in the `Subdomain
 Takeover` category so the Sniper Auto-Exploiter takeover chain can
 re-verify with subzy focused on the affected hostname.
+
+v4.2.1 adds two one-click scan profiles (Quick / Full) that mirror the
+pentest-tools.com customization surface — Quick runs a single-threaded
+pass with a 10s per-host timeout, Full raises concurrency to 5 and the
+timeout to 30s, the only configuration that consistently catches the
+slow-responding SaaS edges (Heroku's 30s wake, S3's eventual 404).
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -39,8 +45,9 @@ argv = [
   "run",
   "--target", "{target}",
   "--hide-fails",
-  "--if:timeout:then:--timeout",
-  "--if:timeout:then:{timeout}",
+  "--timeout", "{timeout}",
+  "--concurrency", "{concurrency}",
+  "--if:https_only:then:--https",
 ]
 
 [[fields]]
@@ -59,6 +66,21 @@ type = "integer"
 default = 10
 min = 1
 max = 60
+
+[[fields]]
+id = "concurrency"
+label = "Concurrent host checks"
+type = "integer"
+default = 1
+min = 1
+max = 20
+
+[[fields]]
+id = "https_only"
+label = "HTTPS only (--https)"
+type = "boolean"
+default = false
+help = "Skip the HTTP probe and only test HTTPS. Disabled in Quick, enabled in Full (HTTPS-first takeover checks)."
 
 [parser]
 type = "line_regex"
@@ -96,3 +118,25 @@ capabilities = ["network"]
 
 [dependencies]
 binaries = ["subzy"]
+
+# ---------------------------------------------------------------- profiles ---
+
+[presets.quick]
+timeout = 10
+concurrency = 1
+https_only = false
+
+[preset_meta.quick]
+label = "Quick"
+description = "Single-threaded pass, 10s per-host timeout, HTTP+HTTPS. Fastest triage; misses slow-responding SaaS edges (Heroku wake, S3 eventual 404)."
+badge = "fast"
+
+[presets.full]
+timeout = 30
+concurrency = 5
+https_only = true
+
+[preset_meta.full]
+label = "Full"
+description = "5-way concurrent HTTPS-only pass, 30s per-host timeout. Catches slow-responding SaaS edges that Quick misses."
+badge = "intense"

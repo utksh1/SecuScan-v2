@@ -4,7 +4,7 @@
 //! is fetched. GraphQL introspection is a single POST and is reported as
 //! a finding when it succeeds (schema leak), not used to crush the API.
 
-use super::{get_i64_or, get_str, get_str_or, NativeCtx, NativeScanner};
+use super::{get_bool_or, get_i64_or, get_str, get_str_or, NativeCtx, NativeScanner};
 use async_trait::async_trait;
 use secuscan_core::models::{Finding, FindingKind, Severity};
 use serde_json::{json, Value};
@@ -32,6 +32,11 @@ impl NativeScanner for ApiScanner {
         let timeout = Duration::from_millis(
             get_i64_or(inputs, "timeout_ms", 10_000).clamp(1_000, 60_000) as u64,
         );
+        // v4.2.1 profile knobs: cap how many spec paths are probed and gate
+        // the more aggressive passes (verb tamper, GraphQL introspection).
+        let max_operations = get_i64_or(inputs, "max_operations", 40).clamp(1, 200) as usize;
+        let probe_verb_tamper = get_bool_or(inputs, "probe_verb_tamper", true);
+        let probe_graphql = get_bool_or(inputs, "probe_graphql", true);
         let client = super::http_headers::build_client(true, timeout)?;
         let mut findings = Vec::new();
 
@@ -91,7 +96,7 @@ impl NativeScanner for ApiScanner {
                 ..Default::default()
             });
             let mut unauth_ok = 0u32;
-            for op in ops.into_iter().take(40) {
+            for op in ops.into_iter().take(max_operations) {
                 if ctx.cancel.is_cancelled() { break; }
                 let (method, path) = op.split_once(' ').unwrap_or(("GET", op.as_str()));
                 let url = if path.starts_with("http") { path.to_string() } else { format!("{base}{path}") };
@@ -143,7 +148,8 @@ impl NativeScanner for ApiScanner {
                             });
                         }
                         // Verb tamper: documented GET also answers DELETE unauthenticated.
-                        if (200..300).contains(&status) {
+                        // Gated by the probe_verb_tamper profile knob (v4.2.1).
+                        if probe_verb_tamper && (200..300).contains(&status) {
                             if let Ok(del) = client.delete(&url).send().await {
                                 let ds = del.status().as_u16();
                                 if (200..300).contains(&ds) {
@@ -188,38 +194,44 @@ impl NativeScanner for ApiScanner {
             }
         }
 
-        // GraphQL introspection (single request).
-        let gql = if target.contains("graphql") {
-            target.to_string()
-        } else {
-            format!("{}/graphql", target.trim_end_matches('/'))
-        };
-        let body = json!({"query": "{ __schema { queryType { name } } }"});
-        if let Ok(resp) = client.post(&gql).json(&body).send().await {
-            let status = resp.status().as_u16();
-            if let Ok(v) = resp.json::<Value>().await {
-                if v.pointer("/data/__schema").is_some() {
-                    findings.push(Finding {
-                        title: "GraphQL introspection is enabled".into(),
-                        category: "API".into(),
-                        severity: Severity::Medium,
-                        kind: FindingKind::ValidatedIssue,
-                        description: "The endpoint answered an introspection query and returned a schema.".into(),
-                        remediation: "Disable introspection in production; require auth on /graphql.".into(),
-                        proof: format!("POST {gql} → {status}\n{}", serde_json::to_string_pretty(&v).unwrap_or_default()),
-                        url: Some(gql),
-                        metadata: json!({ "status": status }),
-                        cwe: Some("CWE-200".into()),
-                        owasp: Some("A01:2021-Broken Access Control".into()),
-                        confidence: Some("certain".into()),
-                        ..Default::default()
-                    });
+        // GraphQL introspection (single request). Gated by the
+        // probe_graphql profile knob (v4.2.1) — skipped in the Quick profile.
+        if probe_graphql {
+            let gql = if target.contains("graphql") {
+                target.to_string()
+            } else {
+                format!("{}/graphql", target.trim_end_matches('/'))
+            };
+            let body = json!({"query": "{ __schema { queryType { name } } }"});
+            if let Ok(resp) = client.post(&gql).json(&body).send().await {
+                let status = resp.status().as_u16();
+                if let Ok(v) = resp.json::<Value>().await {
+                    if v.pointer("/data/__schema").is_some() {
+                        findings.push(Finding {
+                            title: "GraphQL introspection is enabled".into(),
+                            category: "API".into(),
+                            severity: Severity::Medium,
+                            kind: FindingKind::ValidatedIssue,
+                            description: "The endpoint answered an introspection query and returned a schema.".into(),
+                            remediation: "Disable introspection in production; require auth on /graphql.".into(),
+                            proof: format!("POST {gql} → {status}\n{}", serde_json::to_string_pretty(&v).unwrap_or_default()),
+                            url: Some(gql),
+                            metadata: json!({ "status": status }),
+                            cwe: Some("CWE-200".into()),
+                            owasp: Some("A01:2021-Broken Access Control".into()),
+                            confidence: Some("certain".into()),
+                            ..Default::default()
+                        });
+                    }
                 }
             }
         }
 
         if findings.is_empty() {
-            return Err("no specification loaded and GraphQL introspection did not respond — provide spec_path or spec_url".into());
+            return Err(format!(
+                "no specification loaded{} — provide spec_path or spec_url",
+                if probe_graphql { " and GraphQL introspection did not respond" } else { " and GraphQL probe is disabled" }
+            ));
         }
         Ok(findings)
     }
