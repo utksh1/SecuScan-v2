@@ -12,6 +12,13 @@ import {
   EyeOff,
   Gauge,
   SlidersHorizontal,
+  Clock,
+  Network,
+  Globe,
+  Search,
+  Crosshair,
+  Cloud,
+  Boxes,
 } from 'lucide-react'
 import { request, workspaceApi } from '@/api/client'
 import type { Plugin } from '@/api/types'
@@ -50,6 +57,38 @@ const BADGE_STYLES: Record<
   },
 }
 
+// v4.2.2: badge-derived estimated-runtime hints shown on profile cards.
+// The ranges are honest ballparks, not SLAs: a `fast` profile against a
+// slow host can still take minutes, and a `stealth` profile is slow by
+// design (T1 timing, paced requests).
+const BADGE_ETA: Record<string, string> = {
+  fast: 'est. seconds – a few minutes',
+  thorough: 'est. a few minutes',
+  intense: 'est. 10+ minutes',
+  stealth: 'est. slow by design (low & slow)',
+}
+
+// v4.2.2: presentation metadata for the category-grouped scanner
+// browser. Unknown categories fall back to a generic icon + the raw
+// category string.
+const CATEGORY_ORDER = ['network', 'web', 'recon', 'exploitation', 'cloud']
+const CATEGORY_META: Record<string, { icon: typeof Zap; label: string }> = {
+  network: { icon: Network, label: 'Network' },
+  web: { icon: Globe, label: 'Web' },
+  recon: { icon: Search, label: 'Recon' },
+  exploitation: { icon: Crosshair, label: 'Exploitation' },
+  cloud: { icon: Cloud, label: 'Cloud' },
+}
+
+function categoryMeta(category: string) {
+  return (
+    CATEGORY_META[category] ?? {
+      icon: Boxes,
+      label: category.charAt(0).toUpperCase() + category.slice(1),
+    }
+  )
+}
+
 function presetLabel(name: string, meta?: { label?: string }) {
   return meta?.label ?? name.replace(/(^|-)([a-z])/g, (_, sep, c) => (sep ? ' ' : '') + c.toUpperCase())
 }
@@ -63,6 +102,11 @@ export function NewTaskPage() {
   const [selectedId, setSelectedId] = useState<string>(params.get('plugin') ?? '')
   const [values, setValues] = useState<Record<string, string | boolean>>({})
   const [preset, setPreset] = useState<string | null>(null)
+  // v4.2.2: profile chip clicked in the category browser for a scanner
+  // that is not selected yet. The seed effect applies it once the plugin
+  // switch lands (it re-seeds defaults on every plugin change, so the
+  // pending preset must ride along or it would be wiped).
+  const [pendingPreset, setPendingPreset] = useState<string | null>(null)
   const [consent, setConsent] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -74,6 +118,27 @@ export function NewTaskPage() {
   })
   const plugins = data?.items ?? []
   const startablePlugins = plugins.filter((p) => p.available && p.enabled)
+
+  // v4.2.2: the category-grouped scanner browser — startable scanners
+  // bucketed by category, known categories first, then the rest
+  // alphabetically.
+  const categoryGroups = useMemo(() => {
+    const groups = new Map<string, Plugin[]>()
+    for (const p of startablePlugins) {
+      const list = groups.get(p.category) ?? []
+      list.push(p)
+      groups.set(p.category, list)
+    }
+    for (const list of groups.values()) list.sort((a, b) => a.name.localeCompare(b.name))
+    return [...groups.entries()].sort((a, b) => {
+      const ai = CATEGORY_ORDER.indexOf(a[0])
+      const bi = CATEGORY_ORDER.indexOf(b[0])
+      if (ai !== -1 && bi !== -1) return ai - bi
+      if (ai !== -1) return -1
+      if (bi !== -1) return 1
+      return a[0].localeCompare(b[0])
+    })
+  }, [startablePlugins]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Registered targets of the selected workspace, offered as quick picks
   // for the primary target field.
@@ -101,6 +166,9 @@ export function NewTaskPage() {
   // ?target= prefill is folded into the seed (not a separate effect) so it
   // survives regardless of whether the plugins query resolves before or
   // after mount — a standalone effect would be wiped by this seed.
+  // v4.2.2: a pending profile-chip jump (from the category browser) is
+  // applied on top of the fresh defaults, exactly as if the user had
+  // clicked the profile card right after the switch.
   useEffect(() => {
     if (!plugin) return
     const seed: Record<string, string | boolean> = {}
@@ -110,8 +178,16 @@ export function NewTaskPage() {
       }
     }
     if (targetPrefill) seed.target = targetPrefill
+    const pending =
+      pendingPreset && plugin.presets[pendingPreset] ? pendingPreset : null
+    if (pending) {
+      for (const [k, v] of Object.entries(plugin.presets[pending])) {
+        seed[k] = typeof v === 'boolean' ? v : String(v)
+      }
+    }
     setValues(seed)
-    setPreset(null)
+    setPreset(pending)
+    setPendingPreset(null)
     setConsent(false)
     setShowPreview(null)
   }, [plugin?.id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,6 +215,19 @@ export function NewTaskPage() {
     }
     setValues(next)
     setPreset(name)
+  }
+
+  // v4.2.2: jump straight from a category-browser profile chip into the
+  // configured task. When the scanner is already selected this is just
+  // applyPreset; otherwise the plugin switch is queued together with the
+  // preset so the seed effect can apply it after it re-seeds defaults.
+  function jumpToProfile(pluginId: string, presetName: string) {
+    if (pluginId === selectedId) {
+      applyPreset(presetName)
+    } else {
+      setSelectedId(pluginId)
+      setPendingPreset(presetName)
+    }
   }
 
   const isViewer = user?.role === 'viewer'
@@ -229,16 +318,118 @@ export function NewTaskPage() {
           aria-label="Scanner"
         >
           <option value="">Select a scanner…</option>
-          {startablePlugins.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.category})
-            </option>
+          {categoryGroups.map(([cat, list]) => (
+            <optgroup key={cat} label={categoryMeta(cat).label}>
+              {list.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </optgroup>
           ))}
         </select>
         {selectedId && !plugin && (
           <p className="mt-2 text-xs text-amber-600">
             This scanner is unavailable or disabled — pick another one.
           </p>
+        )}
+
+        {/* v4.2.2: category-grouped scanner browser. Every scanner's scan
+            profiles are surfaced as chips — click a chip to jump straight
+            into the configured task (scanner selected + profile applied). */}
+        {categoryGroups.length > 0 && (
+          <div
+            role="group"
+            aria-label="Browse scanners by category"
+            className="mt-4"
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <span className="label mb-0">Browse by category</span>
+              <span className="text-[11px] text-slate-400">
+                click a profile chip to jump straight in
+              </span>
+            </div>
+            <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+              {categoryGroups.map(([cat, list]) => {
+                const meta = categoryMeta(cat)
+                const CatIcon = meta.icon
+                return (
+                  <div key={cat}>
+                    <div className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      <CatIcon className="h-3.5 w-3.5" />
+                      {meta.label}
+                      <span className="font-normal text-slate-400">({list.length})</span>
+                    </div>
+                    <div className="grid grid-cols-1 gap-1.5 lg:grid-cols-2">
+                      {list.map((p) => {
+                        const presetNames = Object.keys(p.presets)
+                        const selected = p.id === selectedId
+                        return (
+                          <div
+                            key={p.id}
+                            className={cn(
+                              'flex items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
+                              selected
+                                ? 'border-brand-500 bg-brand-50/70 ring-1 ring-brand-500'
+                                : 'border-slate-200 bg-white hover:border-slate-300',
+                            )}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => setSelectedId(p.id)}
+                              aria-label={`Select ${p.name}`}
+                              className="min-w-0 flex-1 truncate text-left text-sm text-slate-700"
+                              title={p.description}
+                            >
+                              {p.name}
+                            </button>
+                            {presetNames.length > 0 ? (
+                              <span className="flex shrink-0 flex-wrap justify-end gap-1">
+                                {presetNames.map((name) => {
+                                  const pm = p.preset_meta?.[name]
+                                  const badge = pm?.badge
+                                    ? BADGE_STYLES[pm.badge]
+                                    : undefined
+                                  const eta = pm?.badge ? BADGE_ETA[pm.badge] : undefined
+                                  return (
+                                    <button
+                                      key={name}
+                                      type="button"
+                                      onClick={() => jumpToProfile(p.id, name)}
+                                      aria-label={`${p.name}: ${presetLabel(name, pm)} profile`}
+                                      title={
+                                        [pm?.description, eta].filter(Boolean).join(' · ') ||
+                                        `Run the ${presetLabel(name, pm)} profile`
+                                      }
+                                      className={cn(
+                                        'rounded px-1.5 py-0.5 text-[10px] font-medium ring-1 transition-transform hover:scale-[1.04]',
+                                        badge
+                                          ? badge.chip
+                                          : 'bg-slate-100 text-slate-600 ring-slate-200',
+                                      )}
+                                    >
+                                      {presetLabel(name, pm)}
+                                    </button>
+                                  )
+                                })}
+                              </span>
+                            ) : (
+                              <span
+                                className="shrink-0 rounded bg-slate-50 px-1.5 py-0.5 text-[10px] text-slate-400 ring-1 ring-slate-200"
+                                title="This scanner has no scan profiles — configure it manually"
+                              >
+                                manual
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         )}
       </div>
 
@@ -308,13 +499,14 @@ export function NewTaskPage() {
             <p className="mb-4 text-xs text-slate-400">{plugin.description}</p>
 
             {Object.keys(plugin.presets).length > 0 && (
-              <div className="mb-4">
+              <div className="mb-4" role="group" aria-label="Scan profile">
                 <div className="label">Scan profile</div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {Object.entries(plugin.presets).map(([name, values]) => {
                     const meta = plugin.preset_meta?.[name]
                     const badge = meta?.badge ? BADGE_STYLES[meta.badge] : undefined
                     const BadgeIcon = badge?.icon ?? Layers
+                    const eta = meta?.badge ? BADGE_ETA[meta.badge] : undefined
                     return (
                       <button
                         key={name}
@@ -356,6 +548,16 @@ export function NewTaskPage() {
                           {meta?.description && (
                             <span className="mt-0.5 block text-xs leading-snug text-slate-500">
                               {meta.description}
+                            </span>
+                          )}
+                          {/* v4.2.2: estimated runtime derived from the
+                              profile badge. */}
+                          {eta && (
+                            <span
+                              className="mt-1 inline-flex items-center gap-1 text-[10px] text-slate-400"
+                              title="Ballpark estimate derived from the profile's depth badge"
+                            >
+                              <Clock className="h-3 w-3" /> {eta}
                             </span>
                           )}
                           <span className="mt-1 block truncate font-mono text-[10px] text-slate-400">

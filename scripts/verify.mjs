@@ -455,6 +455,10 @@ async function main() {
       ok(sw === 201, "web suite on URL target -> 201");
       const launched = (webSuite.tasks ?? []).map((t) => t.plugin_id);
       ok(launched.includes("nuclei"), `web suite launches nuclei (launched: ${launched.join(",")})`);
+      // v4.2.2: the web suite runs each plugin's Quick/Light profile.
+      const nucTask = (webSuite.tasks ?? []).find((t) => t.plugin_id === "nuclei");
+      if (nucTask)
+        ok(nucTask.preset === "light", `web suite runs nuclei with the light profile (got ${nucTask.preset})`);
       // v4.1.0: when the new engines are installed, the web suite must
       // launch them (suite membership is asserted by the Rust unit
       // tests; this proves the runtime admission pipeline accepts them).
@@ -502,11 +506,27 @@ async function main() {
   const aw = await req("POST", `/targets/${ipTarget.id}/attack`, { token, body: { suite: "web" } });
   ok(aw.status === 400, "web suite on IP rejected (400)");
 
+  // v4.2.2: suites now pick a scan profile per plugin (web=Quick/Light,
+  // full=Deep/Full) following a depth preference list. The launched
+  // tasks echo the preset so the UI can show "this ran the Deep profile".
+  const presetOf = (tasks, pid) => tasks.find((t) => t.plugin_id === pid)?.preset ?? null;
+  const nmapQuick = (quick.tasks ?? []).find((t) => t.plugin_id === "nmap");
+  if (nmapQuick)
+    ok(nmapQuick.preset === "light", `quick suite runs nmap with the light profile (got ${nmapQuick.preset})`);
+  ok(presetOf(quick.tasks ?? [], "dns-lookup") === null, "plugins without profiles launch with no preset (dns-lookup)");
+
   const ai = await req("POST", `/targets/${ipTarget.id}/attack`, { token, body: { suite: "internal" } });
   ok(ai.status === 201 || ai.status === 400, "internal suite on IP -> 201 or 400 (all binaries missing)");
 
   const af = await req("POST", `/targets/${hostTarget.id}/attack`, { token, body: { suite: "full" } });
   ok(af.status === 201 && (af.json.tasks ?? []).length >= 1, "full suite on hostname -> 201 with tasks");
+  // v4.2.2: the full suite runs each plugin's Deep/Full profile.
+  const fTasks = af.json.tasks ?? [];
+  ok(presetOf(fTasks, "website-scanner") === "deep", `full suite runs website-scanner with the deep profile (got ${presetOf(fTasks, "website-scanner")})`);
+  ok(presetOf(fTasks, "api-scanner") === "deep", `full suite runs api-scanner with the deep profile (got ${presetOf(fTasks, "api-scanner")})`);
+  ok(presetOf(fTasks, "param-finder") === "deep", `full suite runs param-finder with the deep profile (got ${presetOf(fTasks, "param-finder")})`);
+  ok(presetOf(fTasks, "http-headers") === "full", `full suite runs http-headers with its full profile — no deep preset (got ${presetOf(fTasks, "http-headers")})`);
+  ok(presetOf(fTasks, "http-recon") === null, "http-recon (no presets) launches with no preset in the full suite");
   const anh = await req("POST", `/targets/${hostTarget.id}/attack`, { token, body: { suite: "internal" } });
   ok(anh.status === 400, "internal suite on hostname rejected (400)");
 

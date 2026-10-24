@@ -3,6 +3,73 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.2.2 -- Profiles in the UI browser, in the attack suites, and with runtime hints
+
+Follow-up polish to the scan-profile program (85 profiles across 32
+scanners as of v4.2.1): the profiles are now surfaced where users
+actually make decisions — a category-grouped browser on the New Task
+page, depth-matched presets inside every Attack-Target suite, and an
+estimated-runtime hint on every profile card.
+
+### New Task page: category-grouped scanner browser
+
+Step 1 grew from a bare `<select>` into a full **Browse by category**
+panel: scanners are bucketed into Network / Web / Recon / Exploitation /
+Cloud sections (known categories first, then anything else
+alphabetically), and every scanner row surfaces its scan profiles as
+one-click chips — colored by badge, tooltip'd with the profile
+description + runtime estimate. Clicking a chip jumps straight into the
+configured task: scanner selected *and* profile applied (a
+pending-preset ride-along survives the plugin-switch re-seed). The
+`<select>` itself now groups options by category via `<optgroup>`.
+Scanners without profiles show a neutral `manual` chip.
+
+### Profile cards: estimated runtime from the badge
+
+Every scan-profile card (and browser-chip tooltip) now carries a
+badge-derived runtime ballpark:
+
+| Badge | Estimate |
+|-------|----------|
+| fast | est. seconds – a few minutes |
+| thorough | est. a few minutes |
+| intense | est. 10+ minutes |
+| stealth | est. slow by design (low & slow) |
+
+Honest ballparks, not SLAs — a `fast` profile against a slow host can
+still take minutes.
+
+### Attack-Target suites run depth-matched profiles
+
+`POST /targets/:id/attack` now picks a scan profile per plugin
+following a per-suite depth preference list:
+
+- **web / quick** run each plugin's Quick/Light profile (nuclei→light,
+  http-headers→quick, whatweb→passive, xss-scanner→verified, …)
+- **full** runs each plugin's Deep/Full profile (nmap→deep — never the
+  65,535-port full-sweep; whatweb→aggressive — never `heavy`;
+  xss-scanner→all-reflections; http-headers→full; subfinder→exhaustive; …)
+- **internal** runs deep-then-standard.
+
+The preset flows through the standard admission pipeline (caller
+inputs still win over preset values), is recorded on the task
+(`options.preset`), and is echoed per task in the attack response so
+the UI can show "this ran the Deep profile" without a follow-up GET.
+The v4.2.0 nmap top-1000 input hint now only fires as a fallback when
+no preset was picked.
+
+### Tests
+
+- 259 Rust tests pass (was 253; +6: suite preset-selection preferences,
+  hazardous-extreme avoidance, nmap hint gating, no-preset fallbacks).
+- 73 frontend tests pass (was 69; +4: category-grouped browser renders
+  with chips, ETA hints render per badge, chip-jump applies the preset
+  end-to-end, chip-on-selected-scanner applies directly).
+- verify.mjs ships 8 new attack-suite assertions (quick nmap light,
+  full website-scanner/api-scanner/param-finder deep, http-headers
+  full, no-preset plugins stay null, web-suite nuclei light when
+  engines installed). 131/131 pass.
+
 ## 4.2.1 -- Scan profiles for the remaining scanners
 
 Direct follow-up to v4.2.0's scan-profile rollout. v4.2.0 covered the 13
