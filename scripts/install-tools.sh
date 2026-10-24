@@ -153,11 +153,10 @@ if ! have nuclei && [ ! -x "$OPT/nuclei/nuclei" ]; then
         && ln -sf "$OPT/nuclei/nuclei" "$BIN/nuclei" \
         || warn "nuclei binary install failed"
 else log "nuclei: present"; fi
-if [ ! -d "$HOME/.config/nuclei/templates" ]; then
+if [ ! -d "$HOME/nuclei-templates" ]; then
     log "cloning nuclei templates (~100MB, one-time)…"
-    mkdir -p "$HOME/.config/nuclei"
     git clone --depth 1 https://github.com/projectdiscovery/nuclei-templates.git \
-        "$HOME/.config/nuclei/templates" >/dev/null 2>&1 || warn "template clone failed"
+        "$HOME/nuclei-templates" >/dev/null 2>&1 || warn "template clone failed"
 else log "nuclei templates: present"; fi
 
 # --------------------------------------------------------------- gobuster ---

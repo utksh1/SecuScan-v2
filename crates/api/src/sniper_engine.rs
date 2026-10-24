@@ -161,6 +161,21 @@ pub fn chains() -> Vec<SniperChain> {
                 ]),
             ],
         },
+        // --- Vulnerability (nuclei template hits): deep re-verification.
+        // The source finding already carries the template's severity +
+        // proof; the chain re-runs nuclei focused on high/critical
+        // matches, then refreshes the native DAST pass and header audit
+        // for context around the vulnerable endpoint.
+        SniperChain {
+            category_match: "Vulnerability",
+            steps: vec![
+                step("Template re-verification (high/critical)", "nuclei", &[
+                    ("severity", json!("high,critical")),
+                ]),
+                step("Website DAST refresh", "website-scanner", &[]),
+                step("Security header audit", "http-headers", &[]),
+            ],
+        },
         // --- Web (catch-all): headers + recon + fuzz ---
         SniperChain {
             category_match: "HTTP",
@@ -341,6 +356,18 @@ mod tests {
     fn pick_chain_unknown_returns_none_when_no_match() {
         // "Zzz" matches nothing, and the catch-all is "HTTP", so None.
         assert!(pick_chain("Zzz Unknown Category").is_none());
+    }
+
+    #[test]
+    fn pick_chain_vulnerability_runs_nuclei_dast_headers() {
+        // v4.0.0: nuclei template hits (unmapped tags -> "Vulnerability")
+        // get a deep re-verification chain.
+        let c = pick_chain("Vulnerability").unwrap();
+        assert_eq!(c.category_match, "Vulnerability");
+        let ids: Vec<&str> = c.steps.iter().map(|s| s.plugin_id).collect();
+        assert_eq!(ids, vec!["nuclei", "website-scanner", "http-headers"]);
+        // The nuclei step focuses on high/critical severities.
+        assert_eq!(c.steps[0].inputs.get("severity"), Some(&json!("high,critical")));
     }
 
     #[test]

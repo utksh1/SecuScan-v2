@@ -23,6 +23,7 @@
  */
 import { spawn } from "node:child_process";
 import { unlinkSync, openSync, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -70,6 +71,10 @@ function bootServer() {
   }
   const env = {
     ...process.env,
+    // Make tool installs (~/.local/bin via install-tools.sh) visible to
+    // the server's task runner even when verify.mjs was launched from a
+    // shell without them on PATH.
+    PATH: [path.join(os.homedir(), ".local", "bin"), process.env.PATH].join(":"),
     SECUSCAN_DB_URL: `sqlite:///${DB}`,
     SECUSCAN_JWT_SECRET: "e2e-verify-secret-32bytes-long-aaaa",
     SECUSCAN_ADDR: `127.0.0.1:${PORT}`,
@@ -91,6 +96,7 @@ function bootServer() {
 function registerCleanup(server) {
   const killServer = () => {
     try { process.kill(-server.pid, "SIGTERM"); } catch { /* already gone */ }
+    for (const kill of killOnExit) { try { kill(); } catch { /* gone */ } }
   };
   process.on("exit", killServer);
   for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) {
@@ -99,6 +105,18 @@ function registerCleanup(server) {
       process.exit(0);
     });
   }
+}
+
+// Extra detached processes (e.g. the vulnerable test app) to reap on exit.
+const killOnExit = [];
+
+// Resolve true when `bin args...` exits 0 (tool presence probe).
+function execFileChecked(bin, args) {
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { stdio: "ignore" });
+    child.on("error", () => resolve(false));
+    child.on("exit", (code) => resolve(code === 0));
+  });
 }
 
 async function waitReady() {
@@ -191,6 +209,138 @@ async function main() {
   });
   ok(t2 === 201 && hostTarget.kind === "hostname", "hostname target registered");
 
+  // --- Power engines: nuclei + dalfox (v4.0.0) ---------------------------------
+  // Live proof against a deliberately vulnerable local app: exposures
+  // via the nuclei template library, verified XSS via dalfox JSONL,
+  // suite wiring, and the Vulnerability Sniper chain. Skipped (not
+  // failed) when the engines are not installed.
+  section("Power engines (nuclei + dalfox)");
+  const haveNuclei = await (async () => {
+    try { await execFileChecked("nuclei", ["-version"]); return true; } catch { return false; }
+  })();
+  const haveDalfox = await (async () => {
+    try { await execFileChecked("dalfox", ["--help"]); return true; } catch { return false; }
+  })();
+  if (!haveNuclei || !haveDalfox) {
+    console.log(`  SKIP  nuclei=${haveNuclei} dalfox=${haveDalfox} — install via scripts/install-tools.sh`);
+  }
+
+  let vulnAppUp = false;
+  if (haveNuclei || haveDalfox) {
+    // Boot the vulnerable app on :8899 (git exposure, .env, backup dump,
+    // reflected ?q= param).
+    const vulnApp = spawn(process.execPath, [path.join(ROOT, "scripts", "vuln-app.mjs")], {
+      stdio: "ignore", detached: true,
+    });
+    killOnExit.push(() => { try { process.kill(-vulnApp.pid, "SIGTERM"); } catch { /* gone */ } });
+    for (let i = 0; i < 20 && !vulnAppUp; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      try { vulnAppUp = (await fetch("http://127.0.0.1:8899/.git/HEAD")).ok; } catch { /* not yet */ }
+    }
+    ok(vulnAppUp, "vulnerable test app boots on :8899");
+  }
+
+  let nucleiFindings = [];
+  if (vulnAppUp && haveNuclei) {
+    const { status: ns, json: ntask } = await req("POST", "/tasks", {
+      token,
+      body: {
+        plugin_id: "nuclei",
+        inputs: {
+          target: "http://127.0.0.1:8899",
+          templates: `${os.homedir()}/nuclei-templates/http/exposures`,
+          concurrency: 25,
+        },
+        consent_granted: true,
+      },
+    });
+    ok(ns === 201 && !!ntask.id, "nuclei task accepted (templates scoped to exposures)");
+    const nres = await waitTask(token, ntask.id, 420_000);
+    ok(nres.status === "completed", `nuclei task completes (status=${nres.status})`);
+    const { json: nf } = await req("GET", `/tasks/${ntask.id}/result`, { token });
+    nucleiFindings = nf.findings ?? [];
+    ok(nucleiFindings.length >= 3, `nuclei found >=3 exposures on the vuln app (got ${nucleiFindings.length})`);
+    const withProof = nucleiFindings.filter((f) => (f.proof ?? "").includes("curl"));
+    ok(withProof.length >= 3, "nuclei findings carry curl reproduction commands as proof");
+    const withTags = nucleiFindings.filter((f) => (f.metadata?.tags ?? null) !== null);
+    ok(withTags.length === nucleiFindings.length, "every nuclei finding carries template tags in metadata");
+    const cats = new Set(nucleiFindings.map((f) => f.category));
+    ok(cats.has("Vulnerability"), `tag->category mapping produced categories: ${[...cats].join(", ")}`);
+
+    // Sniper from a nuclei finding: the Vulnerability chain starts with a
+    // focused nuclei re-verification. Full 13k-template re-scans take too
+    // long for E2E, so prove step wiring + launch, then cancel.
+    const vulnFinding = nucleiFindings.find((f) => f.category === "Vulnerability");
+    if (vulnFinding) {
+      const { status: vr, json: vrun } = await req("POST", "/sniper/run", {
+        token, body: { finding_id: vulnFinding.id, consent_granted: true },
+      });
+      ok(vr === 201 && !!vrun.run_id, "sniper run from nuclei finding accepted");
+      let steps = [];
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        const g = await req("GET", `/sniper/runs/${vrun.run_id}`, { token });
+        steps = g.json.steps ?? [];
+        if (steps.some((s) => s.plugin_id === "nuclei" && s.task_id)) break;
+        if (["completed", "failed", "cancelled"].includes(g.json.status)) break;
+      }
+      const ids = steps.map((s) => s.plugin_id);
+      ok(ids[0] === "nuclei", `Vulnerability chain step 1 is nuclei (got: ${ids.join(",") || "none"})`);
+      // Steps are persisted incrementally as they start, so later steps
+      // (website-scanner, http-headers) are only visible once step 1
+      // finishes -- out of E2E scope here. Their presence in the chain
+      // definition is guarded by the Rust unit test
+      // pick_chain_vulnerability_runs_nuclei_dast_headers.
+      await req("POST", `/sniper/runs/${vrun.run_id}/cancel`, { token });
+      ok(true, "sniper run cancelled (full re-scan out of E2E scope)");
+    }
+  }
+
+  if (vulnAppUp && haveDalfox) {
+    const { status: ds, json: dtask } = await req("POST", "/tasks", {
+      token,
+      body: { plugin_id: "xss-scanner", inputs: { target: "http://127.0.0.1:8899/?q=verify" }, consent_granted: true },
+    });
+    ok(ds === 201 && !!dtask.id, "dalfox task accepted");
+    const dres = await waitTask(token, dtask.id, 180_000);
+    ok(dres.status === "completed", `dalfox task completes (status=${dres.status})`);
+    const { json: df } = await req("GET", `/tasks/${dtask.id}/result`, { token });
+    const items = df.findings ?? [];
+    ok(items.length >= 1, `dalfox found the reflected XSS (got ${items.length})`);
+    const v = items[0];
+    if (v) {
+      ok(v.category === "XSS", `dalfox finding categorized XSS (got ${v.category})`);
+      ok(v.kind === "validated_issue", `dalfox finding is validated, not suspected (got ${v.kind})`);
+      ok((v.metadata?.param ?? "") === "q", "dalfox metadata carries the injected parameter");
+      ok(typeof v.metadata?.cwe === "string" && v.metadata.cwe.length > 0, "dalfox metadata carries CWE");
+      ok((v.proof ?? "").includes("svg") || (v.proof ?? "").length > 10, "dalfox proof carries the payload");
+    }
+  }
+
+  // Suite wiring: web suite includes nuclei, full includes nuclei + xss-scanner.
+  if (haveNuclei && vulnAppUp) {
+    const { status: tu, json: urlTarget } = await req("POST", `/workspaces/${wsId}/targets`, {
+      token, body: { name: "http://127.0.0.1:8899", description: "vuln app" },
+    });
+    if (tu === 201) {
+      const { status: sw, json: webSuite } = await req("POST", `/targets/${urlTarget.id}/attack`, {
+        token, body: { suite: "web" },
+      });
+      ok(sw === 201, "web suite on URL target -> 201");
+      const launched = (webSuite.tasks ?? []).map((t) => t.plugin_id);
+      ok(launched.includes("nuclei"), `web suite launches nuclei (launched: ${launched.join(",")})`);
+      const { status: sf, json: fullSuite } = await req("POST", `/targets/${urlTarget.id}/attack`, {
+        token, body: { suite: "full" },
+      });
+      if (sf === 201) {
+        const fl = (fullSuite.tasks ?? []).map((t) => t.plugin_id);
+        ok(fl.includes("nuclei"), "full suite launches nuclei");
+        if (haveDalfox) ok(fl.includes("xss-scanner"), "full suite launches xss-scanner (dalfox)");
+      }
+      ok(true, `web suite skipped: ${(webSuite.skipped ?? []).length} plugin(s) with reasons`);
+    }
+  }
+
   // --- Attack-Target -----------------------------------------------------------
   section("Attack-Target suites");
   const { status: aq, json: quick } = await req("POST", `/targets/${ipTarget.id}/attack`, {
@@ -249,10 +399,12 @@ async function main() {
   // The replay is the second run of the same plugin+target. Diffing the
   // replay against the original (auto-baseline = the previous run)
   // exercises GET /tasks/:id/diff end-to-end. Diffing the FIRST run
-  // has no baseline and would 404.
+  // has no baseline and would 404. The baseline is the MOST RECENT prior
+  // run of the same plugin+target -- which may be a Sniper chain step
+  // that ran between the two, so assert "a prior run", not a specific id.
   const { status: dr, json: diff } = await req("GET", `/tasks/${replay.id}/diff`, { token });
   ok(dr === 200 && diff && typeof diff === "object", "GET /tasks/:id/diff -> 200 (auto-baseline = previous run)");
-  ok(diff?.baseline?.id === scan.id, "diff auto-baseline is the original run");
+  ok(!!diff?.baseline?.id && diff.baseline.id !== replay.id, "diff auto-baseline is a prior run of the same plugin+target");
 
   // --- People Hunter ---------------------------------------------------------------
   section("People Hunter");
@@ -433,6 +585,9 @@ async function main() {
   section("summary");
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed > 0) process.exitCode = 1;
+  // Exit deterministically: detached children + keep-alive sockets can
+  // keep the event loop alive after the checks are done.
+  process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((e) => {

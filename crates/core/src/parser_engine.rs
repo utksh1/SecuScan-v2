@@ -244,12 +244,93 @@ fn parse_json_lines(
             .as_deref()
             .and_then(|p| dot_path(&obj, p))
             .and_then(value_to_plain_string);
-        let proof = template
-            .proof_field
+        // Proof: prefer the joined `proof_fields` list, then the single
+        // `proof_field`, then the raw line (truncated).
+        let joined_proof: Vec<String> = template
+            .proof_fields
+            .iter()
+            .filter_map(|p| dot_path(&obj, p).and_then(value_to_plain_string))
+            .collect();
+        let proof = if !joined_proof.is_empty() {
+            joined_proof.join(" | ")
+        } else {
+            template
+                .proof_field
+                .as_deref()
+                .and_then(|p| dot_path(&obj, p))
+                .and_then(value_to_plain_string)
+                .unwrap_or_else(|| line.chars().take(512).collect())
+        };
+
+        // Per-finding category: split `category_field` on commas and match
+        // each tag against `category_map` (exact, case-insensitive). Falls
+        // back to the static category, then "General". Nuclei emits tags
+        // as a JSON array; dalfox-style tools may emit a bare string --
+        // both are normalized to a comma-separated list first.
+        let category = template
+            .category_field
+            .as_deref()
+            .and_then(|p| dot_path(&obj, p))
+            .and_then(value_to_tag_string)
+            .and_then(|tags| {
+                tags.split(',')
+                    .filter_map(|t| {
+                        let t = t.trim().to_ascii_lowercase();
+                        if t.is_empty() {
+                            return None;
+                        }
+                        template
+                            .category_map
+                            .iter()
+                            .find(|(k, _)| k.to_ascii_lowercase() == t)
+                            .map(|(_, v)| v.clone())
+                    })
+                    .next()
+            })
+            .or_else(|| template.category.clone())
+            .unwrap_or_else(|| "General".to_string());
+
+        // CVE: accept a bare string or an array (first element).
+        let cve = template
+            .cve_field
+            .as_deref()
+            .and_then(|p| dot_path(&obj, p))
+            .and_then(|v| match v {
+                Value::String(s) if !s.is_empty() => Some(s.clone()),
+                Value::Array(a) => a.iter().find_map(|e| match e {
+                    Value::String(s) if !s.is_empty() => Some(s.clone()),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .filter(|s| s.to_ascii_uppercase().starts_with("CVE-"));
+        let cvss_v3 = template
+            .cvss_field
+            .as_deref()
+            .and_then(|p| dot_path(&obj, p))
+            .and_then(|v| match v {
+                Value::Number(n) => n.as_f64(),
+                Value::String(s) => s.trim().parse::<f64>().ok(),
+                _ => None,
+            })
+            .map(|score| score.clamp(0.0, 10.0));
+        let cvss_vector = template
+            .cvss_vector_field
             .as_deref()
             .and_then(|p| dot_path(&obj, p))
             .and_then(value_to_plain_string)
-            .unwrap_or_else(|| line.chars().take(512).collect());
+            .filter(|s| s.contains("AV:"));
+
+        // Copy listed dot-paths into metadata under their last segment.
+        let mut metadata = serde_json::Map::new();
+        for path in &template.metadata_fields {
+            if let Some(v) = dot_path(&obj, path) {
+                if !v.is_null() {
+                    let key = path.rsplit('.').next().unwrap_or(path);
+                    metadata.insert(key.to_string(), v.clone());
+                }
+            }
+        }
 
         findings.push(Finding {
             kind: template
@@ -259,15 +340,15 @@ fn parse_json_lines(
                 .unwrap_or(FindingKind::SuspectedIssue),
             severity,
             title,
-            category: template
-                .category
-                .clone()
-                .unwrap_or_else(|| "General".to_string()),
+            category,
             description,
             remediation: template.remediation.clone().unwrap_or_default(),
             proof,
             url,
-            metadata: json!({}),
+            metadata: Value::Object(metadata),
+            cve,
+            cvss_v3,
+            cvss_vector,
             ..Default::default()
         });
     }
@@ -279,6 +360,30 @@ fn value_to_plain_string(v: &Value) -> Option<String> {
         Value::String(s) if !s.is_empty() => Some(s.clone()),
         Value::Number(n) => Some(n.to_string()),
         Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+/// Normalize a tag source to a comma-separated string: accepts a bare
+/// string (`"cve,rce"`) or an array of strings (`["config","git"]`,
+/// which nuclei emits for `info.tags`).
+fn value_to_tag_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Array(a) => {
+            let joined: Vec<String> = a
+                .iter()
+                .filter_map(|e| match e {
+                    Value::String(s) if !s.is_empty() => Some(s.clone()),
+                    _ => None,
+                })
+                .collect();
+            if joined.is_empty() {
+                None
+            } else {
+                Some(joined.join(","))
+            }
+        }
         _ => None,
     }
 }
@@ -428,7 +533,14 @@ mod tests {
                 severity_field: Some("info.severity".into()),
                 url_field: Some("matched_at".into()),
                 proof_field: None,
+                proof_fields: vec![],
                 category: Some("Vulnerability".into()),
+                category_field: None,
+                category_map: Default::default(),
+                cve_field: None,
+                cvss_field: None,
+                cvss_vector_field: None,
+                metadata_fields: vec![],
                 remediation: None,
                 kind: None,
             },
@@ -455,6 +567,208 @@ mod tests {
     }
 
     #[test]
+    fn nuclei_deep_extraction_cve_cvss_category() {
+        // Full nuclei JSONL line: tags -> category_map, classification ->
+        // cve/cvss/vector, proof_fields join, metadata_fields copy.
+        let spec = ParserSpec::JsonLines {
+            finding: JsonFindingTemplate {
+                title_field: "info.name".into(),
+                description_field: Some("info.description".into()),
+                severity_field: Some("info.severity".into()),
+                url_field: Some("matched-at".into()),
+                proof_field: Some("template-id".into()),
+                proof_fields: vec!["curl-command".into(), "template-id".into()],
+                category: Some("Vulnerability".into()),
+                category_field: Some("info.tags".into()),
+                category_map: [
+                    ("sqli".to_string(), "SQL Injection".to_string()),
+                    ("xss".to_string(), "XSS".to_string()),
+                    ("wordpress".to_string(), "WordPress".to_string()),
+                    ("credential".to_string(), "Credential".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                cve_field: Some("info.classification.cve-id".into()),
+                cvss_field: Some("info.classification.cvss-score".into()),
+                cvss_vector_field: Some("info.classification.cvss-vector".into()),
+                metadata_fields: vec![
+                    "info.tags".into(),
+                    "info.reference".into(),
+                    "host".into(),
+                    "type".into(),
+                ],
+                remediation: None,
+                kind: None,
+            },
+            severity_map: Default::default(),
+        };
+        let out = concat!(
+            r#"{"template-id":"CVE-2021-44228-log4j-rce","info":{"name":"Apache Log4j RCE","severity":"critical","tags":"cve,rce,log4j","description":"Look for JNDI payloads.","classification":{"cve-id":["CVE-2021-44228"],"cvss-score":10.0,"cvss-vector":"AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},"reference":["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"]},"type":"http","host":"http://t","matched-at":"http://t/path","curl-command":"curl -X GET http://t/path"}"#,
+            "\n",
+            r#"{"template-id":"wp-plugin-x","info":{"name":"WP plugin X reflected XSS","severity":"high","tags":"xss,wordpress","classification":{}},"type":"http","host":"http://t","matched-at":"http://t/q"}"#,
+            "\n",
+            r#"{"template-id":"git-config","info":{"name":"Git Config Exposure","severity":"medium","tags":"exposure,config"},"type":"http","host":"http://t","matched-at":"http://t/.git/config","curl-command":"curl http://t/.git/config"}"#,
+            "\n"
+        );
+        let findings = parse_output(&spec, &[], out).unwrap();
+        assert_eq!(findings.len(), 3);
+
+        // Line 1: no category_map tag matched (cve/rce/log4j unmapped) -> static.
+        let f = &findings[0];
+        assert_eq!(f.category, "Vulnerability");
+        assert_eq!(f.cve.as_deref(), Some("CVE-2021-44228"));
+        assert_eq!(f.cvss_v3, Some(10.0));
+        assert_eq!(
+            f.cvss_vector.as_deref(),
+            Some("AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
+        );
+        // proof_fields join: curl-command | template-id
+        assert_eq!(f.proof, "curl -X GET http://t/path | CVE-2021-44228-log4j-rce");
+        assert_eq!(f.metadata["tags"], json!("cve,rce,log4j"));
+        assert_eq!(f.metadata["reference"], json!(["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"]));
+        assert_eq!(f.metadata["host"], json!("http://t"));
+
+        // Line 2: first tag xss maps before wordpress (tag order wins).
+        let f = &findings[1];
+        assert_eq!(f.category, "XSS");
+        assert_eq!(f.cve, None);
+        assert_eq!(f.cvss_v3, None);
+        // No curl-command -> proof_fields yields template-id only.
+        assert_eq!(f.proof, "wp-plugin-x");
+
+        // Line 3: exposure falls back to static category; medium severity.
+        let f = &findings[2];
+        assert_eq!(f.category, "Vulnerability");
+        assert_eq!(f.severity, Severity::Medium);
+        assert_eq!(f.proof, "curl http://t/.git/config | git-config");
+    }
+
+    #[test]
+    fn nuclei_manifest_parses_real_template_output() {
+        // Guards the full manifest -> ParserSpec -> findings path against
+        // TOML-shape regressions (this exact path once silently produced
+        // zero findings from valid nuclei JSONL).
+        let src = std::fs::read_to_string("../../plugins/nuclei.toml")
+            .expect("plugins/nuclei.toml must exist next to the workspace");
+        let manifest: crate::manifest::PluginManifest =
+            toml::from_str(&src).expect("nuclei.toml must deserialize");
+        let ParserSpec::JsonLines { finding, severity_map } = &manifest.parser else {
+            panic!("nuclei.toml parser must be json_lines, got {:?}", manifest.parser);
+        };
+        assert_eq!(finding.title_field, "info.name");
+        assert_eq!(finding.url_field.as_deref(), Some("matched-at"));
+        assert_eq!(finding.cve_field.as_deref(), Some("info.classification.cve-id"));
+        assert!(finding.proof_fields.contains(&"curl-command".to_string()));
+        assert!(finding.category_map.contains_key("sqli"));
+        assert_eq!(severity_map.get("critical").map(String::as_str), Some("critical"));
+
+        // A captured (abbreviated) nuclei JSONL line.
+        let out = concat!(
+            r#"{"template-id":"mysql-dump","info":{"name":"MySQL - Dump Files","tags":["exposure","backup","mysql","vuln"],"severity":"medium","classification":{"cve-id":null,"cwe-id":["cwe-200"],"cvss-score":5.3}},"type":"http","host":"127.0.0.1","matched-at":"http://127.0.0.1:8899/backup.sql","curl-command":"curl http://127.0.0.1:8899/backup.sql"}"#,
+            "\n",
+            r#"{"template-id":"sqli-template","info":{"name":"SQLi in thing","tags":["sqli","vuln"],"severity":"critical","classification":{"cve-id":["CVE-2024-1234"],"cvss-score":9.8,"cvss-vector":"AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}},"type":"http","matched-at":"http://t/q","curl-command":"curl http://t/q"}"#,
+            "\n"
+        );
+        let findings = parse_output(&manifest.parser, &[], out).unwrap();
+        assert_eq!(findings.len(), 2, "both lines must yield findings");
+        assert_eq!(findings[0].title, "MySQL - Dump Files");
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert_eq!(findings[0].category, "Vulnerability"); // tags unmapped
+        assert!(findings[0].proof.contains("curl"));
+        assert_eq!(findings[0].metadata["tags"], json!(["exposure", "backup", "mysql", "vuln"]));
+        // Second line maps sqli -> SQL Injection + extracts CVE/CVSS.
+        assert_eq!(findings[1].category, "SQL Injection");
+        assert_eq!(findings[1].cve.as_deref(), Some("CVE-2024-1234"));
+        assert_eq!(findings[1].cvss_v3, Some(9.8));
+        assert_eq!(findings[1].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn nuclei_array_tags_map_to_categories() {
+        // nuclei v3 emits info.tags as a JSON array, not a string.
+        let spec = ParserSpec::JsonLines {
+            finding: JsonFindingTemplate {
+                title_field: "info.name".into(),
+                description_field: None,
+                severity_field: Some("info.severity".into()),
+                url_field: Some("matched-at".into()),
+                proof_field: None,
+                proof_fields: vec![],
+                category: Some("Vulnerability".into()),
+                category_field: Some("info.tags".into()),
+                category_map: [
+                    ("sqli".to_string(), "SQL Injection".to_string()),
+                    ("xss".to_string(), "XSS".to_string()),
+                    ("wordpress".to_string(), "WordPress".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                cve_field: Some("info.classification.cve-id".into()),
+                cvss_field: None,
+                cvss_vector_field: None,
+                metadata_fields: vec![],
+                remediation: None,
+                kind: None,
+            },
+            severity_map: Default::default(),
+        };
+        let out = concat!(
+            r#"{"info":{"name":"WP plugin X","severity":"high","tags":["wordpress","wp-plugin","xss"],"classification":{"cve-id":null}},"matched-at":"http://t/x"}"#,
+            "\n",
+            r#"{"info":{"name":"Git Config","severity":"medium","tags":["config","git","exposure"],"classification":{"cwe-id":["cwe-552"]}},"matched-at":"http://t/.git/config"}"#,
+            "\n"
+        );
+        let findings = parse_output(&spec, &[], out).unwrap();
+        assert_eq!(findings.len(), 2);
+        // Array tag order is preserved: wordpress maps before xss.
+        assert_eq!(findings[0].category, "WordPress");
+        // No mapped tag -> static fallback.
+        assert_eq!(findings[1].category, "Vulnerability");
+        // null cve-id -> no CVE on either finding.
+        assert_eq!(findings[0].cve, None);
+        assert_eq!(findings[1].cve, None);
+    }
+
+    #[test]
+    fn json_lines_cve_validation_and_clamping() {
+        // Bogus CVE strings are dropped; CVSS is clamped to 0..=10.
+        let spec = ParserSpec::JsonLines {
+            finding: JsonFindingTemplate {
+                title_field: "info.name".into(),
+                description_field: None,
+                severity_field: Some("info.severity".into()),
+                url_field: None,
+                proof_field: None,
+                proof_fields: vec![],
+                category: None,
+                category_field: None,
+                category_map: Default::default(),
+                cve_field: Some("cve".into()),
+                cvss_field: Some("cvss".into()),
+                cvss_vector_field: Some("vec".into()),
+                metadata_fields: vec![],
+                remediation: None,
+                kind: None,
+            },
+            severity_map: Default::default(),
+        };
+        let out = concat!(
+            r#"{"info":{"name":"a","severity":"low"},"cve":"OSVDB-1234","cvss":42.5,"vec":"not-a-vector"}"#,
+            "\n",
+            r#"{"info":{"name":"b","severity":"low"},"cve":"cve-2024-0001","cvss":"9.8","vec":"AV:N/AC:L"}"#,
+            "\n"
+        );
+        let findings = parse_output(&spec, &[], out).unwrap();
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].cve, None); // not CVE- prefixed
+        assert_eq!(findings[0].cvss_v3, Some(10.0)); // clamped
+        assert_eq!(findings[0].cvss_vector, None); // no AV:
+        assert_eq!(findings[1].cve.as_deref(), Some("cve-2024-0001"));
+        assert_eq!(findings[1].cvss_v3, Some(9.8)); // string parse works
+        assert_eq!(findings[1].cvss_vector.as_deref(), Some("AV:N/AC:L"));
+    }
+
+    #[test]
     fn dedup_identical_findings() {
         let spec = ParserSpec::JsonLines {
             finding: JsonFindingTemplate {
@@ -463,7 +777,14 @@ mod tests {
                 severity_field: None,
                 url_field: Some("u".into()),
                 proof_field: None,
+                proof_fields: vec![],
                 category: None,
+                category_field: None,
+                category_map: Default::default(),
+                cve_field: None,
+                cvss_field: None,
+                cvss_vector_field: None,
+                metadata_fields: vec![],
                 remediation: None,
                 kind: None,
             },

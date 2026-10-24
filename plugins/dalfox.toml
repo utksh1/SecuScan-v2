@@ -1,13 +1,23 @@
-# dalfox wrapper — XSS scanner (projectdiscovery-style output).
+# dalfox wrapper -- purpose-built XSS scanner with JSONL output.
+#
+# dalfox v3+ mines parameters, injects context-aware payloads, and
+# verifies execution (DOM marker analysis) before reporting. Its
+# type_description distinguishes "Vulnerable -- dalfox asserts this
+# input is exploitable" from plain reflections, so findings arrive as
+# validated issues with the exact payload + evidence attached.
 [plugin]
 id = "xss-scanner"
 name = "XSS Scanner (dalfox)"
-version = "1.0.0"
-description = "Detect reflected and DOM cross-site scripting with dalfox"
+version = "3.0.0"
+description = "Verified reflected and DOM cross-site scripting with dalfox"
 long_description = """
-Wraps dalfox, a purpose-built XSS scanner: it analyses the target URL's
-parameters, injects context-aware payloads and reports verified reflected
-XSS, DOM sinks and blind-XSS callbacks.
+Wraps dalfox v3, a purpose-built XSS scanner: parameter mining,
+context-aware payload injection, DOM sink analysis and verification
+before anything is reported. Output is normalized from dalfox's
+structured JSONL -- each finding carries the payload, the evidence,
+the injection location (Query / Body / Header / Path), the CWE, and a
+confidence rating. Findings land in the XSS category so the Sniper
+Auto-Exploiter XSS chain (OOB callback handler) can follow up.
 """
 category = "web"
 author = "SecuScan Contributors"
@@ -20,15 +30,19 @@ tags = ["web", "xss", "injection"]
 type = "cli"
 binary = "dalfox"
 timeout_seconds = 1800
-output_format = "text"
+output_format = "json_lines"
 argv = [
   "dalfox",
   "url", "{target}",
   "--no-color",
-  "--silence",
-  "--no-spinner",
-  "--if:blind_url:then:-b",
-  "--if:blind_url:then:{blind_url}",
+  "-S",
+  "-f", "jsonl",
+  # dalfox exits non-zero when it finds XSS (grep convention); the
+  # runner treats non-zero exit as completion, not failure.
+  "--if:only_vulnerable:then:--only-poc",
+  "--if:only_vulnerable:then:v",
+  "--if:param:then:-p",
+  "--if:param:then:{param}",
 ]
 
 [[fields]]
@@ -41,34 +55,53 @@ pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~{}()-]*$'
 message = "Must be a URL; include a parameter to test, e.g. ?q=test"
 
 [[fields]]
-id = "blind_url"
-label = "Blind-XSS callback (optional)"
+id = "param"
+label = "Parameter (optional)"
 type = "string"
-placeholder = "https://your-callback.example.com"
-pattern = '^https://[a-zA-Z0-9.:/_-]*$'
-help = "Optional callback host for blind-XSS payloads (leave empty to disable)."
+placeholder = "q"
+help = "Test only this parameter; leave empty to mine all parameters."
+
+[[fields]]
+id = "only_vulnerable"
+label = "Only verified vulnerabilities"
+type = "boolean"
+default = true
+help = "Report only findings dalfox asserts are exploitable (type V). Disable to also see plain reflections."
 
 [parser]
-type = "line_regex"
-# dalfox --silence prints only results, e.g.
-# [V] https://target/?q=... payload reflected
-# [V][G] parameter `q` reflected
-pattern = '^\[(?P<kind>V|VD|VH|POC|VA)\]\s*(?P<detail>.+)$'
-skip_patterns = []
-metadata_fields = ["kind", "detail"]
+type = "json_lines"
 
 [parser.finding]
-title = "XSS finding ({kind}): {detail}"
-description = "dalfox reported an XSS ({kind}). Review the payload context and confirm exploitability."
-remediation = "Apply context-aware output encoding, a strict CSP, and validate input against an allow-list."
-proof = "[{kind}] {detail}"
-category = "Injection"
-severity = "high"
+# dalfox JSONL emits a meta summary line first (no message_str ->
+# skipped) then one line per finding. message_str is human-readable:
+# "Triggered XSS Payload (DOM marker): q=<svg onload=alert(1)...>"
+title_field = "message_str"
+description_field = "type_description"
+severity_field = "severity"
+url_field = "data"
+proof_fields = ["payload", "evidence", "detection_method"]
+# Routes to the Sniper XSS chain (xss-exploiter OOB callback handler).
+category = "XSS"
+# dalfox's "V" type means verified exploitable -- not a suspicion.
+kind = "validated_issue"
+# Copied into finding metadata (last path segment as key).
+metadata_fields = [
+  "cwe",
+  "confidence",
+  "confidence_reason",
+  "inject_type",
+  "location",
+  "param",
+  "method",
+  "type",
+]
 
-[[parser.severity_rules]]
-field = "kind"
-values = ["VD", "VA"]
-severity = "medium"
+[parser.severity_map]
+critical = "critical"
+high = "high"
+medium = "medium"
+low = "low"
+info = "info"
 
 [safety]
 level = "intrusive"

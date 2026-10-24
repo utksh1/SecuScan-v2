@@ -3,6 +3,99 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.0.0 -- Power engines: nuclei template library + dalfox XSS, deeply wired
+
+The check-library force multiplier. Hand-written checks top out at dozens
+of detections; the nuclei community template library ships **14,109
+templates** (3,587 CVE checks, 1,496 actively-exploited KEV entries,
+exposures, misconfigurations, panels, default logins) and updates daily.
+This release wraps the two strongest open-source engines and wires them
+into every layer of the platform instead of leaving them as standalone
+plugin manifests.
+
+### Parser engine: deep JSONL extraction (generic)
+
+`JsonFindingTemplate` (the `[parser.finding]` table for `json_lines`
+plugins) gained five capabilities, all exercised by nuclei + dalfox:
+
+- `category_field` + `category_map` -- per-finding categories derived
+  from a tag list (string or JSON array; nuclei emits arrays). Tags map
+  to platform categories (sqli -> SQL Injection, xss -> XSS, wordpress
+  -> WordPress, credential -> Credential, ...) so Sniper chains pick
+  the right follow-up automatically; unmapped tags fall back to the
+  static `category`.
+- `cve_field` / `cvss_field` / `cvss_vector_field` -- CVE ids (string
+  or array, first valid CVE- entry wins), CVSS scores (clamped to
+  0..=10) and vectors flow into the platform's EPSS/KEV enrichment.
+- `proof_fields` -- joined reproduction proof (nuclei: the exact
+  `curl-command` + template id).
+- `metadata_fields` -- arbitrary dot-paths copied into finding
+  metadata (tags, references, host, type, template-path).
+
+### nuclei (Vulnerability Templates) -- deep rewrite
+
+- argv gains `-duc` (deterministic scans: the platform owns template
+  updates, never the scan-time binary -- nuclei's update check stalls
+  in restricted networks) and `-ni` (out-of-band detection runs through
+  SecuScan's OWN OOB callback system, not nuclei's external
+  Interactsh service).
+- New `tags` field (e.g. `kev` for actively-exploited-only runs)
+  alongside `templates` and `severity`.
+- Findings now carry: curl reproduction commands as proof, CVE + CVSS
+  score + vector, template tags + references in metadata, and
+  tag-derived categories.
+
+### dalfox (XSS Scanner) -- JSONL rewrite
+
+- dalfox v3's structured JSONL replaces regex scraping: findings carry
+  the payload, evidence, injection location, CWE, confidence and the
+  verified-parameter name. `kind = validated_issue` -- dalfox's "V"
+  type asserts exploitability, so findings are validated, not
+  suspected.
+- `--no-spinner` (removed in dalfox v3.2.4) dropped; `-f jsonl` added;
+  new `param` and `only_vulnerable` fields.
+- Category "XSS" routes findings into the existing Sniper XSS chain
+  (OOB callback handler).
+
+### Sniper: Vulnerability chain
+
+New chain for nuclei template hits (unmapped tags -> "Vulnerability"):
+nuclei re-verification focused on high/critical severities, then
+website-scanner DAST refresh, then http-headers audit. Tag-mapped
+findings (SQL Injection / XSS / WordPress / Credential / TLS) continue
+to route to their existing specialized chains.
+
+### Attack-Target suites
+
+- `web` suite (hostname/URL) now launches nuclei.
+- `full` suite (hostname/URL) now launches nuclei + xss-scanner.
+
+### Fixes + hardening
+
+- install-tools.sh: nuclei templates now clone to `~/nuclei-templates`
+  (the path nuclei actually searches by default; the previous
+  `~/.config/nuclei/templates` location was never picked up).
+- verify.mjs: `--if:`-style PATH propagation for tool installs, a
+  deliberately-vulnerable local test app (`scripts/vuln-app.mjs`) so
+  the engines prove real findings end-to-end, deterministic process
+  exit, and the Power engines section runs before the suites (the
+  `max_concurrent = 1` slot would otherwise be held by a suite task
+  scanning the internet).
+- Task findings fetch corrected to `GET /tasks/:id/result` in the E2E
+  harness.
+
+### Tests
+
+- 232/232 Rust (was 231; +1 real-manifest parse guard
+  `nuclei_manifest_parses_real_template_output` including array-tag
+  category mapping; suite inclusion tests updated for nuclei +
+  xss-scanner).
+- 65/65 frontend.
+- verify.mjs: 91/91 assertions green, including live nuclei (4
+  exposures on the vuln app: .env x2, MySQL dump, git config -- with
+  curl proofs, tag metadata, category mapping) and live dalfox
+  (verified reflected XSS with CWE-79, param + payload metadata).
+
 ## 3.3.0 -- Stronger native DAST than a SaaS shortlist
 
 GitHub-informed upgrade. Check *classes* from cyweb, scant3r, x8, crlfuzz,

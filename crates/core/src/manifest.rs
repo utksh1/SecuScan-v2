@@ -294,8 +294,35 @@ pub struct JsonFindingTemplate {
     pub url_field: Option<String>,
     #[serde(default)]
     pub proof_field: Option<String>,
+    /// Alternative to `proof_field`: several dot-paths joined with " | "
+    /// (first non-empty wins per position; skipped when absent).
+    #[serde(default)]
+    pub proof_fields: Vec<String>,
     #[serde(default)]
     pub category: Option<String>,
+    /// Dot-path whose (comma-separated) value is matched against
+    /// `category_map` keys to derive a per-finding category; falls back
+    /// to the static `category`. Example: `info.tags` for nuclei.
+    #[serde(default)]
+    pub category_field: Option<String>,
+    /// Tag -> category mapping applied to the comma-separated value at
+    /// `category_field` (first tag with an exact, case-insensitive key
+    /// match wins). Example: `sqli = "SQL Injection"`.
+    #[serde(default)]
+    pub category_map: std::collections::BTreeMap<String, String>,
+    /// Dot-path to a CVE id or an array of CVE ids (first is used).
+    #[serde(default)]
+    pub cve_field: Option<String>,
+    /// Dot-path to a numeric CVSS v3 base score.
+    #[serde(default)]
+    pub cvss_field: Option<String>,
+    /// Dot-path to a CVSS v3 vector string.
+    #[serde(default)]
+    pub cvss_vector_field: Option<String>,
+    /// Dot-paths copied verbatim into finding metadata under their last
+    /// path segment (e.g. `info.tags` -> `metadata.tags`).
+    #[serde(default)]
+    pub metadata_fields: Vec<String>,
     #[serde(default)]
     pub remediation: Option<String>,
     #[serde(default)]

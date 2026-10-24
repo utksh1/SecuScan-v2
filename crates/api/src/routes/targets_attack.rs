@@ -11,9 +11,9 @@
 //! | suite     | hostname/url                                  | ip_address                                |
 //! |-----------|-----------------------------------------------|-------------------------------------------|
 //! | quick     | http-recon + http-headers + dns-lookup       | dns-lookup + nmap (top-100)               |
-//! | web       | quick + whatweb + nikto + ssl-scanner        | (rejected; use quick or internal)         |
-//! | full      | web + subdomain-finder + nmap top-1000 + wordpress-audit + drupal-scanner | nmap top-1000 + smb-enum + ssh-audit |
-//! | internal  | (rejected; use full)                          | nmap + smb-enum + ssh-audit               |
+//! | web       | quick + website-scanner + param-finder + js-analyzer + nuclei + whatweb + nikto + testssl | (rejected; use quick or internal) |
+//! | full      | web + xss-scanner + api-scanner + subdomain-finder + nmap top-1000 + wordpress-audit + drupal-scanner | nmap top-1000 + smb-enum + ssh-audit + service-defaults |
+//! | internal  | (rejected; use full)                          | nmap + smb-enum + ssh-audit + service-defaults |
 //!
 //! Every plugin is launched through the standard
 //! `validate_and_create_task` admission pipeline so the global target
@@ -57,6 +57,7 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "website-scanner",
             "param-finder",
             "js-analyzer",
+            "nuclei",
             "whatweb",
             "nikto",
             "testssl",
@@ -71,6 +72,8 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "website-scanner",
             "param-finder",
             "js-analyzer",
+            "nuclei",
+            "xss-scanner",
             "api-scanner",
             "whatweb",
             "nikto",
@@ -288,6 +291,18 @@ mod tests {
         assert!(p.contains(&"wordpress-audit"));
         assert!(p.contains(&"drupal-scanner"));
         assert!(p.contains(&"subdomain-finder"));
+    }
+
+    #[test]
+    fn pick_suite_web_and_full_include_nuclei() {
+        // v4.0.0: the 12k-template nuclei engine is a first-class suite
+        // member; full also gets the dalfox XSS engine.
+        let web = pick_suite("web", "url").unwrap();
+        assert!(web.contains(&"nuclei"));
+        assert!(!web.contains(&"xss-scanner"));
+        let full = pick_suite("full", "hostname").unwrap();
+        assert!(full.contains(&"nuclei"));
+        assert!(full.contains(&"xss-scanner"));
     }
 
     #[test]

@@ -1,21 +1,33 @@
-# nuclei wrapper — template-driven vulnerability scanner.
+# nuclei wrapper — template-driven vulnerability scanner (deep wiring).
+#
+# The engine behind this plugin is the ProjectDiscovery nuclei template
+# library (~12k community templates: 3.5k+ CVE checks, 1.5k KEV /
+# actively-exploited, exposures, misconfigs, default logins, panels).
+# Each JSONL result line is normalized with CVE id, CVSS score + vector,
+# per-tag category mapping (so Sniper chains can follow up), the exact
+# curl reproduction command as proof, and reference URLs in metadata.
 [plugin]
 id = "nuclei"
 name = "Vulnerability Templates (nuclei)"
-version = "2.0.0"
+version = "3.0.0"
 description = "Community template-based vulnerability and exposure scanning"
 long_description = """
-Wraps ProjectDiscovery nuclei and its community template library: CVE
-checks, exposures, misconfigurations and takeovers. Results stream in as
-JSON lines and are normalized with the tool's own severity ratings.
-Requires the nuclei binary and an up-to-date template clone.
+Wraps ProjectDiscovery nuclei and its community template library (12,000+
+templates: CVE checks, actively-exploited KEV coverage, exposures,
+misconfigurations, panels and default logins). Results stream in as JSON
+lines and are normalized with the tool's own severity ratings, CVE ids,
+CVSS scores and vectors, and the exact curl command that reproduces each
+match as proof. Findings with a CVE flow into the platform's EPSS/KEV
+enrichment automatically. Template tags are mapped to platform categories
+(SQL Injection, XSS, WordPress, Credential, ...) so Sniper Auto-Exploiter
+chains can pick them up.
 """
 category = "web"
 author = "SecuScan Contributors"
 license = "MIT"
 icon = "bug"
 difficulty = "advanced"
-tags = ["cve", "vulnerability", "templates"]
+tags = ["cve", "vulnerability", "templates", "kev"]
 
 [engine]
 type = "cli"
@@ -28,8 +40,21 @@ argv = [
   "-jsonl",
   "-silent",
   "-nc",
+  # Deterministic scans: the platform owns template updates (via
+  # scripts/install-tools.sh), never the scan-time binary. Without this
+  # flag nuclei phones home at startup and can stall in restricted
+  # networks / air-gapped deployments.
+  "-duc",
+  # Out-of-band detection runs through SecuScan's OWN OOB callback
+  # system (http-request-logger / xss-exploiter handlers), not nuclei's
+  # external Interactsh service -- which would otherwise stall scans
+  # whenever oast-style hosts are unreachable.
+  "-ni",
+  "-retries", "1",
   "--if:severity:then:-severity",
   "--if:severity:then:{severity}",
+  "--if:tags:then:-tags",
+  "--if:tags:then:{tags}",
   "--if:templates:then:-t",
   "--if:templates:then:{templates}",
   "--if:concurrency:then:-c",
@@ -55,11 +80,18 @@ message = "Comma-separated severities (unknown, info, low, medium, high, critica
 help = "Leave empty to run all severities."
 
 [[fields]]
-id = "templates"
-label = "Template tags/dirs"
+id = "tags"
+label = "Template tags"
 type = "string"
-placeholder = "cves,exposures or ~/nuclei-templates/http/cves"
-help = "Restrict to specific template groups. Leave empty for the full library."
+placeholder = "cve,kev | exposure | misconfig | default-login"
+help = "Restrict to templates with these comma-separated tags (e.g. `kev` for actively-exploited CVEs only)."
+
+[[fields]]
+id = "templates"
+label = "Template dirs"
+type = "string"
+placeholder = "~/nuclei-templates/http/cves"
+help = "Restrict to specific template directories. Leave empty for the full library (tags wins if both set)."
 
 [[fields]]
 id = "concurrency"
@@ -77,9 +109,39 @@ title_field = "info.name"
 description_field = "info.description"
 severity_field = "info.severity"
 url_field = "matched-at"
-proof_field = "template-id"
+# Reproduction first, template id second: the curl command is the
+# strongest possible proof; template-id keeps the result traceable.
+proof_fields = ["curl-command", "template-id"]
 category = "Vulnerability"
+# nuclei tags (comma-separated in info.tags) drive per-finding categories
+# so existing Sniper chains pick the right follow-up. Tag order in the
+# template wins; anything unmapped falls back to "Vulnerability" (which
+# has its own Sniper chain: nuclei deep re-scan + DAST + headers).
+category_field = "info.tags"
 kind = "suspected_issue"
+# CVE / CVSS extraction feeds the platform's EPSS + KEV enrichment.
+cve_field = "info.classification.cve-id"
+cvss_field = "info.classification.cvss-score"
+cvss_vector_field = "info.classification.cvss-vector"
+# Copied into finding metadata (last path segment as key).
+metadata_fields = [
+  "info.tags",
+  "info.reference",
+  "host",
+  "type",
+  "template-path",
+]
+
+[parser.finding.category_map]
+sqli = "SQL Injection"
+sql-injection = "SQL Injection"
+xss = "XSS"
+wordpress = "WordPress"
+drupal = "Drupal"
+credential = "Credential"
+default-login = "Credential"
+weak-password = "Credential"
+tls = "TLS"
 
 [parser.severity_map]
 critical = "critical"
