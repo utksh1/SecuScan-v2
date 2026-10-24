@@ -15,6 +15,66 @@ use std::path::PathBuf;
 
 const OPENVPN_BIN: &str = "openvpn";
 
+/// Directives that would let a profile run host commands. Rejected at
+/// upload/test time so a scanner cannot RCE the SecuScan host.
+const DANGEROUS_OVPN: &[&str] = &[
+    "up",
+    "down",
+    "plugin",
+    "script-security",
+    "tls-verify",
+    "ipchange",
+    "route-up",
+    "route-pre-down",
+    "client-connect",
+    "client-disconnect",
+    "learn-address",
+    "auth-user-pass-verify",
+];
+
+/// Structural + safety check for uploaded .ovpn text.
+pub fn validate_ovpn_config(config: &str) -> Result<(), String> {
+    if config.len() > 512 * 1024 {
+        return Err("config must be <= 512KB".into());
+    }
+    let has_remote = config.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with("remote ") || t == "remote" || t.contains("<tls-auth>") || t.contains("<tls-crypt>")
+    });
+    let has_remote = has_remote || config.contains("remote ");
+    if !has_remote {
+        return Err("config_text does not look like an OpenVPN config (missing `remote` directive)".into());
+    }
+    for line in config.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') || t.starts_with(';') {
+            continue;
+        }
+        let key = t.split_whitespace().next().unwrap_or("");
+        if DANGEROUS_OVPN.iter().any(|d| key.eq_ignore_ascii_case(d)) {
+            return Err(format!(
+                "rejected OpenVPN directive `{key}` (scripts/plugins are not allowed on this host)"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `remote` host:port pairs extracted for the /test UI.
+pub fn ovpn_remotes(config: &str) -> Vec<String> {
+    config
+        .lines()
+        .filter_map(|line| {
+            let t = line.trim();
+            if t.to_ascii_lowercase().starts_with("remote ") {
+                Some(t["remote ".len()..].trim().to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Is the openvpn binary available on PATH?
 pub fn openvpn_available() -> bool {
     which(OPENVPN_BIN).is_some()
@@ -190,5 +250,14 @@ mod tests {
     fn openvpn_available_is_bool() {
         // Just exercise it; the sandbox may or may not have openvpn.
         let _ = openvpn_available();
+    }
+
+    #[test]
+    fn ovpn_rejects_script_directives() {
+        let bad = "remote vpn.example.com 1194\nup /tmp/pwn.sh\n";
+        assert!(validate_ovpn_config(bad).is_err());
+        let good = "client\nremote vpn.example.com 1194\ndev tun\n";
+        assert!(validate_ovpn_config(good).is_ok());
+        assert_eq!(ovpn_remotes(good), vec!["vpn.example.com 1194"]);
     }
 }

@@ -142,6 +142,11 @@ pub async fn run_http(client: SecuScanClient, bind: String) -> Result<()> {
                 AxumJson(resp)
             }
         }));
+    if !(bind.starts_with("127.") || bind.starts_with("localhost") || bind.starts_with("[::1]")) {
+        tracing::warn!(
+            "MCP HTTP has no auth — binding {bind} exposes start_scan/run_sniper to the network. Prefer 127.0.0.1"
+        );
+    }
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!("MCP HTTP server listening on http://{bind}");
     axum::serve(listener, app).await?;

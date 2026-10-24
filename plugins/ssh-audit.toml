@@ -1,0 +1,86 @@
+# SSH algorithm / auth-method audit via nmap NSE.
+[plugin]
+id = "ssh-audit"
+name = "SSH Audit"
+version = "1.0.0"
+description = "Audit SSH host keys, auth methods, and weak algorithms on TCP/22"
+long_description = """
+Runs nmap ssh2-enum-algos, ssh-auth-methods and ssh-hostkey against port 22.
+Weak ciphers, password-only auth, and missing public-key auth are surfaced
+from the script output. Fully offline; uses the nmap binary already required
+for the network suite.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "lock-keyhole"
+difficulty = "intermediate"
+tags = ["ssh", "crypto", "internal"]
+
+[engine]
+type = "cli"
+binary = "nmap"
+timeout_seconds = 300
+output_format = "text"
+argv = [
+  "nmap",
+  "-p", "22",
+  "-sV",
+  "--script", "ssh2-enum-algos,ssh-auth-methods,ssh-hostkey",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "192.168.1.10"
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
+message = "Must be an IP, hostname, or CIDR range"
+
+[parser]
+type = "line_regex"
+pattern = '(?P<port>22)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
+
+[parser.finding]
+title = "SSH service open on {port}/{proto} ({service})"
+description = "TCP 22 is open. Review raw output for kex/cipher lists and advertised auth methods."
+remediation = "Disable password auth if possible; remove CBC, MD5, and ssh-dss; keep current OpenSSH."
+proof = "{proto} port {port} is OPEN ({service})"
+category = "Network Service"
+severity = "info"
+
+[[static_rules]]
+pattern = '(?i)password'
+title = "SSH advertises password authentication"
+severity = "medium"
+description = "ssh-auth-methods listed password. Password auth is brute-forceable and weaker than publickey."
+remediation = "Set PasswordAuthentication no and use public-key (or a hardware token) only."
+category = "Misconfiguration"
+
+[[static_rules]]
+pattern = '(?i)diffie-hellman-group1-sha1|ssh-dss|arcfour|cbc'
+title = "SSH offers a weak algorithm"
+severity = "medium"
+description = "nmap listed a legacy SSH algorithm (group1-sha1, ssh-dss, arcfour, or CBC)."
+remediation = "Restrict HostKeyAlgorithms, KexAlgorithms, and Ciphers to modern sets (curve25519, aes256-gcm)."
+category = "Cryptography"
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Connects to TCP 22 and enumerates algorithms. Only scan authorized hosts."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 4
+max_per_hour = 40
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nmap"]

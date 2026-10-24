@@ -19,6 +19,8 @@ import { TargetsPage } from '@/pages/Targets'
 import { ReportsPage } from '@/pages/Reports'
 import { SchedulesPage } from '@/pages/Schedules'
 import { SettingsPage } from '@/pages/Settings'
+import { AttackSurfacePage } from '@/pages/AttackSurfacePage'
+import { OobHandlersPage } from '@/pages/OobHandlersPage'
 import { EmptyState } from '@/components/ui'
 import { Link } from 'react-router-dom'
 
@@ -83,6 +85,8 @@ export default function App() {
               <Route path="/sniper" element={<SniperPage />} />
               <Route path="/vpn" element={<VpnPage />} />
               <Route path="/targets" element={<TargetsPage />} />
+              <Route path="/surface" element={<AttackSurfacePage />} />
+              <Route path="/handlers" element={<OobHandlersPage />} />
               <Route path="/reports" element={<ReportsPage />} />
               <Route path="/schedules" element={<SchedulesPage />} />
               <Route path="/workflows" element={<WorkflowsPage />} />

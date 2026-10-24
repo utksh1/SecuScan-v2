@@ -22,6 +22,8 @@ pub mod reverse_dns;
 pub mod subdomain_finder;
 pub mod tls_check;
 pub mod vhost_finder;
+pub mod website_scanner;
+pub mod api_scanner;
 pub mod xss_exploiter;
 
 use crate::events::EventSink;
@@ -113,6 +115,8 @@ pub fn registry() -> &'static NativeRegistry {
             &http_request_logger::HttpRequestLogger,
             &xss_exploiter::XssExploiter,
             &people_hunter::PeopleHunter,
+            &website_scanner::WebsiteScanner,
+            &api_scanner::ApiScanner,
         ],
     })
 }

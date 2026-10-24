@@ -286,6 +286,113 @@ export const vpnApi = {
       method: 'PUT',
       body: { vpn_profile_id: vpnProfileId },
     }),
+  test: (id: string) =>
+    request<{
+      id: string
+      name: string
+      ok: boolean
+      error?: string
+      remotes: string[]
+      openvpn_available: boolean
+    }>(`/vpn-profiles/${id}/test`, { method: 'POST' }),
+}
+
+// --- multipart (wordlists + branding logo) ------------------------------------
+
+export async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+  const doFetch = () =>
+    fetch(`${BASE}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+      },
+      body: form,
+    })
+
+  let res = await doFetch()
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    const { ok } = await tryRefresh()
+    if (ok) {
+      res = await doFetch()
+    } else {
+      window.dispatchEvent(new CustomEvent('secuscan:unauthorized'))
+    }
+  }
+  if (!res.ok) {
+    let message = `request failed (${res.status})`
+    try {
+      const body = (await res.json()) as ApiErrorShape
+      if (body?.error?.message) message = body.error.message
+    } catch {
+      /* non-JSON */
+    }
+    throw new ApiError(res.status, message)
+  }
+  if (res.status === 204) {
+    return undefined as T
+  }
+  return (await res.json()) as T
+}
+
+// --- v3.2.0 cockpit: auth profiles, wordlists, notifications, branding ---------
+
+import type {
+  AuthProfile,
+  Branding,
+  NotificationLog,
+  NotificationRule,
+  Wordlist,
+} from './types'
+
+export const authProfileApi = {
+  list: () => request<{ items: AuthProfile[] }>('/auth-profiles'),
+  create: (body: {
+    name: string
+    method: AuthProfile['method']
+    config: Record<string, unknown>
+    notes?: string
+    workspace_id?: string
+  }) => request<AuthProfile>('/auth-profiles', { method: 'POST', body }),
+  remove: (id: string) => request<void>(`/auth-profiles/${id}`, { method: 'DELETE' }),
+}
+
+export const wordlistApi = {
+  list: () => request<{ items: Wordlist[] }>('/wordlists'),
+  upload: (name: string, file: File, kind: string, workspaceId?: string) => {
+    const form = new FormData()
+    form.append('name', name)
+    form.append('file', file)
+    form.append('kind', kind)
+    if (workspaceId) form.append('workspace_id', workspaceId)
+    return uploadForm<Wordlist>('/wordlists', form)
+  },
+  remove: (id: string) => request<void>(`/wordlists/${id}`, { method: 'DELETE' }),
+}
+
+export const notificationApi = {
+  list: () => request<{ items: NotificationRule[] }>('/notifications'),
+  create: (body: { name: string; rules: Record<string, unknown>; workspace_id?: string }) =>
+    request<NotificationRule>('/notifications', { method: 'POST', body }),
+  update: (id: string, body: { name: string; rules: Record<string, unknown>; enabled: boolean }) =>
+    request<void>(`/notifications/${id}`, { method: 'PATCH', body }),
+  remove: (id: string) => request<void>(`/notifications/${id}`, { method: 'DELETE' }),
+  log: (id: string) => request<{ items: NotificationLog[] }>(`/notifications/${id}/log`),
+}
+
+export const brandingApi = {
+  get: () => request<Branding>('/branding'),
+  update: (body: {
+    org_name: string
+    primary_color: string
+    accent_color: string
+    footer_text: string
+  }) => request<void>('/branding', { method: 'PATCH', body }),
+  uploadLogo: (file: File) => {
+    const form = new FormData()
+    form.append('logo', file)
+    return uploadForm<void>('/branding/logo', form)
+  },
 }
 
 // --- v3.1.0: Sniper Auto-Exploiter ----------------------------------------------
@@ -301,7 +408,7 @@ export const sniperApi = {
   run: (findingId: string, workspaceId?: string) =>
     request<{ run_id: string; finding_id: string; status: string }>('/sniper/run', {
       method: 'POST',
-      body: { finding_id: findingId, workspace_id: workspaceId },
+      body: { finding_id: findingId, workspace_id: workspaceId, consent_granted: true },
     }),
   cancel: (id: string) =>
     request<{ cancelled_tasks: number }>(`/sniper/runs/${id}/cancel`, { method: 'POST' }),

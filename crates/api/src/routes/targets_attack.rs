@@ -56,7 +56,7 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "dns-lookup",
             "whatweb",
             "nikto",
-            "ssl-scanner",
+            "testssl",
         ]),
         ("web", "ip_address") => Err(ApiError::BadRequest(
             "the `web` suite requires a hostname or URL target -- use `quick` or `internal` for IP targets".into(),
@@ -67,7 +67,7 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "dns-lookup",
             "whatweb",
             "nikto",
-            "ssl-scanner",
+            "testssl",
             "subdomain-finder",
             "nmap",
             "wordpress-audit",

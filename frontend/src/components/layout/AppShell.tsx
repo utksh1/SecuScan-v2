@@ -17,6 +17,8 @@ import {
   Zap,
   Network,
   FileJson,
+  Globe,
+  Radio,
 } from 'lucide-react'
 import { useAuth } from '@/auth/AuthContext'
 import { useWorkspace } from '@/auth/WorkspaceContext'
@@ -32,6 +34,8 @@ const NAV = [
   { to: '/findings', label: 'Findings', icon: ShieldAlert },
   { to: '/sniper', label: 'Sniper', icon: Zap },
   { to: '/targets', label: 'Targets', icon: Crosshair, end: true },
+  { to: '/surface', label: 'Attack Surface', icon: Globe },
+  { to: '/handlers', label: 'OOB Handlers', icon: Radio },
   { to: '/reports', label: 'Reports', icon: FileSpreadsheet },
   { to: '/schedules', label: 'Schedules', icon: CalendarClock },
   { to: '/workflows', label: 'Workflows', icon: GitBranch },

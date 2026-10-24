@@ -445,7 +445,7 @@ export function TargetsPage() {
               {
                 suite: 'web' as AttackSuite,
                 title: 'Web',
-                desc: 'Quick + whatweb + nikto + ssl-scanner (hostname/URL only)',
+                desc: 'Quick + whatweb + nikto + testssl (hostname/URL only)',
               },
               {
                 suite: 'full' as AttackSuite,

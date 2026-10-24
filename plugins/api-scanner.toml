@@ -1,0 +1,61 @@
+# Native API Scanner (OpenAPI / Postman / GraphQL).
+[plugin]
+id = "api-scanner"
+name = "API Scanner"
+version = "1.0.0"
+description = "Parse OpenAPI or Postman from disk; probe GETs; flag GraphQL introspection"
+long_description = """
+Offline-first API scanner. Point it at a target base URL and optionally a
+local spec_path (OpenAPI JSON/YAML or Postman v2.1). Documented GET
+operations are probed for missing rate-limit headers. A single GraphQL
+introspection query is sent; a schema in the response is a validated finding.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "braces"
+difficulty = "intermediate"
+tags = ["api", "openapi", "graphql"]
+
+[engine]
+type = "native"
+native = "api_scanner"
+timeout_seconds = 180
+
+[[fields]]
+id = "target"
+label = "API base URL"
+type = "string"
+required = true
+placeholder = "https://api.example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid http(s) URL"
+
+[[fields]]
+id = "spec_path"
+label = "Spec file path (optional)"
+type = "string"
+placeholder = "/path/to/openapi.json"
+help = "OpenAPI 2/3 JSON or YAML, or a Postman collection. Works fully offline."
+
+[[fields]]
+id = "spec_url"
+label = "Spec URL (optional)"
+type = "string"
+placeholder = "https://api.example.com/openapi.json"
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 10000
+min = 1000
+max = 60000
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Probes documented GET endpoints and GraphQL introspection. Only scan APIs you are authorized to test."
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]

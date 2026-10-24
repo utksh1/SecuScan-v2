@@ -172,9 +172,12 @@ async fn upload_wordlist(
 }
 
 async fn get_wordlist(
-    State(state): State<SharedState>, _user: CurrentUser, Path(id): Path<String>,
+    State(state): State<SharedState>, user: CurrentUser, Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::v300_misc::get_wordlist(&state.db, &id).await?;
+    if row.source != "builtin" {
+        crate::access::require_owner(&user, &row.created_by)?;
+    }
     Ok(Json(wordlist_to_json(&row)))
 }
 
@@ -186,6 +189,7 @@ async fn delete_wordlist(
     if row.source == "builtin" {
         return Err(ApiError::Forbidden("builtin wordlists cannot be deleted".into()));
     }
+    crate::access::require_owner(&user, &row.created_by)?;
     // Remove file.
     let _ = std::fs::remove_file(&row.file_path);
     secuscan_db::repo::v300_misc::delete_wordlist(&state.db, &id).await?;
@@ -196,10 +200,13 @@ async fn delete_wordlist(
 struct ContentsQuery { #[serde(default)] limit: Option<u32>, #[serde(default)] offset: Option<u32> }
 
 async fn get_wordlist_contents(
-    State(state): State<SharedState>, _user: CurrentUser, Path(id): Path<String>,
+    State(state): State<SharedState>, user: CurrentUser, Path(id): Path<String>,
     Query(q): Query<ContentsQuery>,
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::v300_misc::get_wordlist(&state.db, &id).await?;
+    if row.source != "builtin" {
+        crate::access::require_owner(&user, &row.created_by)?;
+    }
     let limit = q.limit.unwrap_or(1000) as usize;
     let offset = q.offset.unwrap_or(0) as usize;
     let content = std::fs::read_to_string(&row.file_path)

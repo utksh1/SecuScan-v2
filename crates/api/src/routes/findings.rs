@@ -156,7 +156,7 @@ async fn get_one(
     Ok(Json(finding_to_json(&f)))
 }
 
-async fn load_finding_for_user(
+pub async fn load_finding_for_user(
     state: &SharedState,
     user: &CurrentUser,
     id: &str,

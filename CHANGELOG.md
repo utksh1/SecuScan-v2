@@ -3,6 +3,47 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 3.2.0 -- Professional-depth start: trust, cockpit, DAST, API, internal plugins
+
+First slice of the professional-engagement plan (P0–P5 start). Not a SaaS
+clone — a local box a pentester can actually work from.
+
+### Trust (P0)
+
+- Sniper requires `consent_granted` and `load_finding_for_user` (no IDOR).
+- Sniper / VPN / OOB / auth-profile list+get scoped to owner or admin.
+- OOB: secrets omitted from list JSON; callback URL is `/api/v1/oob/:secret`;
+  expired handlers 404; body cap 256 KiB.
+- OpenVPN upload rejects `up`/`plugin`/`script-security` and related
+  host-command directives. `POST /vpn-profiles/:id/test` dry-runs the config.
+- Notification webhooks refuse loopback, RFC1918, link-local, and metadata IPs.
+
+### Cockpit (P1)
+
+- New pages: `/surface` (Attack Surface), `/handlers` (OOB).
+- Settings: auth profiles, wordlists, notification rules, report branding.
+- Notification create/update rejects loopback and RFC1918 webhook URLs;
+  list/get/log scoped to owner or admin.
+- Wordlist get/delete/contents scoped to owner (builtins remain shared).
+- VPN Test button. Sniper UI sends consent with the click.
+
+### Scanners (P3–P5)
+
+- `website-scanner` — native DAST: bounded spider, sensitive paths, headers,
+  reflected-marker XSS candidate, SQL-error detection, req/resp proof + CWE/OWASP.
+- `api-scanner` — OpenAPI/Postman from disk or URL, GET probes, GraphQL
+  introspection finding.
+- `smb-enum` and `ssh-audit` nmap NSE wrappers so Attack-Target
+  `full`/`internal` suites actually launch.
+- Attack-Target `web`/`full` now use `testssl` (the plugin that exists).
+
+### MCP
+
+- `run_sniper`, `get_sniper_run`, `list_vpn_profiles`, `test_vpn_profile`,
+  `start_people_hunter`.
+
+Catalog: **39 plugins**.
+
 ## 3.1.3 -- Python-free + toast UX + scan-diff button + commit attribution
 
 Three pieces of cleanup surfaced by the user after v3.1.2:

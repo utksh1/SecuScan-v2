@@ -1,0 +1,64 @@
+# Native Website Scanner (first-cut professional DAST).
+[plugin]
+id = "website-scanner"
+name = "Website Scanner"
+version = "1.0.0"
+description = "DAST: spider, sensitive paths, passive headers, reflected input and SQL-error detection"
+long_description = """
+In-process website scanner for authorized engagements. Crawls same-host
+pages (bounded), probes common sensitive paths, checks security headers,
+and runs two detection-only active checks: unique-marker reflection
+(XSS candidate) and quote-induced SQL error strings. Every finding
+carries a request/response excerpt as proof. No browser keylogging.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "globe"
+difficulty = "intermediate"
+tags = ["dast", "web", "xss", "sqli"]
+
+[engine]
+type = "native"
+native = "website_scanner"
+timeout_seconds = 300
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://app.example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid http(s) URL"
+
+[[fields]]
+id = "max_pages"
+label = "Max pages to crawl"
+type = "integer"
+default = 15
+min = 1
+max = 40
+
+[[fields]]
+id = "exclude"
+label = "Exclude path fragments"
+type = "string"
+default = "/logout,/signout,/delete"
+help = "Comma-separated substrings skipped by the spider."
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 12000
+min = 1000
+max = 60000
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Sends a bounded crawl plus detection payloads. Only scan systems you are authorized to test."
+max_concurrent = 2
+max_per_hour = 20
+capabilities = ["network"]

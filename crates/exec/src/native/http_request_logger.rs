@@ -40,7 +40,7 @@ impl NativeScanner for HttpRequestLogger {
         .await
         .map_err(|e| format!("create handler: {e}"))?;
 
-        let callback_url = format!("/oob/{}", handler.secret);
+        let callback_url = format!("/api/v1/oob/{}", handler.secret);
         let absolute_url = format!("https://secuscan.local{}", callback_url);
 
         Ok(vec![Finding {

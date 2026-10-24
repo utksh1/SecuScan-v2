@@ -100,6 +100,35 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
             "required": ["task_id", "format"]
         })),
         tool("list_reports", "List recent report jobs", json!({})),
+        tool("run_sniper", "Run a Sniper exploit chain on a finding you own. Requires consent_granted.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "finding_id": { "type": "string" },
+                    "workspace_id": { "type": "string" },
+                    "consent_granted": { "type": "boolean", "description": "Must be true" }
+                },
+                "required": ["finding_id", "consent_granted"]
+            })),
+        tool("get_sniper_run", "Get a Sniper run by id", json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        })),
+        tool("list_vpn_profiles", "List OpenVPN profiles owned by the caller", json!({})),
+        tool("test_vpn_profile", "Validate an OpenVPN profile without connecting", json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        })),
+        tool("start_people_hunter", "Start a People Hunter OSINT scan", json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string" },
+                "workspace_id": { "type": "string" }
+            },
+            "required": ["target"]
+        })),
     ]});
     JsonRpcResponse::ok(req.id, tools)
 }
@@ -280,6 +309,43 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
         }
         "list_reports" => {
             let v = client.get("/api/v1/reports").await.map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "run_sniper" => {
+            let finding_id = args.get("finding_id").and_then(|v| v.as_str()).ok_or("missing finding_id")?;
+            let consent = args.get("consent_granted").and_then(|v| v.as_bool()).unwrap_or(false);
+            let mut body = json!({ "finding_id": finding_id, "consent_granted": consent });
+            if let Some(ws) = args.get("workspace_id").and_then(|v| v.as_str()) {
+                body["workspace_id"] = json!(ws);
+            }
+            let v = client.post("/api/v1/sniper/run", body).await.map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "get_sniper_run" => {
+            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
+            let v = client.get(&format!("/api/v1/sniper/runs/{id}")).await.map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "list_vpn_profiles" => {
+            let v = client.get("/api/v1/vpn-profiles").await.map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "test_vpn_profile" => {
+            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
+            let v = client.post(&format!("/api/v1/vpn-profiles/{id}/test"), json!({})).await.map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "start_people_hunter" => {
+            let target = args.get("target").and_then(|v| v.as_str()).ok_or("missing target")?;
+            let mut body = json!({
+                "plugin_id": "people-hunter",
+                "inputs": { "target": target },
+                "consent_granted": true,
+            });
+            if let Some(ws) = args.get("workspace_id").and_then(|v| v.as_str()) {
+                body["workspace_id"] = json!(ws);
+            }
+            let v = client.post("/api/v1/tasks", body).await.map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
         }
         _ => Err(format!("unknown tool: {name}")),

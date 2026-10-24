@@ -347,3 +347,66 @@ export interface ScheduleList {
   limit: number
   offset: number
 }
+
+export type AuthProfileMethod = 'cookie' | 'header' | 'form' | 'recorded'
+
+export interface AuthProfile {
+  id: string
+  workspace_id?: string
+  name: string
+  method: AuthProfileMethod
+  config: Record<string, unknown>
+  notes: string
+  created_by: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface Wordlist {
+  id: string
+  workspace_id?: string
+  name: string
+  source: string
+  file_path: string
+  word_count: number
+  size_bytes: number
+  kind: string
+  created_by: string
+  created_at: string
+}
+
+export interface NotificationRule {
+  id: string
+  workspace_id?: string
+  name: string
+  rules: Record<string, unknown>
+  enabled: boolean
+  created_by: string
+  created_at: string
+  updated_at?: string
+}
+
+export interface NotificationLog {
+  id: string
+  rule_id: string
+  task_id?: string
+  finding_id?: string
+  channel: string
+  status: string
+  http_status?: number
+  error?: string
+  payload?: Record<string, unknown>
+  sent_at: string
+}
+
+export interface Branding {
+  id: string
+  org_name: string
+  has_logo: boolean
+  logo_size?: number
+  primary_color: string
+  accent_color: string
+  footer_text: string
+  updated_at?: string
+  updated_by?: string
+}

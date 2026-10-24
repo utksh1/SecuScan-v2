@@ -1,7 +1,7 @@
 //! Notifications HTTP routes — CRUD + delivery log.
 
 use crate::auth::extractor::CurrentUser;
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -37,13 +37,16 @@ fn rule_to_json(r: &secuscan_db::models::NotificationRuleRow) -> Value {
 
 async fn list(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = secuscan_db::repo::notifications::list_rules(&state.db, q.workspace_id.as_deref()).await?;
-    Ok(Json(json!({
-        "items": rows.iter().map(rule_to_json).collect::<Vec<_>>(),
-    })))
+    let items: Vec<Value> = rows
+        .iter()
+        .filter(|r| crate::access::is_owner_or_admin(&user, &r.created_by))
+        .map(rule_to_json)
+        .collect();
+    Ok(Json(json!({ "items": items })))
 }
 
 #[derive(Deserialize)]
@@ -60,6 +63,10 @@ async fn create(
     Json(req): Json<CreateRuleRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
+    if req.name.trim().is_empty() || req.name.len() > 120 {
+        return Err(ApiError::BadRequest("name must be 1..=120 characters".into()));
+    }
+    validate_notification_rules(&req.rules)?;
     if let Some(ws) = &req.workspace_id {
         secuscan_db::repo::workspaces::get_workspace(&state.db, ws).await?;
     }
@@ -72,10 +79,11 @@ async fn create(
 
 async fn get_one(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
     Ok(Json(rule_to_json(&row)))
 }
 
@@ -94,6 +102,12 @@ async fn update(
     Json(req): Json<UpdateRuleRequest>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
+    crate::access::require_owner(&user, &existing.created_by)?;
+    if req.name.trim().is_empty() || req.name.len() > 120 {
+        return Err(ApiError::BadRequest("name must be 1..=120 characters".into()));
+    }
+    validate_notification_rules(&req.rules)?;
     let rules_json = serde_json::to_string(&req.rules).unwrap_or_else(|_| "{}".into());
     secuscan_db::repo::notifications::update_rule(
         &state.db, &id, &req.name, &rules_json, req.enabled,
@@ -107,6 +121,8 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
+    crate::access::require_owner(&user, &existing.created_by)?;
     secuscan_db::repo::notifications::delete_rule(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -119,10 +135,12 @@ struct ListLogQuery {
 
 async fn list_log(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
     Query(q): Query<ListLogQuery>,
 ) -> ApiResult<Json<Value>> {
+    let rule = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
+    crate::access::require_owner(&user, &rule.created_by)?;
     let limit = q.limit.unwrap_or(100);
     let rows = secuscan_db::repo::notifications::list_delivery_log(&state.db, Some(&id), limit).await?;
     Ok(Json(json!({
@@ -139,4 +157,74 @@ async fn list_log(
             "sent_at": l.sent_at,
         })).collect::<Vec<_>>(),
     })))
+}
+
+fn validate_notification_rules(rules: &Value) -> ApiResult<()> {
+    let actions = rules
+        .get("actions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| ApiError::BadRequest("rules.actions must be an array".into()))?;
+    if actions.is_empty() {
+        return Err(ApiError::BadRequest("rules.actions must not be empty".into()));
+    }
+    for a in actions {
+        let kind = a.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+        match kind {
+            "webhook" => {
+                let url = a.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                if url.is_empty() {
+                    return Err(ApiError::BadRequest("webhook action requires url".into()));
+                }
+                crate::notifications_engine::webhook_url_allowed(url)
+                    .map_err(ApiError::BadRequest)?;
+            }
+            "slack" | "teams" | "discord" => {
+                let url = a.get("webhook_url").and_then(|v| v.as_str()).unwrap_or("");
+                if url.is_empty() {
+                    return Err(ApiError::BadRequest(format!(
+                        "{kind} action requires webhook_url"
+                    )));
+                }
+                crate::notifications_engine::webhook_url_allowed(url)
+                    .map_err(ApiError::BadRequest)?;
+            }
+            "email" => {
+                let to = a.get("to").and_then(|v| v.as_array());
+                if to.map(|t| t.is_empty()).unwrap_or(true) {
+                    return Err(ApiError::BadRequest(
+                        "email action requires non-empty `to`".into(),
+                    ));
+                }
+            }
+            "" => return Err(ApiError::BadRequest("action kind is required".into())),
+            other => {
+                return Err(ApiError::BadRequest(format!(
+                    "unknown action kind `{other}`; must be webhook/email/slack/teams/discord"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rejects_loopback_webhook() {
+        let rules = json!({
+            "actions": [{"kind": "webhook", "url": "http://127.0.0.1/x"}]
+        });
+        assert!(validate_notification_rules(&rules).is_err());
+    }
+
+    #[test]
+    fn accepts_public_webhook() {
+        let rules = json!({
+            "actions": [{"kind": "webhook", "url": "https://example.com/x"}]
+        });
+        assert!(validate_notification_rules(&rules).is_ok());
+    }
 }

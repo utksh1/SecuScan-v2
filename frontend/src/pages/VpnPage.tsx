@@ -67,7 +67,19 @@ export function VpnPage() {
     },
     onError: (e) => setFormError(e instanceof Error ? e.message : 'create failed'),
   })
+  const [testMsg, setTestMsg] = useState('')
   const connectMut = useMutation({ mutationFn: vpnApi.connect, onSuccess: invalidate })
+  const testMut = useMutation({
+    mutationFn: vpnApi.test,
+    onSuccess: (r) => {
+      setTestMsg(
+        r.ok
+          ? `Config OK. remotes: ${r.remotes.join(', ') || '—'}; openvpn ${r.openvpn_available ? 'present' : 'missing'}`
+          : `Rejected: ${r.error ?? 'invalid config'}`,
+      )
+    },
+    onError: (e) => setTestMsg(e instanceof Error ? e.message : 'test failed'),
+  })
   const disconnectMut = useMutation({ mutationFn: vpnApi.disconnect, onSuccess: invalidate })
   const removeMut = useMutation({ mutationFn: vpnApi.remove, onSuccess: invalidate })
   const attachMut = useMutation({
@@ -113,6 +125,11 @@ export function VpnPage() {
         </div>
       </div>
 
+      {testMsg && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700">
+          {testMsg}
+        </div>
+      )}
       {!openvpnAvailable && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           The <span className="font-mono">openvpn</span> binary is not available on the server.
@@ -235,6 +252,16 @@ export function VpnPage() {
                     </td>
                     <td className="td">
                       <div className="flex justify-end gap-1.5">
+                        {canManage && (
+                          <button
+                            className="btn-ghost px-2 py-1 text-xs"
+                            disabled={testMut.isPending}
+                            onClick={() => testMut.mutate(p.id)}
+                            title="Validate config without connecting"
+                          >
+                            Test
+                          </button>
+                        )}
                         {canManage && p.status !== 'connected' && (
                           <button
                             className="btn-ghost px-2 py-1 text-xs text-emerald-700 hover:bg-emerald-50"

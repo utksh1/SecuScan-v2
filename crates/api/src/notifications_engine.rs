@@ -138,6 +138,7 @@ async fn dispatch(
     let (status, http_status, error) = match kind {
         "webhook" => {
             let url = action.get("url").and_then(|v| v.as_str()).unwrap_or("");
+            webhook_url_allowed(url)?;
             let secret = action.get("secret").and_then(|v| v.as_str()).unwrap_or("");
             let mut req = client.post(url).header("content-type", "application/json").body(payload_json.clone());
             if !secret.is_empty() {
@@ -155,6 +156,7 @@ async fn dispatch(
             if url.is_empty() {
                 return Err(format!("{kind} action missing webhook_url"));
             }
+            webhook_url_allowed(url)?;
             // All three accept a JSON body with a `text` field. Slack/Teams
             // also accept richer blocks, but plain text works everywhere.
             let text = format!(
@@ -186,6 +188,43 @@ async fn dispatch(
         error.as_deref(), &payload_json,
     ).await;
     Ok(())
+}
+
+/// Block server-side requests to loopback, link-local, and RFC1918.
+pub fn webhook_url_allowed(url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|_| "webhook URL is not valid".to_string())?;
+    if parsed.scheme() != "https" && parsed.scheme() != "http" {
+        return Err("webhook URL must be http or https".into());
+    }
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    if host.is_empty()
+        || host == "localhost"
+        || host.ends_with(".localhost")
+        || host == "metadata.google.internal"
+    {
+        return Err("webhook URL host is not allowed".into());
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if !ip_is_public(ip) {
+            return Err("webhook URL must not target a private or loopback address".into());
+        }
+    }
+    Ok(())
+}
+
+fn ip_is_public(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v) => {
+            let o = v.octets();
+            !(v.is_loopback()
+                || v.is_private()
+                || v.is_link_local()
+                || v.is_unspecified()
+                || (o[0] == 169 && o[1] == 254)
+                || o[0] == 0)
+        }
+        std::net::IpAddr::V6(v) => !(v.is_loopback() || v.is_unspecified()),
+    }
 }
 
 fn sev_rank(label: &str) -> usize {
@@ -224,4 +263,18 @@ fn hmac_sha256_hex(key: &str, msg: &str) -> String {
     outer.update(&inner_hash);
     let result = outer.finalize();
     hex::encode(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_blocks_private_and_loopback() {
+        assert!(webhook_url_allowed("http://127.0.0.1/hook").is_err());
+        assert!(webhook_url_allowed("http://localhost/hook").is_err());
+        assert!(webhook_url_allowed("http://192.168.1.10/hook").is_err());
+        assert!(webhook_url_allowed("http://169.254.169.254/latest").is_err());
+        assert!(webhook_url_allowed("https://hooks.slack.com/services/x").is_ok());
+    }
 }

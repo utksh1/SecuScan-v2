@@ -149,10 +149,14 @@ async function main() {
   section("plugin catalog");
   const { json: cat } = await req("GET", "/plugins", { token });
   const plugins = cat.items ?? [];
-  ok(plugins.length >= 35, `catalog has >=35 plugins (got ${plugins.length})`);
+  ok(plugins.length >= 39, `catalog has >=39 plugins (got ${plugins.length})`);
   const byId = Object.fromEntries(plugins.map((p) => [p.id, p]));
   ok(!!byId["people-hunter"]?.available, "people-hunter available");
   ok(!!byId["xss-exploiter"]?.available, "xss-exploiter available");
+  ok(!!byId["website-scanner"]?.available, "website-scanner available");
+  ok(!!byId["api-scanner"]?.available, "api-scanner available");
+  ok(!!byId["smb-enum"], "smb-enum in catalog");
+  ok(!!byId["ssh-audit"], "ssh-audit in catalog");
 
   // --- OpenAPI ---------------------------------------------------------------
   section("OpenAPI 3.1 spec");
@@ -218,7 +222,7 @@ async function main() {
   ok(findings.length > 0, `findings collected (${findings.length})`);
   if (findings.length > 0) {
     const { status: sr, json: run } = await req("POST", "/sniper/run", {
-      token, body: { finding_id: findings[0].id },
+      token, body: { finding_id: findings[0].id, consent_granted: true },
     });
     ok(sr === 201 && !!run.run_id, "sniper run launched");
     let finalRun = {};
@@ -365,6 +369,61 @@ async function main() {
     sarifOk = dl.status === 200 && text.includes('"2.1.0"') && text.includes("sarif");
   }
   ok(sarifOk, "SARIF artifact downloads and declares version 2.1.0");
+
+  // --- Cockpit APIs (3.2.0) -----------------------------------------------------------
+  section("cockpit APIs");
+  const ap = await req("GET", "/auth-profiles", { token });
+  ok(ap.status === 200 && Array.isArray(ap.json.items), "GET /auth-profiles");
+  const apc = await req("POST", "/auth-profiles", {
+    token,
+    body: { name: "e2e-cookie", method: "cookie", config: { cookies: [{ name: "sid", value: "x" }] } },
+  });
+  ok(apc.status === 201 && !!apc.json.id, "auth-profile created");
+
+  const badHook = await req("POST", "/notifications", {
+    token,
+    body: {
+      name: "ssrf",
+      rules: {
+        triggers: [{ kind: "scan_status", status: "completed" }],
+        actions: [{ kind: "webhook", url: "http://127.0.0.1/hook" }],
+      },
+    },
+  });
+  ok(badHook.status === 400, "notification webhook to loopback rejected");
+
+  const goodHook = await req("POST", "/notifications", {
+    token,
+    body: {
+      name: "ok-hook",
+      rules: {
+        triggers: [{ kind: "vuln_found", severity: ">=high" }],
+        actions: [{ kind: "webhook", url: "https://example.com/hook" }],
+      },
+    },
+  });
+  ok(goodHook.status === 201, "notification webhook to public host accepted");
+
+  const br = await req("GET", "/branding", { token });
+  ok(br.status === 200 && typeof br.json.org_name === "string", "GET /branding");
+
+  const wl = await req("GET", "/wordlists", { token });
+  ok(wl.status === 200 && Array.isArray(wl.json.items), "GET /wordlists");
+
+  const badVpn = await req("POST", "/vpn-profiles", {
+    token,
+    body: { name: "evil", config_text: "client\nup /bin/true\nremote 203.0.113.10 1194\n" },
+  });
+  ok(badVpn.status === 400, "OpenVPN up directive rejected");
+
+  const vt = await req("POST", `/vpn-profiles/${vpn.id}/test`, { token });
+  ok(vt.status === 200 && vt.json.ok === true, "VPN test dry-run ok");
+
+  const snNo = await req("POST", "/sniper/run", {
+    token,
+    body: { finding_id: (findings[0] && findings[0].id) || "missing", consent_granted: false },
+  });
+  ok(snNo.status === 400, "sniper without consent rejected");
 
   // --- summary ------------------------------------------------------------------------
   section("summary");

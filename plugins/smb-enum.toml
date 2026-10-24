@@ -1,0 +1,77 @@
+# SMB enumeration via nmap NSE (no extra binary).
+[plugin]
+id = "smb-enum"
+name = "SMB Enumeration"
+version = "1.0.0"
+description = "Enumerate SMB shares, OS, and signing on TCP/445 via nmap scripts"
+long_description = """
+Runs nmap against TCP 445 with smb-os-discovery, smb-enum-shares and
+smb2-security-mode. Use only on authorized internal hosts. Signing-disabled
+and guest-accessible shares are raised as findings.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "network"
+difficulty = "intermediate"
+tags = ["smb", "shares", "internal"]
+
+[engine]
+type = "cli"
+binary = "nmap"
+timeout_seconds = 600
+output_format = "text"
+argv = [
+  "nmap",
+  "-p", "445",
+  "-sV",
+  "--script", "smb-os-discovery,smb-enum-shares,smb2-security-mode",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "192.168.1.10"
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
+message = "Must be an IP, hostname, or CIDR range"
+
+[parser]
+type = "line_regex"
+pattern = '(?P<port>445)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
+
+[parser.finding]
+title = "SMB service open on {port}/{proto} ({service})"
+description = "TCP 445 is open. Review the raw output for share names, guest access, and SMB signing."
+remediation = "Disable guest access, require SMB signing, restrict 445 to management networks."
+proof = "{proto} port {port} is OPEN ({service})"
+category = "Network Service"
+severity = "low"
+
+[[static_rules]]
+pattern = '(?i)message_signing:\s*disabled|Guest account'
+title = "SMB signing disabled or guest access indicated"
+severity = "high"
+description = "nmap SMB scripts reported signing disabled and/or guest access. This enables relay and unauthenticated share access."
+remediation = "Enable SMB signing (required) and disable guest/anonymous access."
+category = "Misconfiguration"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "SMB enumeration talks to TCP 445 and may trigger IDS. Only scan authorized internal hosts."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 2
+max_per_hour = 20
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nmap"]

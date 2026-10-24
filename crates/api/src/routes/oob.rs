@@ -30,21 +30,24 @@ pub fn router() -> axum::Router<SharedState> {
     public.merge(authed)
 }
 
-fn handler_to_json(h: &secuscan_db::models::OobHandlerRow) -> Value {
-    json!({
+fn handler_to_json(h: &secuscan_db::models::OobHandlerRow, include_secret: bool) -> Value {
+    let mut out = json!({
         "id": h.id,
         "workspace_id": h.workspace_id,
         "user_id": h.user_id,
         "name": h.name,
         "kind": h.kind,
         "config": serde_json::from_str::<Value>(&h.config_json).unwrap_or(json!({})),
-        "secret": h.secret,
-        "callback_url": format!("/oob/{}", h.secret),
+        "callback_url": format!("/api/v1/oob/{}", h.secret),
         "expires_at": h.expires_at,
         "created_at": h.created_at,
         "hit_count": h.hit_count,
         "last_hit_at": h.last_hit_at,
-    })
+    });
+    if include_secret {
+        out["secret"] = json!(h.secret);
+    }
+    out
 }
 
 fn hit_to_json(h: &secuscan_db::models::OobHitRow) -> Value {
@@ -65,13 +68,16 @@ struct ListQuery {
 
 async fn list(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = secuscan_db::repo::oob::list_handlers(&state.db, q.workspace_id.as_deref()).await?;
-    Ok(Json(json!({
-        "items": rows.iter().map(handler_to_json).collect::<Vec<_>>(),
-    })))
+    let items: Vec<Value> = rows
+        .iter()
+        .filter(|h| crate::access::is_owner_or_admin(&user, &h.user_id))
+        .map(|h| handler_to_json(h, false))
+        .collect();
+    Ok(Json(json!({ "items": items })))
 }
 
 #[derive(Deserialize)]
@@ -108,16 +114,17 @@ async fn create(
         ttl,
     )
     .await?;
-    Ok((StatusCode::CREATED, Json(handler_to_json(&row))))
+    Ok((StatusCode::CREATED, Json(handler_to_json(&row, true))))
 }
 
 async fn get_one(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
-    Ok(Json(handler_to_json(&row)))
+    crate::access::require_owner(&user, &row.user_id)?;
+    Ok(Json(handler_to_json(&row, true)))
 }
 
 async fn delete(
@@ -126,6 +133,8 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let row = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.user_id)?;
     secuscan_db::repo::oob::delete_handler(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -138,10 +147,12 @@ struct ListHitsQuery {
 
 async fn list_hits(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
     Query(q): Query<ListHitsQuery>,
 ) -> ApiResult<Json<Value>> {
+    let handler = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
+    crate::access::require_owner(&user, &handler.user_id)?;
     let limit = q.limit.unwrap_or(100);
     let rows = secuscan_db::repo::oob::list_hits(&state.db, &id, limit).await?;
     Ok(Json(json!({
@@ -155,6 +166,8 @@ async fn clear_hits(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let handler = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
+    crate::access::require_owner(&user, &handler.user_id)?;
     secuscan_db::repo::oob::clear_hits(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -170,10 +183,15 @@ async fn receive_callback(
     let handler = secuscan_db::repo::oob::get_handler_by_secret(&state.db, &secret)
         .await?
         .ok_or_else(|| ApiError::NotFound("no such OOB handler".into()))?;
+    if let Ok(exp) = chrono::DateTime::parse_from_rfc3339(&handler.expires_at) {
+        if exp.with_timezone(&chrono::Utc) < chrono::Utc::now() {
+            return Err(ApiError::NotFound("OOB handler expired".into()));
+        }
+    }
 
     // Capture request data.
     let (parts, body) = req.into_parts();
-    let body_bytes: Bytes = axum::body::to_bytes(body, 16 * 1024 * 1024).await
+    let body_bytes: Bytes = axum::body::to_bytes(body, 256 * 1024).await
         .map_err(|e| ApiError::BadRequest(format!("read body: {e}")))?;
     let method = parts.method.as_str().to_string();
     let uri = parts.uri.to_string();

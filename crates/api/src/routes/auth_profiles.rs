@@ -50,7 +50,7 @@ struct CreateProfileRequest {
 
 async fn list(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = secuscan_db::repo::auth_profiles::list(
@@ -58,9 +58,12 @@ async fn list(
         q.workspace_id.as_deref(),
     )
     .await?;
-    Ok(Json(json!({
-        "items": rows.iter().map(profile_to_json).collect::<Vec<_>>(),
-    })))
+    let items: Vec<Value> = rows
+        .iter()
+        .filter(|p| crate::access::is_owner_or_admin(&user, &p.created_by))
+        .map(profile_to_json)
+        .collect();
+    Ok(Json(json!({ "items": items })))
 }
 
 async fn create(
@@ -92,10 +95,11 @@ async fn create(
 
 async fn get_one(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::auth_profiles::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
     Ok(Json(profile_to_json(&row)))
 }
 
@@ -106,6 +110,8 @@ async fn update(
     Json(req): Json<CreateProfileRequest>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let existing = secuscan_db::repo::auth_profiles::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &existing.created_by)?;
     validate_method(&req.method, &req.config)?;
     let config_json = serde_json::to_string(&req.config).unwrap_or_else(|_| "{}".into());
     secuscan_db::repo::auth_profiles::update(
@@ -121,6 +127,8 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let existing = secuscan_db::repo::auth_profiles::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &existing.created_by)?;
     secuscan_db::repo::auth_profiles::delete(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

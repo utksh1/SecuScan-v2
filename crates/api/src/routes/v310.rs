@@ -23,6 +23,7 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/vpn-profiles/:id", axum::routing::get(get_vpn).delete(delete_vpn))
         .route("/vpn-profiles/:id/connect", axum::routing::post(connect_vpn))
         .route("/vpn-profiles/:id/disconnect", axum::routing::post(disconnect_vpn))
+        .route("/vpn-profiles/:id/test", axum::routing::post(test_vpn))
         .route("/workspaces/:id/vpn", axum::routing::get(get_workspace_vpn).put(attach_vpn_to_workspace))
 }
 
@@ -56,11 +57,16 @@ struct SniperListQuery {
 
 async fn list_sniper_runs(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     axum::extract::Query(q): axum::extract::Query<SniperListQuery>,
 ) -> ApiResult<Json<Value>> {
     let rows = repo::sniper::list_runs(&state.db, q.finding_id.as_deref(), q.limit.unwrap_or(50)).await?;
-    Ok(Json(json!({"items": rows.iter().map(sniper_run_to_json).collect::<Vec<_>>()})))
+    let items: Vec<Value> = rows
+        .iter()
+        .filter(|r| crate::access::is_owner_or_admin(&user, &r.created_by))
+        .map(sniper_run_to_json)
+        .collect();
+    Ok(Json(json!({"items": items})))
 }
 
 #[derive(Deserialize)]
@@ -68,6 +74,10 @@ struct RunSniperRequest {
     finding_id: String,
     #[serde(default)]
     workspace_id: Option<String>,
+    /// Clicking Sniper in the UI is the consent act. MCP/API callers must
+    /// send this flag explicitly — we do not auto-consent exploit chains.
+    #[serde(default)]
+    consent_granted: bool,
 }
 
 async fn run_sniper(
@@ -76,7 +86,12 @@ async fn run_sniper(
     Json(req): Json<RunSniperRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
-    let finding = repo::findings::get(&state.db, &req.finding_id).await?;
+    if !req.consent_granted {
+        return Err(ApiError::BadRequest(
+            "consent_granted must be true to run an exploit chain".into(),
+        ));
+    }
+    let finding = crate::routes::findings::load_finding_for_user(&state, &user, &req.finding_id).await?;
     if let Some(ws) = &req.workspace_id {
         repo::workspaces::get_workspace(&state.db, ws).await?;
     }
@@ -122,10 +137,11 @@ async fn run_sniper(
 
 async fn get_sniper_run(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let run = repo::sniper::get_run(&state.db, &id).await?;
+    crate::access::require_owner(&user, &run.created_by)?;
     Ok(Json(sniper_run_to_json(&run)))
 }
 
@@ -177,10 +193,15 @@ fn vpn_to_json(v: &secuscan_db::models::VpnProfileRow, include_config: bool) -> 
 
 async fn list_vpn(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> ApiResult<Json<Value>> {
     let rows = repo::vpn::list(&state.db).await?;
-    Ok(Json(json!({"items": rows.iter().map(|v| vpn_to_json(v, false)).collect::<Vec<_>>()})))
+    let items: Vec<Value> = rows
+        .iter()
+        .filter(|v| crate::access::is_owner_or_admin(&user, &v.created_by))
+        .map(|v| vpn_to_json(v, false))
+        .collect();
+    Ok(Json(json!({"items": items})))
 }
 
 #[derive(Deserialize)]
@@ -202,22 +223,19 @@ async fn create_vpn(
     if req.config_text.len() > 512 * 1024 {
         return Err(ApiError::BadRequest("config must be <= 512KB".into()));
     }
-    if !req.config_text.contains("<tls-auth>") && !req.config_text.contains("<tls-crypt>")
-        && !req.config_text.contains("remote ") {
-        return Err(ApiError::BadRequest(
-            "config_text does not look like an OpenVPN config (missing `remote` directive)".into()
-        ));
-    }
+    crate::vpn_manager::validate_ovpn_config(&req.config_text)
+        .map_err(ApiError::BadRequest)?;
     let row = repo::vpn::create(&state.db, &user.0.id, &req.name, &req.config_text).await?;
     Ok((StatusCode::CREATED, Json(vpn_to_json(&row, false))))
 }
 
 async fn get_vpn(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let row = repo::vpn::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
     Ok(Json(vpn_to_json(&row, false)))
 }
 
@@ -228,6 +246,7 @@ async fn delete_vpn(
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
     let row = repo::vpn::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
     if row.status == "connected" {
         let _ = crate::vpn_manager::disconnect(&state.db, &row).await;
     }
@@ -242,8 +261,9 @@ async fn connect_vpn(
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
     let row = repo::vpn::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
     match crate::vpn_manager::connect(&state.db, &row).await {
-        Ok(iface) => {
+        Ok(_iface) => {
             let updated = repo::vpn::get(&state.db, &id).await?;
             Ok(Json(vpn_to_json(&updated, false)))
         }
@@ -263,10 +283,34 @@ async fn disconnect_vpn(
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
     let row = repo::vpn::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
     crate::vpn_manager::disconnect(&state.db, &row).await
         .map_err(ApiError::Internal)?;
     let updated = repo::vpn::get(&state.db, &id).await?;
     Ok(Json(vpn_to_json(&updated, false)))
+}
+
+async fn test_vpn(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    user.require_scanner()?;
+    let row = repo::vpn::get(&state.db, &id).await?;
+    crate::access::require_owner(&user, &row.created_by)?;
+    let check = crate::vpn_manager::validate_ovpn_config(&row.config_text);
+    let remotes = crate::vpn_manager::ovpn_remotes(&row.config_text);
+    let ok = check.is_ok();
+    let error = check.err();
+    Ok(Json(json!({
+        "id": row.id,
+        "name": row.name,
+        "ok": ok,
+        "error": error,
+        "remotes": remotes,
+        "openvpn_available": crate::vpn_manager::openvpn_available(),
+        "dangerous_directives_rejected": !ok,
+    })))
 }
 
 #[derive(Deserialize)]

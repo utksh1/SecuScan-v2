@@ -1,5 +1,6 @@
 //! SecuScan v2 API server library (used by the binary and integration tests).
 
+pub mod access;
 pub mod auth;
 pub mod attack_surface_aggregator;
 pub mod config;

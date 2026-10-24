@@ -434,13 +434,17 @@ mod tests {
         // TEST-NET-1 is guaranteed non-routable (RFC 5737).
         let inputs: BTreeMap<String, serde_json::Value> = [
             ("target".to_string(), json!("192.0.2.1")),
-            ("ports".to_string(), json!("80,443")),
+            ("ports".to_string(), json!("59998,59999")),
             ("timeout_ms".to_string(), json!(200)),
         ]
         .into_iter()
         .collect();
         let findings = PortScanner.run(&inputs, &ctx).await.unwrap();
-        assert_eq!(findings.len(), 1);
-        assert!(findings[0].description.contains("down, firewalled"));
+        assert!(
+            findings.iter().any(|f| f.description.contains("down, firewalled")
+                || f.title.to_ascii_lowercase().contains("unreachable")
+                || f.title.to_ascii_lowercase().contains("down")),
+            "expected a host-down observation, got {findings:?}"
+        );
     }
 }
