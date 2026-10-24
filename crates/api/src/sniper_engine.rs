@@ -81,11 +81,54 @@ pub fn chains() -> Vec<SniperChain> {
                 ]),
             ],
         },
-        // --- Weak/default credentials: aggressive audit ---
+        // --- Weak/default credentials ---
         SniperChain {
             category_match: "Credential",
             steps: vec![
-                step("Default-credential brute force", "password-audit", &[]),
+                step("Default-credential audit", "password-audit", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "Auth",
+            steps: vec![
+                step("Default-credential audit", "password-audit", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "API",
+            steps: vec![
+                step("API scanner follow-up", "api-scanner", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "CORS",
+            steps: vec![
+                step("CORS policy re-check", "cors-check", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "CRLF",
+            steps: vec![
+                step("Website DAST refresh", "website-scanner", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "LFI",
+            steps: vec![
+                step("Website DAST refresh", "website-scanner", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "JWT",
+            steps: vec![
+                step("Website DAST refresh", "website-scanner", &[]),
+            ],
+        },
+        SniperChain {
+            category_match: "Web",
+            steps: vec![
+                step("Website DAST refresh", "website-scanner", &[]),
+                step("Security header audit", "http-headers", &[]),
             ],
         },
         // --- WordPress: deep CMS-specific chain ---
@@ -284,6 +327,14 @@ mod tests {
     fn pick_chain_falls_back_to_http() {
         let c = pick_chain("HTTP Security Headers").unwrap();
         assert_eq!(c.category_match, "HTTP");
+    }
+
+    #[test]
+    fn pick_chain_web_and_api() {
+        assert_eq!(pick_chain("Web").unwrap().category_match, "Web");
+        assert_eq!(pick_chain("API specification").unwrap().category_match, "API");
+        assert_eq!(pick_chain("Authentication").unwrap().category_match, "Auth");
+        assert_eq!(pick_chain("CORS misconfiguration").unwrap().category_match, "CORS");
     }
 
     #[test]

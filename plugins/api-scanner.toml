@@ -3,12 +3,13 @@
 id = "api-scanner"
 name = "API Scanner"
 version = "1.0.0"
-description = "Parse OpenAPI or Postman from disk; probe GETs; flag GraphQL introspection"
+description = "OpenAPI/Postman/GraphQL: unauth GETs, rate-limit, verb tamper, secret keys"
 long_description = """
-Offline-first API scanner. Point it at a target base URL and optionally a
-local spec_path (OpenAPI JSON/YAML or Postman v2.1). Documented GET
-operations are probed for missing rate-limit headers. A single GraphQL
-introspection query is sent; a schema in the response is a validated finding.
+Offline-first API scanner. Loads a spec from disk, URL, or common
+unauthenticated paths (/openapi.json, /swagger.json). Documented GETs
+are probed for missing rate-limit headers, credential-like JSON keys,
+and unauthenticated DELETE on read paths. GraphQL introspection is a
+single POST; a schema in the response is a validated finding.
 """
 category = "web"
 author = "SecuScan Contributors"

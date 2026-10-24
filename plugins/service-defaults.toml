@@ -1,0 +1,79 @@
+# Anonymous / empty-password service probes via nmap NSE (no extra binary).
+# Detection only: one script pass, not a credential dictionary.
+[plugin]
+id = "service-defaults"
+name = "Service Defaults"
+version = "1.0.0"
+description = "Probe common services for anonymous or empty-password access"
+long_description = """
+Runs a curated nmap script list against well-known ports (FTP, SSH, Telnet,
+SMTP, POP3, IMAP, SNMP, LDAP, SMB, MSSQL, MySQL, RDP, VNC, Redis, MongoDB,
+PostgreSQL, Oracle listener). Scripts report anonymous login, empty
+passwords, open relay, and similar defaults. Not a hydra-style brute force.
+"""
+category = "network"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "key-round"
+difficulty = "intermediate"
+tags = ["defaults", "passwords", "nmap", "internal"]
+
+[engine]
+type = "cli"
+binary = "nmap"
+timeout_seconds = 900
+output_format = "text"
+argv = [
+  "nmap",
+  "-sV",
+  "-p", "21,22,23,25,110,143,161,389,445,1433,1521,3306,3389,5432,5900,6379,27017",
+  "--script", "ftp-anon,ssh-auth-methods,telnet-ntlm-info,smtp-open-relay,pop3-capabilities,imap-capabilities,snmp-info,ldap-rootdse,smb-enum-shares,ms-sql-empty-password,mysql-empty-password,rdp-enum-encryption,vnc-info,redis-info,mongodb-info",
+  "{target}",
+]
+
+[[fields]]
+id = "target"
+label = "Target"
+type = "string"
+required = true
+placeholder = "192.168.1.10"
+pattern = '^[a-zA-Z0-9:\[][a-zA-Z0-9.:\[\]-]*(/\d{1,2})?$'
+message = "Must be an IP, hostname, or CIDR range"
+
+[parser]
+type = "line_regex"
+pattern = '(?P<port>\d+)/(?P<proto>tcp)\s+open\s+(?P<service>[\w-]+)'
+
+[parser.finding]
+title = "Service open on {port}/{proto} ({service})"
+description = "Review the raw NSE output for anonymous, empty-password, or open-relay evidence."
+remediation = "Disable anonymous access, require authentication, and bind the service to a management network."
+proof = "{proto} port {port} is OPEN ({service})"
+category = "Network Service"
+severity = "info"
+
+[[static_rules]]
+pattern = '(?i)anonymous.*login|empty password|no authentication|open relay|Guest account'
+title = "Anonymous or empty-password access indicated"
+severity = "high"
+description = "An NSE script reported anonymous login, empty password, guest access, or an open relay."
+remediation = "Require credentials, disable guest/anonymous, and close unused listeners."
+category = "Authentication"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Probes well-known service ports with nmap default-access scripts. Only scan authorized hosts."
+allowed_targets = [
+  "127.0.0.1", "::1", "localhost",
+  "10.*.*.*", "192.168.*.*",
+  "172.16.*.*", "172.17.*.*", "172.18.*.*", "172.19.*.*", "172.20.*.*",
+  "172.21.*.*", "172.22.*.*", "172.23.*.*", "172.24.*.*", "172.25.*.*",
+  "172.26.*.*", "172.27.*.*", "172.28.*.*", "172.29.*.*", "172.30.*.*", "172.31.*.*",
+]
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["nmap"]

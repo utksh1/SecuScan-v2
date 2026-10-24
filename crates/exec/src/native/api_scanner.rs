@@ -35,7 +35,7 @@ impl NativeScanner for ApiScanner {
         let client = super::http_headers::build_client(true, timeout)?;
         let mut findings = Vec::new();
 
-        let spec_text = if !spec_path.is_empty() {
+        let mut spec_text = if !spec_path.is_empty() {
             std::fs::read_to_string(spec_path)
                 .map_err(|e| format!("read spec_path `{spec_path}`: {e}"))?
         } else if !spec_url.is_empty() {
@@ -44,6 +44,36 @@ impl NativeScanner for ApiScanner {
         } else {
             String::new()
         };
+
+        let base = target.trim_end_matches('/');
+        if spec_text.is_empty() {
+            for guess in ["/openapi.json", "/swagger.json", "/v3/api-docs", "/api-docs"] {
+                if ctx.cancel.is_cancelled() { break; }
+                let url = format!("{base}{guess}");
+                let Ok(resp) = client.get(&url).send().await else { continue };
+                if !resp.status().is_success() { continue; }
+                let text = resp.text().await.unwrap_or_default();
+                if parse_spec(&text).is_ok() && text.contains("paths") {
+                    spec_text = text;
+                    findings.push(Finding {
+                        title: format!("OpenAPI document exposed at {guess}"),
+                        category: "API".into(),
+                        severity: Severity::Low,
+                        kind: FindingKind::Observation,
+                        description: "An unauthenticated GET returned a parseable OpenAPI/Swagger document.".into(),
+                        remediation: "Serve the spec only to authenticated operators, or on an internal host.".into(),
+                        proof: format!("GET {url} → 200"),
+                        url: Some(url),
+                        metadata: json!({ "path": guess }),
+                        cwe: Some("CWE-200".into()),
+                        owasp: Some("A01:2021-Broken Access Control".into()),
+                        confidence: Some("certain".into()),
+                        ..Default::default()
+                    });
+                    break;
+                }
+            }
+        }
 
         if !spec_text.is_empty() {
             let spec = parse_spec(&spec_text)?;
@@ -60,37 +90,101 @@ impl NativeScanner for ApiScanner {
                 metadata: json!({ "operations": ops.len() }),
                 ..Default::default()
             });
-            let base = target.trim_end_matches('/');
-            for op in ops.into_iter().take(25) {
+            let mut unauth_ok = 0u32;
+            for op in ops.into_iter().take(40) {
                 if ctx.cancel.is_cancelled() { break; }
-                // Only probe GET-like documented paths that look safe.
                 let (method, path) = op.split_once(' ').unwrap_or(("GET", op.as_str()));
-                if !method.eq_ignore_ascii_case("get") { continue; }
                 let url = if path.starts_with("http") { path.to_string() } else { format!("{base}{path}") };
-                if url.contains('{') { continue; } // skip templated paths
-                let Ok(resp) = client.get(&url).send().await else { continue };
-                let status = resp.status().as_u16();
-                let headers = resp.headers().clone();
-                if !headers.keys().any(|k| k.as_str().to_ascii_lowercase().contains("ratelimit")
-                    || k.as_str().eq_ignore_ascii_case("x-ratelimit-limit"))
-                    && (200..500).contains(&status)
-                {
-                    findings.push(Finding {
-                        title: format!("Missing rate-limit headers on {method} {path}"),
-                        category: "API".into(),
-                        severity: Severity::Low,
-                        kind: FindingKind::SuspectedIssue,
-                        description: "No RateLimit / X-RateLimit-* header on a documented GET.".into(),
-                        remediation: "Send IETF RateLimit headers (or vendor equivalents) on every API response.".into(),
-                        proof: format!("GET {url} → {status}"),
-                        url: Some(url),
-                        metadata: json!({ "status": status }),
-                        cwe: Some("CWE-770".into()),
-                        owasp: Some("A04:2021-Insecure Design".into()),
-                        confidence: Some("uncertain".into()),
-                        ..Default::default()
-                    });
+                if url.contains('{') { continue; }
+                match method.to_ascii_uppercase().as_str() {
+                    "GET" => {
+                        let Ok(resp) = client.get(&url).send().await else { continue };
+                        let status = resp.status().as_u16();
+                        let headers = resp.headers().clone();
+                        let body = resp.text().await.unwrap_or_default();
+                        if (200..300).contains(&status) {
+                            unauth_ok += 1;
+                            if let Some(key) = json_secret_key(&body) {
+                                findings.push(Finding {
+                                    title: format!("Response JSON contains sensitive key `{key}`"),
+                                    category: "API".into(),
+                                    severity: Severity::Medium,
+                                    kind: FindingKind::SuspectedIssue,
+                                    description: "An unauthenticated GET returned a JSON object with a credential-like key.".into(),
+                                    remediation: "Never return secrets, tokens, or password hashes in API responses.".into(),
+                                    proof: format!("GET {url} → {status}\n{}", truncate_json(&body, 400)),
+                                    url: Some(url.clone()),
+                                    metadata: json!({ "status": status, "key": key }),
+                                    cwe: Some("CWE-200".into()),
+                                    owasp: Some("A02:2021-Cryptographic Failures".into()),
+                                    confidence: Some("uncertain".into()),
+                                    ..Default::default()
+                                });
+                            }
+                        }
+                        if !headers.keys().any(|k| k.as_str().to_ascii_lowercase().contains("ratelimit")
+                            || k.as_str().eq_ignore_ascii_case("x-ratelimit-limit"))
+                            && (200..500).contains(&status)
+                        {
+                            findings.push(Finding {
+                                title: format!("Missing rate-limit headers on {method} {path}"),
+                                category: "API".into(),
+                                severity: Severity::Low,
+                                kind: FindingKind::SuspectedIssue,
+                                description: "No RateLimit / X-RateLimit-* header on a documented GET.".into(),
+                                remediation: "Send IETF RateLimit headers (or vendor equivalents) on every API response.".into(),
+                                proof: format!("GET {url} → {status}"),
+                                url: Some(url.clone()),
+                                metadata: json!({ "status": status }),
+                                cwe: Some("CWE-770".into()),
+                                owasp: Some("A04:2021-Insecure Design".into()),
+                                confidence: Some("uncertain".into()),
+                                ..Default::default()
+                            });
+                        }
+                        // Verb tamper: documented GET also answers DELETE unauthenticated.
+                        if (200..300).contains(&status) {
+                            if let Ok(del) = client.delete(&url).send().await {
+                                let ds = del.status().as_u16();
+                                if (200..300).contains(&ds) {
+                                    findings.push(Finding {
+                                        title: format!("DELETE accepted on documented GET {path}"),
+                                        category: "API".into(),
+                                        severity: Severity::Medium,
+                                        kind: FindingKind::SuspectedIssue,
+                                        description: "An unauthenticated DELETE against a read path returned 2xx.".into(),
+                                        remediation: "Reject unadvertised verbs; require auth on mutating methods.".into(),
+                                        proof: format!("DELETE {url} → {ds}"),
+                                        url: Some(url),
+                                        metadata: json!({ "status": ds }),
+                                        cwe: Some("CWE-650".into()),
+                                        owasp: Some("A01:2021-Broken Access Control".into()),
+                                        confidence: Some("uncertain".into()),
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
+            }
+            if unauth_ok >= 3 {
+                findings.push(Finding {
+                    title: format!("{unauth_ok} documented GET operations reachable without auth"),
+                    category: "API".into(),
+                    severity: Severity::Low,
+                    kind: FindingKind::Observation,
+                    description: "Several spec paths answered 2xx with no credentials presented.".into(),
+                    remediation: "Confirm each is intentionally public; require auth on the rest.".into(),
+                    proof: format!("{unauth_ok} unauthenticated 2xx GETs against {base}"),
+                    url: Some(base.to_string()),
+                    metadata: json!({ "unauth_ok": unauth_ok }),
+                    cwe: Some("CWE-306".into()),
+                    owasp: Some("A01:2021-Broken Access Control".into()),
+                    confidence: Some("uncertain".into()),
+                    ..Default::default()
+                });
             }
         }
 
@@ -177,6 +271,34 @@ fn collect_postman(items: &[Value], out: &mut Vec<String>) {
     }
 }
 
+pub fn json_secret_key(body: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    let obj = v.as_object()?;
+    for key in [
+        "password",
+        "passwd",
+        "secret",
+        "api_key",
+        "apikey",
+        "private_key",
+        "access_token",
+        "id_token",
+    ] {
+        if obj.contains_key(key) {
+            return Some(key.into());
+        }
+    }
+    None
+}
+
+fn truncate_json(s: &str, n: usize) -> String {
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..n])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +318,12 @@ mod tests {
         let spec = "openapi: 3.0.0\npaths:\n  /health:\n    get: {}\n";
         let v = parse_spec(spec).unwrap();
         assert!(operations(&v).contains(&"GET /health".into()));
+    }
+
+    #[test]
+    fn secret_keys_detected() {
+        assert_eq!(json_secret_key(r#"{"ok":true}"#), None);
+        assert_eq!(json_secret_key(r#"{"access_token":"x"}"#).as_deref(), Some("access_token"));
+        assert_eq!(json_secret_key("not-json"), None);
     }
 }

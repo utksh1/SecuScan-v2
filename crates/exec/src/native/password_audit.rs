@@ -49,8 +49,13 @@ impl NativeScanner for PasswordAuditScanner {
             get_i64_or(inputs, "timeout_ms", 8_000).clamp(500, 30_000) as u64,
         );
         let pairs = load_pairs(get_str_or(inputs, "wordlist", ""))?;
+        let protocol = get_str_or(inputs, "protocol", "http-basic");
 
         let client = build_client(false, timeout)?;
+
+        if protocol == "http-form" {
+            return run_form(&client, &target, inputs, &pairs, ctx).await;
+        }
 
         // Sanity: is the target actually Basic-auth protected? If the first
         // request returns 200 with no WWW-Authenticate, the audit is moot.
@@ -108,6 +113,67 @@ impl NativeScanner for PasswordAuditScanner {
 
         Ok(audit_findings(&target, &successes))
     }
+}
+
+async fn run_form(
+    client: &reqwest::Client,
+    target: &str,
+    inputs: &BTreeMap<String, serde_json::Value>,
+    pairs: &[(String, String)],
+    ctx: &NativeCtx,
+) -> Result<Vec<Finding>, String> {
+    let login_url = {
+        let raw = get_str_or(inputs, "login_url", "");
+        if raw.is_empty() {
+            target.to_string()
+        } else {
+            super::http_headers::normalize_url(raw)?
+        }
+    };
+    let user_field = get_str_or(inputs, "user_field", "username");
+    let pass_field = get_str_or(inputs, "pass_field", "password");
+    ctx.sink
+        .emit(crate::events::TaskEvent::Info(format!(
+            "form-login audit: {} pairs against {login_url} ({user_field}/{pass_field})",
+            pairs.len()
+        )))
+        .await;
+    let mut successes = Vec::new();
+    for (u, p) in pairs {
+        if ctx.cancel.is_cancelled() {
+            break;
+        }
+        let form = [(user_field, u.as_str()), (pass_field, p.as_str())];
+        let Ok(resp) = client.post(&login_url).form(&form).send().await else {
+            continue;
+        };
+        let status = resp.status().as_u16();
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let body = resp.text().await.unwrap_or_default();
+        if form_login_accepted(status, &location, &login_url, &body) {
+            successes.push((u.clone(), p.clone()));
+        }
+    }
+    Ok(audit_findings(&login_url, &successes))
+}
+
+/// Conservative success: redirect away from the login URL, or 200 that
+/// looks logged-in and does not contain a failure phrase.
+pub fn form_login_accepted(status: u16, location: &str, login_url: &str, body: &str) -> bool {
+    let fail = ["invalid", "incorrect", "failed", "unauthor", "denied", "wrong password"];
+    let lower = body.to_ascii_lowercase();
+    if fail.iter().any(|w| lower.contains(w)) {
+        return false;
+    }
+    if (300..400).contains(&status) && !location.is_empty() && !location.contains(login_url) {
+        return true;
+    }
+    status == 200 && (lower.contains("logout") || lower.contains("sign out") || lower.contains("dashboard"))
 }
 
 async fn preflight(client: &reqwest::Client, target: &str) -> Result<(u16, bool), String> {
@@ -251,5 +317,13 @@ mod tests {
     #[tokio::test]
     async fn basic_auth_matches_rfc() {
         assert_eq!(basic_auth("admin", "admin"), "YWRtaW46YWRtaW4=");
+    }
+
+    #[test]
+    fn form_success_is_conservative() {
+        assert!(form_login_accepted(302, "/home", "https://app/login", ""));
+        assert!(!form_login_accepted(200, "", "https://app/login", "invalid password"));
+        assert!(form_login_accepted(200, "", "https://app/login", "Welcome — logout"));
+        assert!(!form_login_accepted(401, "", "https://app/login", ""));
     }
 }

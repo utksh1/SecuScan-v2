@@ -445,17 +445,17 @@ export function TargetsPage() {
               {
                 suite: 'web' as AttackSuite,
                 title: 'Web',
-                desc: 'Quick + whatweb + nikto + testssl (hostname/URL only)',
+                desc: 'Quick + website-scanner + param-finder + js-analyzer + whatweb + nikto + testssl',
               },
               {
                 suite: 'full' as AttackSuite,
                 title: 'Full',
-                desc: 'Web + subdomain-finder + nmap + wordpress-audit + drupal-scanner',
+                desc: 'Web + api-scanner + subdomain-finder + nmap + wordpress-audit + drupal-scanner',
               },
               {
                 suite: 'internal' as AttackSuite,
                 title: 'Internal',
-                desc: 'nmap + smb-enum + ssh-audit (IP only)',
+                desc: 'nmap + smb-enum + ssh-audit + service-defaults (IP only)',
               },
             ]).map((opt) => {
               const disabled =

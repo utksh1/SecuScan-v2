@@ -1,0 +1,56 @@
+# JavaScript analyzer — secrets, endpoints, source maps.
+[plugin]
+id = "js-analyzer"
+name = "JavaScript Analyzer"
+version = "1.0.0"
+description = "Harvest same-origin JS for API paths, source maps, and redacted secret patterns"
+long_description = """
+Fetches the landing page and a bounded set of same-origin .js files.
+Reports AWS/GitHub/Google/Slack/JWT/private-key regex hits with the
+value redacted, sourceMappingURL, and /api-like paths. Inspired by
+cyweb and Arkenar JS modules — original patterns, not a source copy.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "file-code"
+difficulty = "intermediate"
+tags = ["javascript", "secrets", "recon"]
+
+[engine]
+type = "native"
+native = "js_analyzer"
+timeout_seconds = 180
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://app.example.com"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid http(s) URL"
+
+[[fields]]
+id = "max_scripts"
+label = "Max script files"
+type = "integer"
+default = 8
+min = 1
+max = 20
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 10000
+min = 1000
+max = 30000
+
+[safety]
+level = "safe"
+requires_consent = true
+consent_message = "Fetches HTML and same-origin JavaScript. Only scan authorized targets."
+max_concurrent = 3
+max_per_hour = 40
+capabilities = ["network"]

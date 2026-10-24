@@ -108,10 +108,28 @@ impl NativeScanner for HttpReconScanner {
             }
         }
 
-        // --- robots.txt / sitemap.xml ----------------------------------------
+        for path in harvest_js_paths(&body).into_iter().take(8) {
+            findings.push(observation(
+                format!("Client-side path: {path}"),
+                "JavaScript or markup references this same-origin path.",
+                path.clone(),
+                json!({"path": path}),
+            ));
+        }
+        for leak in comment_leaks(&body).into_iter().take(3) {
+            findings.push(observation(
+                "HTML comment looks sensitive".to_string(),
+                "A comment contains a TODO/FIXME/password/key phrase.",
+                leak,
+                json!({}),
+            ));
+        }
+
+        // --- robots.txt / sitemap.xml / security.txt -------------------------
         for (path, name) in [
             ("/robots.txt", "robots.txt"),
             ("/sitemap.xml", "sitemap.xml"),
+            ("/.well-known/security.txt", "security.txt"),
         ] {
             if let Ok(resp) = client
                 .get(format!("{base}{path}"))
@@ -164,6 +182,24 @@ fn extract_title(body: &str) -> Option<String> {
         .and_then(|c| c.get(1))
         .map(|m| m.as_str().trim().chars().take(200).collect::<String>())
         .filter(|s| !s.is_empty())
+}
+
+fn harvest_js_paths(body: &str) -> Vec<String> {
+    crate::native::website_scanner::harvest_js_paths(body)
+}
+
+pub fn comment_leaks(body: &str) -> Vec<String> {
+    let re = regex::Regex::new(r"(?is)<!--(.*?)-->").ok();
+    let Some(re) = re else { return vec![] };
+    let needles = ["password", "secret", "api_key", "apikey", "todo", "fixme", "hack"];
+    re.captures_iter(body)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
+        .filter(|t| {
+            let l = t.to_ascii_lowercase();
+            needles.iter().any(|n| l.contains(n))
+        })
+        .map(|t| t.chars().take(200).collect())
+        .collect()
 }
 
 fn extract_generator(body: &str) -> Option<String> {
@@ -238,5 +274,12 @@ mod tests {
         );
         assert_eq!(extract_title("<html><title></title>").as_deref(), None);
         assert_eq!(extract_title("no title at all").as_deref(), None);
+    }
+
+    #[test]
+    fn comment_leak_detect() {
+        let hits = comment_leaks("<!-- TODO: rotate api_key --> <p>ok</p>");
+        assert_eq!(hits.len(), 1);
+        assert!(comment_leaks("<!-- copyright 2026 -->").is_empty());
     }
 }

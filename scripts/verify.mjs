@@ -149,7 +149,7 @@ async function main() {
   section("plugin catalog");
   const { json: cat } = await req("GET", "/plugins", { token });
   const plugins = cat.items ?? [];
-  ok(plugins.length >= 39, `catalog has >=39 plugins (got ${plugins.length})`);
+  ok(plugins.length >= 43, `catalog has >=43 plugins (got ${plugins.length})`);
   const byId = Object.fromEntries(plugins.map((p) => [p.id, p]));
   ok(!!byId["people-hunter"]?.available, "people-hunter available");
   ok(!!byId["xss-exploiter"]?.available, "xss-exploiter available");
@@ -157,6 +157,10 @@ async function main() {
   ok(!!byId["api-scanner"]?.available, "api-scanner available");
   ok(!!byId["smb-enum"], "smb-enum in catalog");
   ok(!!byId["ssh-audit"], "ssh-audit in catalog");
+  ok(!!byId["service-defaults"], "service-defaults in catalog");
+  ok(!!byId["param-finder"]?.available, "param-finder available");
+  ok(!!byId["js-analyzer"]?.available, "js-analyzer available");
+  ok(!!byId["feroxbuster"], "feroxbuster in catalog");
 
   // --- OpenAPI ---------------------------------------------------------------
   section("OpenAPI 3.1 spec");

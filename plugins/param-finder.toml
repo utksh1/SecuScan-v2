@@ -1,0 +1,56 @@
+# Hidden parameter discovery (x8-class), native Rust.
+[plugin]
+id = "param-finder"
+name = "Hidden Parameter Finder"
+version = "1.0.0"
+description = "Discover accepted query parameters via canary reflection and response deltas"
+long_description = """
+In-process port of the x8 hidden-parameter technique. Baselines the URL,
+then adds one common parameter at a time with a unique canary. Reports
+reflection, status change, or a material body-length delta. Bounded list
+(not a brute-force dictionary).
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "search"
+difficulty = "intermediate"
+tags = ["dast", "parameters", "x8"]
+
+[engine]
+type = "native"
+native = "param_finder"
+timeout_seconds = 240
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://app.example.com/search"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid http(s) URL"
+
+[[fields]]
+id = "max_params"
+label = "Max parameter names"
+type = "integer"
+default = 80
+min = 10
+max = 80
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
+type = "integer"
+default = 8000
+min = 1000
+max = 30000
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "Sends one extra query parameter per name. Only scan authorized targets."
+max_concurrent = 2
+max_per_hour = 30
+capabilities = ["network"]

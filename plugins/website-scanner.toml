@@ -3,13 +3,14 @@
 id = "website-scanner"
 name = "Website Scanner"
 version = "1.0.0"
-description = "DAST: spider, sensitive paths, passive headers, reflected input and SQL-error detection"
+description = "DAST: spider plus TRACE/CRLF/LFI/JWT/CSRF/NoSQL/XFH canaries (cyweb/scant3r class)"
 long_description = """
 In-process website scanner for authorized engagements. Crawls same-host
-pages (bounded), probes common sensitive paths, checks security headers,
-and runs two detection-only active checks: unique-marker reflection
-(XSS candidate) and quote-induced SQL error strings. Every finding
-carries a request/response excerpt as proof. No browser keylogging.
+pages (bounded), probes sensitive paths, checks security headers and
+cookie flags, and runs detection-only active checks: unique-marker
+reflection, SQL error strings, SSTI canary, Host-header reflection,
+open redirects, and permissive CORS. Every finding carries a
+request/response excerpt as proof. No browser keylogging.
 """
 category = "web"
 author = "SecuScan Contributors"

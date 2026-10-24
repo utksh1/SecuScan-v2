@@ -1,0 +1,82 @@
+# feroxbuster — best-in-class Rust recursive content discovery (CLI wrap).
+[plugin]
+id = "feroxbuster"
+name = "Directory Discovery (feroxbuster)"
+version = "1.0.0"
+description = "Recursive content discovery with feroxbuster (Rust)"
+long_description = """
+Wraps epi052/feroxbuster, the strongest Rust forced-browsing tool.
+Recursive, status-filtered, wordlist-driven. Prefer this over gobuster
+when the binary is installed. Native website-scanner still covers the
+sensitive-path shortlist without a wordlist.
+"""
+category = "web"
+author = "SecuScan Contributors"
+license = "MIT"
+icon = "folder-search"
+difficulty = "intermediate"
+tags = ["directories", "feroxbuster", "rust"]
+
+[engine]
+type = "cli"
+binary = "feroxbuster"
+timeout_seconds = 1800
+output_format = "text"
+argv = [
+  "feroxbuster",
+  "-u", "{target}",
+  "-w", "{wordlist}",
+  "-q",
+  "--json",
+  "--if:threads:then:-t",
+  "--if:threads:then:{threads}",
+]
+
+[[fields]]
+id = "target"
+label = "Target URL"
+type = "string"
+required = true
+placeholder = "https://example.com/"
+pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_?&=%#~-]*$'
+message = "Must be a valid URL"
+
+[[fields]]
+id = "wordlist"
+label = "Wordlist path"
+type = "string"
+default = "/usr/share/wordlists/dirb/common.txt"
+placeholder = "/usr/share/wordlists/dirb/common.txt"
+pattern = '^[a-zA-Z0-9/._~-]+$'
+message = "Absolute path to a wordlist file"
+
+[[fields]]
+id = "threads"
+label = "Threads"
+type = "integer"
+default = 10
+min = 1
+max = 50
+
+[parser]
+type = "line_regex"
+pattern = '"url"\s*:\s*"(?P<url>https?://[^"]+)"[^}]*"status"\s*:\s*(?P<status>\d+)'
+
+[parser.finding]
+title = "Discovered {url} (HTTP {status})"
+description = "feroxbuster found a reachable URL."
+remediation = "Confirm the path should be public; authenticate or remove it otherwise."
+proof = "{url} → {status}"
+category = "Content Discovery"
+severity = "info"
+
+[safety]
+level = "intrusive"
+requires_consent = true
+consent_message = "feroxbuster recursively requests wordlist paths. Only scan authorized targets."
+max_concurrent = 1
+max_per_hour = 10
+capabilities = ["network"]
+
+[dependencies]
+binaries = ["feroxbuster"]

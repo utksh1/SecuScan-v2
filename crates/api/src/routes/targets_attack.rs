@@ -54,6 +54,9 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "http-recon",
             "http-headers",
             "dns-lookup",
+            "website-scanner",
+            "param-finder",
+            "js-analyzer",
             "whatweb",
             "nikto",
             "testssl",
@@ -65,6 +68,10 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "http-recon",
             "http-headers",
             "dns-lookup",
+            "website-scanner",
+            "param-finder",
+            "js-analyzer",
+            "api-scanner",
             "whatweb",
             "nikto",
             "testssl",
@@ -73,8 +80,8 @@ fn pick_suite(suite: &str, kind: &str) -> ApiResult<Vec<&'static str>> {
             "wordpress-audit",
             "drupal-scanner",
         ]),
-        ("full", "ip_address") => Ok(vec!["nmap", "smb-enum", "ssh-audit"]),
-        ("internal", "ip_address") => Ok(vec!["nmap", "smb-enum", "ssh-audit"]),
+        ("full", "ip_address") => Ok(vec!["nmap", "smb-enum", "ssh-audit", "service-defaults"]),
+        ("internal", "ip_address") => Ok(vec!["nmap", "smb-enum", "ssh-audit", "service-defaults"]),
         ("internal", "hostname" | "url") => Err(ApiError::BadRequest(
             "the `internal` suite requires an IP target -- use `full` for hostname targets".into(),
         )),
@@ -286,7 +293,7 @@ mod tests {
     #[test]
     fn pick_suite_full_ip_is_internal_three() {
         let p = pick_suite("full", "ip_address").unwrap();
-        assert_eq!(p, vec!["nmap", "smb-enum", "ssh-audit"]);
+        assert_eq!(p, vec!["nmap", "smb-enum", "ssh-audit", "service-defaults"]);
     }
 
     #[test]

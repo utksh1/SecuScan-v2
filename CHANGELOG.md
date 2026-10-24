@@ -3,6 +3,45 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 3.3.0 -- Stronger native DAST than a SaaS shortlist
+
+GitHub-informed upgrade. Check *classes* from cyweb, scant3r, x8, crlfuzz,
+and feroxbuster — implemented as original Rust, not a source copy.
+
+- `website-scanner` now also runs TRACE/XST, CRLF header injection, LFI
+  canaries, X-Forwarded-Host reflection, NoSQL operator errors, JWT cookie
+  inventory (`alg=none` high), CSRF token absence, HTTP password forms,
+  source maps, stack traces, Referrer-Policy / Permissions-Policy.
+- New native `param-finder` (x8-class hidden parameters).
+- New native `js-analyzer` (redacted AWS/GitHub/Google/Slack/JWT/key
+  patterns, source maps, `/api` paths).
+- Optional CLI wrap of `feroxbuster` (best-in-class Rust dirbuster).
+- Sniper chains for CRLF, LFI, JWT. Attack-Target `web`/`full` launch
+  param-finder + js-analyzer.
+
+Catalog: **43 plugins**.
+
+## 3.2.1 -- Deeper DAST, API, service defaults, Sniper chains
+
+Second professional-depth slice. Detection and proof only — no loot extractors.
+
+- `website-scanner`: cookie flags, permissive CORS, open redirect, Host
+  reflection, SSTI canary, GET-form reflection, JS path harvest, larger
+  discovery list. XSS/SQL/CORS findings use those categories so Sniper
+  can follow up.
+- `api-scanner`: auto-discover OpenAPI at well-known paths, unauthenticated
+  GET count, JSON secret-key observation, DELETE-on-GET verb check.
+- `password-audit`: `http-form` protocol (conservative success: redirect or
+  logout/dashboard without failure phrases).
+- `service-defaults`: nmap NSE pass for anonymous/empty-password on 17
+  common service ports (internal ranges only).
+- Attack-Target `web`/`full` include website-scanner (and api-scanner on
+  full); `internal`/`full` IP include service-defaults.
+- Sniper chains for Web, API, Auth, CORS.
+- HTTP recon: security.txt, JS paths, sensitive HTML comments.
+
+Catalog: **40 plugins**.
+
 ## 3.2.0 -- Professional-depth start: trust, cockpit, DAST, API, internal plugins
 
 First slice of the professional-engagement plan (P0–P5 start). Not a SaaS

@@ -25,6 +25,9 @@ pub mod vhost_finder;
 pub mod website_scanner;
 pub mod api_scanner;
 pub mod xss_exploiter;
+pub mod dast_engine;
+pub mod param_finder;
+pub mod js_analyzer;
 
 use crate::events::EventSink;
 use async_trait::async_trait;
@@ -117,6 +120,8 @@ pub fn registry() -> &'static NativeRegistry {
             &people_hunter::PeopleHunter,
             &website_scanner::WebsiteScanner,
             &api_scanner::ApiScanner,
+            &param_finder::ParamFinder,
+            &js_analyzer::JsAnalyzer,
         ],
     })
 }
