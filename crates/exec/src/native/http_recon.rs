@@ -31,7 +31,7 @@ impl NativeScanner for HttpReconScanner {
     async fn run(
         &self,
         inputs: &BTreeMap<String, serde_json::Value>,
-        _ctx: &NativeCtx,
+        ctx: &NativeCtx,
     ) -> Result<Vec<Finding>, String> {
         let base = super::http_headers::normalize_url(get_str(inputs, "target")?)?;
         let base = base.trim_end_matches('/').to_string();
@@ -39,16 +39,20 @@ impl NativeScanner for HttpReconScanner {
             get_i64_or(inputs, "timeout_ms", 10_000).clamp(500, 30_000) as u64,
         );
         let client = super::http_headers::build_client(true, timeout)?;
+        // Max-Parity Sprint 1.1 — authenticated recon: cookies/headers from
+        // the task's auth profile ride on every request.
+        let auth = ctx.auth.clone();
 
         let mut findings = Vec::new();
 
         // --- main page ------------------------------------------------------
-        let resp = client
-            .get(&base)
-            .header("user-agent", "SecuScan-2.0 (recon)")
-            .send()
-            .await
-            .map_err(|e| format!("request to {base} failed: {e}"))?;
+        let resp = super::auth::apply_auth(
+            auth.as_ref(),
+            client.get(&base).header("user-agent", "SecuScan-2.0 (recon)"),
+        )
+        .send()
+        .await
+        .map_err(|e| format!("request to {base} failed: {e}"))?;
         let status = resp.status().as_u16();
         let _headers = resp.headers().clone();
         let body = resp
@@ -82,11 +86,14 @@ impl NativeScanner for HttpReconScanner {
         }
 
         // --- OPTIONS ---------------------------------------------------------
-        if let Ok(resp) = client
-            .request(reqwest::Method::OPTIONS, &base)
-            .header("user-agent", "SecuScan-2.0 (recon)")
-            .send()
-            .await
+        if let Ok(resp) = super::auth::apply_auth(
+            auth.as_ref(),
+            client
+                .request(reqwest::Method::OPTIONS, &base)
+                .header("user-agent", "SecuScan-2.0 (recon)"),
+        )
+        .send()
+        .await
         {
             if let Some(allow) = resp
                 .headers()
@@ -131,11 +138,14 @@ impl NativeScanner for HttpReconScanner {
             ("/sitemap.xml", "sitemap.xml"),
             ("/.well-known/security.txt", "security.txt"),
         ] {
-            if let Ok(resp) = client
-                .get(format!("{base}{path}"))
-                .header("user-agent", "SecuScan-2.0 (recon)")
-                .send()
-                .await
+            if let Ok(resp) = super::auth::apply_auth(
+                auth.as_ref(),
+                client
+                    .get(format!("{base}{path}"))
+                    .header("user-agent", "SecuScan-2.0 (recon)"),
+            )
+            .send()
+            .await
             {
                 if resp.status().as_u16() == 200 {
                     findings.push(observation(
@@ -248,6 +258,7 @@ mod tests {
             sink: crate::events::EventSink::new(uuid::Uuid::new_v4(), tx),
             cancel: tokio_util::sync::CancellationToken::new(),
             timeout: std::time::Duration::from_secs(10),
+            auth: None,
         };
         let inputs: BTreeMap<String, serde_json::Value> =
             [("target".to_string(), serde_json::json!(base))]

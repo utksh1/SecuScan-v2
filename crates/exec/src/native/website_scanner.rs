@@ -99,8 +99,13 @@ impl NativeScanner for WebsiteScanner {
         let exclude = get_str_or(inputs, "exclude", "/logout,/signout,/delete");
         let exclude: Vec<&str> = exclude.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
 
-        let client = super::http_headers::build_client(true, timeout)?;
-        let no_follow = super::http_headers::build_client(false, timeout)?;
+        // Max-Parity Sprint 1.1 — authenticated DAST: when the task carries
+        // an auth profile, its cookies/headers ride on EVERY request (crawl,
+        // discovery, active probes, DAST engine) via client-level default
+        // headers, so the scan sees the authenticated surface.
+        let auth = ctx.auth.clone();
+        let client = super::auth::authed_client(true, timeout, auth.as_ref())?;
+        let no_follow = super::auth::authed_client(false, timeout, auth.as_ref())?;
         let marker = format!("ptt{}", &uuid_like());
         let mut findings = Vec::new();
         let mut visited: BTreeSet<String> = BTreeSet::new();

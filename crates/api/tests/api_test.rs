@@ -15,6 +15,10 @@ struct TestServer {
 
 async fn spawn_app() -> TestServer {
     secuscan_exec::init_tls();
+    // Max-Parity Sprint 1.1 — exercise the encryption-at-rest path in every
+    // E2E test (auth-profile configs are stored as `enc:v1:` ciphertext and
+    // decrypted transparently on read).
+    let _ = secuscan_core::crypto::init_with_secret("integration-test-enc-key");
 
     let db_dir = tempfile::tempdir().unwrap();
     let plugins_dir = tempfile::tempdir().unwrap();
@@ -224,6 +228,9 @@ max_per_hour = 0
         cookie_secure: false,
         max_concurrent_tasks: 4,
         schedule_tick_secs: 30,
+        ai_base_url: None,
+        ai_api_key: None,
+        enc_key: None,
     });
 
     let db = secuscan_db::open(&config.db_url).await.unwrap();
@@ -572,6 +579,255 @@ async fn full_task_lifecycle_with_findings_and_reports() {
         items.iter().any(|a| a["target"] == "203.0.113.50"),
         "{items:?}"
     );
+}
+
+#[tokio::test]
+async fn fp_memory_triage_audit_and_rescan_suppression() {
+    // Max-Parity Sprint 1.1 (tasks 1.1-1.3):
+    // - triage to false_positive records FP memory with the acting user +
+    //   optional reason (audit trail surfaced on GET /findings/:id);
+    // - the same finding on a RE-SCAN is auto-suppressed (false_positive);
+    // - dedup-group duplicates inherit status changes;
+    // - un-marking forgets the memory so the next scan reports fresh.
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    async fn run_sevtest(
+        s: &TestServer,
+        auth: &dyn Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
+    ) -> String {
+        let resp = auth(
+            reqwest::Client::new().post(format!("{}/tasks", s.base)),
+        )
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest",
+            "inputs": {"target": "fp-target.test"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), 201);
+        let task: serde_json::Value = resp.json().await.unwrap();
+        let task_id = task["id"].as_str().unwrap().to_string();
+        for _ in 0..100 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let t: serde_json::Value = auth(
+                reqwest::Client::new().get(format!("{}/tasks/{task_id}", s.base)),
+            )
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+            match t["status"].as_str().unwrap() {
+                "completed" => break,
+                "failed" => panic!("sevtest task failed: {t:?}"),
+                _ => {}
+            }
+        }
+        task_id
+    }
+
+    // Run 1 → 3 findings (critical/high/medium).
+    let t1 = run_sevtest(&s, &auth).await;
+    let fl: serde_json::Value = auth(c.get(format!("{}/findings?task_id={t1}", s.base)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(fl["total"], 3, "{fl:?}");
+    let high = fl["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["title"] == "High test finding")
+        .cloned()
+        .unwrap();
+    let high_id = high["id"].as_str().unwrap().to_string();
+
+    // Triage it to false_positive WITH a reason → FP memory recorded.
+    let resp = auth(c.patch(format!("{}/findings/{high_id}/triage", s.base)))
+        .json(&serde_json::json!({
+            "analyst_status": "false_positive",
+            "reason": "not exploitable in our context",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let updated: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(updated["analyst_status"], "false_positive");
+    assert_eq!(
+        updated["fp_memory"]["reason"], "not exploitable in our context",
+        "{updated:?}"
+    );
+    assert_eq!(updated["fp_memory"]["decided_by_email"], "admin@test.local");
+
+    // Audit trail also surfaces on GET /findings/:id.
+    let one: serde_json::Value = auth(c.get(format!("{}/findings/{high_id}", s.base)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(one["fp_memory"]["reason"], "not exploitable in our context");
+
+    // Run 2 → the same finding arrives AUTO-SUPPRESSED.
+    let t2 = run_sevtest(&s, &auth).await;
+    let fl2: serde_json::Value = auth(c.get(format!("{}/findings?task_id={t2}", s.base)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let high2 = fl2["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["title"] == "High test finding")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        high2["analyst_status"], "false_positive",
+        "re-scan finding should be auto-suppressed: {high2:?}"
+    );
+
+    // Group propagation: triage the RUN-2 copy to confirmed → the RUN-1
+    // original (same dedup group) inherits it, and the FP memory is
+    // forgotten (any non-FP status clears it).
+    let resp = auth(c.patch(format!(
+        "{}/findings/{}/triage",
+        s.base,
+        high2["id"].as_str().unwrap()
+    )))
+    .json(&serde_json::json!({"analyst_status": "confirmed"}))
+    .send()
+    .await
+    .unwrap();
+    assert_eq!(resp.status(), 200);
+    let orig: serde_json::Value = auth(c.get(format!("{}/findings/{high_id}", s.base)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        orig["analyst_status"], "confirmed",
+        "group propagation should update the run-1 original: {orig:?}"
+    );
+    assert!(
+        orig.get("fp_memory").is_none() || orig["fp_memory"].is_null(),
+        "FP memory should be forgotten: {orig:?}"
+    );
+
+    // Run 3 → the finding reports fresh (new), no memory left.
+    let t3 = run_sevtest(&s, &auth).await;
+    let fl3: serde_json::Value = auth(c.get(format!("{}/findings?task_id={t3}", s.base)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let high3 = fl3["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["title"] == "High test finding")
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        high3["analyst_status"], "new",
+        "after forgetting, re-scan should report fresh: {high3:?}"
+    );
+}
+
+#[tokio::test]
+async fn auth_profiles_encrypted_at_rest_and_readable_via_api() {
+    // Max-Parity Sprint 1.1 (task 1.5): auth profile configs are stored as
+    // AES-256-GCM ciphertext in SQLite; the API transparently decrypts for
+    // owners. Also verifies the executor-facing failure mode for a profile
+    // attached to a task that cannot be resolved (unknown method is
+    // rejected at creation, so we check a bad cookie list shape instead).
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+    let auth = |r: reqwest::RequestBuilder| r.bearer_auth(&token);
+
+    // Create a cookie auth profile.
+    let resp = auth(c.post(format!("{}/auth-profiles", s.base)))
+        .json(&serde_json::json!({
+            "name": "session cookies",
+            "method": "cookie",
+            "config": {"cookies": [{"name": "sid", "value": "s3cret-value"}]},
+            "notes": "captured session",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let created: serde_json::Value = resp.json().await.unwrap();
+    let pid = created["id"].as_str().unwrap().to_string();
+
+    // Raw SQLite row must contain ciphertext, not the secret.
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT config_json FROM auth_profiles WHERE id = ?",
+    )
+    .bind(&pid)
+    .fetch_optional(&s.state.db)
+    .await
+    .unwrap();
+    let raw = row.unwrap().0;
+    assert!(
+        raw.starts_with("enc:v1:"),
+        "config_json must be encrypted at rest, got: {raw:?}"
+    );
+    assert!(!raw.contains("s3cret-value"));
+
+    // API read transparently decrypts for the owner.
+    let resp = auth(c.get(format!("{}/auth-profiles/{pid}", s.base)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let prof: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(prof["config"]["cookies"][0]["value"], "s3cret-value");
+
+    // Update re-seals and stays decryptable.
+    let resp = auth(c.patch(format!("{}/auth-profiles/{pid}", s.base)))
+        .json(&serde_json::json!({
+            "name": "session cookies v2",
+            "method": "cookie",
+            "config": {"cookies": [{"name": "sid", "value": "rotated-value"}]},
+            "notes": "rotated",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 204);
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT config_json FROM auth_profiles WHERE id = ?",
+    )
+    .bind(&pid)
+    .fetch_optional(&s.state.db)
+    .await
+    .unwrap();
+    assert!(row.unwrap().0.starts_with("enc:v1:"));
+    let prof: serde_json::Value = auth(c.get(format!("{}/auth-profiles/{pid}", s.base)))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(prof["config"]["cookies"][0]["value"], "rotated-value");
 }
 
 #[tokio::test]

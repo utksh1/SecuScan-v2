@@ -160,7 +160,42 @@ impl TaskManager {
             };
 
             let _ = repo::tasks::mark_running(&mgr.pool, &task.id).await;
-            let outcome = execute_task(&manifest, &inputs, &sink, cancel.clone()).await;
+
+            // Max-Parity Sprint 1.1 (1.4) — resolve the task's auth profile
+            // into concrete request material BEFORE execution. A task that
+            // explicitly attached a profile but can't be authenticated must
+            // fail loudly: silently scanning unauthenticated would produce
+            // misleading results (login-page findings on an authed app).
+            let auth = match secuscan_exec::native::resolve_for_task(
+                &mgr.pool,
+                task.auth_profile_id.as_deref(),
+                &sink,
+            )
+            .await
+            {
+                Ok(a) => a,
+                Err(e) => {
+                    let err = format!("auth profile resolution failed: {e}");
+                    sink.emit(TaskEvent::Error(err.clone())).await;
+                    mgr.finish_task(
+                        &task,
+                        FinishOutcome {
+                            status: TaskStatus::Failed,
+                            error: Some(err.as_str()),
+                            findings: &[],
+                            output: "",
+                            output_truncated: false,
+                            exit_code: None,
+                            stats_json: String::new(),
+                        },
+                    )
+                    .await;
+                    mgr.cleanup(&task_id).await;
+                    return;
+                }
+            };
+
+            let outcome = execute_task(&manifest, &inputs, &sink, cancel.clone(), auth).await;
             let outcome = secuscan_exec::with_duration(outcome, started);
 
             mgr.finish_task(
@@ -210,14 +245,28 @@ impl TaskManager {
             out
         };
 
-        if let Err(e) =
-            repo::findings::insert_many(&self.pool, &task.id, &task.plugin_id, o.findings).await
+        let inserted_ids = match repo::findings::insert_many(
+            &self.pool,
+            &task.id,
+            &task.plugin_id,
+            o.findings,
+        )
+        .await
         {
-            tracing::error!("failed to persist findings for task {}: {e}", task.id);
-        }
+            Ok(ids) => ids,
+            Err(e) => {
+                tracing::error!("failed to persist findings for task {}: {e}", task.id);
+                Vec::new()
+            }
+        };
 
         // v3.0.0 — apply dedup grouping + FP-memory status overrides.
-        for (f, status) in &findings_with_status {
+        // Max-Parity Sprint 1.1 fix: rows are attached via the ids
+        // `insert_many` returned (index-aligned with findings_with_status).
+        // The previous `UPDATE … ORDER BY … LIMIT 1` form is not supported
+        // by SQLite and silently never attached group_id — group
+        // propagation was dead until the Sprint 1.1 triage wiring exposed it.
+        for (idx, (f, status)) in findings_with_status.iter().enumerate() {
             let fp_target = secuscan_db::repo::finding_dedup::target_fingerprint(
                 f.url.as_deref(),
                 task.target.as_deref(),
@@ -230,21 +279,18 @@ impl TaskManager {
                 &f.title,
                 &fp_target,
             ).await {
-                // Find this finding's row (just-inserted) and attach group_id.
-                let _ = sqlx::query(
-                    "UPDATE findings SET group_id = ? WHERE task_id = ? AND title = ? ORDER BY created_at DESC LIMIT 1",
-                )
-                .bind(&group.id)
-                .bind(&task.id)
-                .bind(&f.title)
-                .execute(&self.pool).await;
-                if status == "false_positive" {
-                    let _ = sqlx::query(
-                        "UPDATE findings SET analyst_status = 'false_positive' WHERE task_id = ? AND title = ?",
-                    )
-                    .bind(&task.id)
-                    .bind(&f.title)
-                    .execute(&self.pool).await;
+                if let Some(row_id) = inserted_ids.get(idx) {
+                    let _ = sqlx::query("UPDATE findings SET group_id = ? WHERE id = ?")
+                        .bind(&group.id)
+                        .bind(row_id)
+                        .execute(&self.pool).await;
+                    if status == "false_positive" {
+                        let _ = sqlx::query(
+                            "UPDATE findings SET analyst_status = 'false_positive' WHERE id = ?",
+                        )
+                        .bind(row_id)
+                        .execute(&self.pool).await;
+                    }
                 }
             }
         }

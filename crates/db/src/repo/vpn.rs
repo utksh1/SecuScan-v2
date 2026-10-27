@@ -1,8 +1,32 @@
 //! VPN profile repository (OpenVPN configs).
+//!
+//! `config_text` is encrypted at rest (AES-256-GCM, see
+//! `secuscan_core::crypto`); the vpn_manager decrypts in memory right
+//! before writing the throwaway openvpn config file.
 
 use crate::models::VpnProfileRow;
-use crate::{new_id, now, DbResult};
+use crate::{new_id, now, DbError, DbResult};
 use sqlx::SqlitePool;
+
+fn seal(config_text: &str) -> Result<String, DbError> {
+    secuscan_core::crypto::encrypt_to_storage(config_text)
+        .map_err(|e| DbError::Invalid(format!("encrypt vpn config: {e}")))
+}
+
+fn open(config_text: &str) -> String {
+    match secuscan_core::crypto::decrypt_from_storage(config_text) {
+        Ok(plain) => plain,
+        Err(e) => {
+            tracing::error!("vpn config is encrypted but undecryptable ({e}); returning raw value");
+            config_text.to_string()
+        }
+    }
+}
+
+fn decrypt_row(mut row: VpnProfileRow) -> VpnProfileRow {
+    row.config_text = open(&row.config_text);
+    row
+}
 
 pub async fn create(
     db: &SqlitePool,
@@ -12,6 +36,7 @@ pub async fn create(
 ) -> DbResult<VpnProfileRow> {
     let id = new_id();
     let ts = now();
+    let config_text = seal(config_text)?;
     sqlx::query(
         "INSERT INTO vpn_profiles (id, name, config_text, status, created_by, created_at)
          VALUES (?, ?, ?, 'disconnected', ?, ?)",
@@ -30,15 +55,17 @@ pub async fn list(db: &SqlitePool) -> DbResult<Vec<VpnProfileRow>> {
     sqlx::query_as::<_, VpnProfileRow>("SELECT * FROM vpn_profiles ORDER BY created_at DESC")
         .fetch_all(db)
         .await
+        .map(|rows| rows.into_iter().map(decrypt_row).collect())
         .map_err(Into::into)
 }
 
 pub async fn get(db: &SqlitePool, id: &str) -> DbResult<VpnProfileRow> {
     sqlx::query_as::<_, VpnProfileRow>("SELECT * FROM vpn_profiles WHERE id = ?")
         .bind(id)
-        .fetch_one(db)
-        .await
-        .map_err(Into::into)
+        .fetch_optional(db)
+        .await?
+        .map(decrypt_row)
+        .ok_or_else(|| crate::DbError::NotFound(format!("vpn profile {id}")))
 }
 
 pub async fn update_status(

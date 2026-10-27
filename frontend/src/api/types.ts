@@ -107,6 +107,13 @@ export interface Task {
   finished_at?: string
 }
 
+export interface FpMemory {
+  decided_by: string
+  decided_by_email: string
+  decided_at: string
+  reason?: string | null
+}
+
 export interface Finding {
   id: string
   task_id: string
@@ -122,6 +129,9 @@ export interface Finding {
   url?: string
   metadata: Record<string, unknown>
   created_at: string
+  /** FP-memory audit trail (present on GET /findings/:id and triage
+   * responses when the finding is remembered as a false positive). */
+  fp_memory?: FpMemory
 }
 
 export interface DashboardSummary {

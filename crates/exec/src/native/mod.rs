@@ -28,6 +28,9 @@ pub mod xss_exploiter;
 pub mod dast_engine;
 pub mod param_finder;
 pub mod js_analyzer;
+pub mod auth;
+
+pub use auth::{apply_auth, resolve_for_task, AuthMaterial};
 
 use crate::events::EventSink;
 use async_trait::async_trait;
@@ -56,6 +59,10 @@ pub struct NativeCtx {
     pub sink: EventSink,
     pub cancel: CancellationToken,
     pub timeout: std::time::Duration,
+    /// Auth material for authenticated scanning (Max-Parity Sprint 1.1):
+    /// resolved from the task's auth_profile_id by the manager before the
+    /// task starts; None = unauthenticated scan.
+    pub auth: Option<AuthMaterial>,
 }
 
 impl std::fmt::Debug for NativeCtx {

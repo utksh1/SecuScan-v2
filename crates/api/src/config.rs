@@ -27,6 +27,15 @@ pub struct Config {
     /// How often the recurring-scan scheduler wakes to process due
     /// schedules (seconds).
     pub schedule_tick_secs: u64,
+    /// Phase 0 (Max-Parity Plan) — provider-agnostic LLM endpoint. Parsed
+    /// now, consumed by the Phase 3 AI layer (enrichment, classifier,
+    /// Mini-Specter). Unused until then.
+    pub ai_base_url: Option<String>,
+    /// Phase 0 — API key for the LLM endpoint. Never logged.
+    pub ai_api_key: Option<String>,
+    /// Optional explicit at-rest encryption key; when unset a key file is
+    /// generated under `data_dir` (see `secuscan_core::crypto`).
+    pub enc_key: Option<String>,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -96,6 +105,15 @@ impl Config {
             schedule_tick_secs: env_or("SECUSCAN_SCHEDULE_TICK_SECS", "30")
                 .parse()
                 .unwrap_or(30),
+            ai_base_url: std::env::var("SECUSCAN_AI_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            ai_api_key: std::env::var("SECUSCAN_AI_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            enc_key: std::env::var("SECUSCAN_ENC_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
         }
     }
 }

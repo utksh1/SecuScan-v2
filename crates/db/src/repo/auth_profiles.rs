@@ -1,9 +1,37 @@
 //! Auth profiles — reusable credentials/cookies/headers for web scans.
+//!
+//! `config_json` is encrypted at rest (AES-256-GCM, see
+//! `secuscan_core::crypto`) — the API server initializes the crypto layer
+//! at startup, so rows written through this repo carry `enc:v1:` ciphertext;
+//! legacy plaintext rows decrypt transparently on read.
 
 use crate::{DbError, DbResult};
 use crate::models::AuthProfileRow;
 use crate::new_id;
 use sqlx::SqlitePool;
+
+/// Encrypt a config for storage (no-op when crypto is uninitialized).
+fn seal(config_json: &str) -> Result<String, DbError> {
+    secuscan_core::crypto::encrypt_to_storage(config_json)
+        .map_err(|e| DbError::Invalid(format!("encrypt auth profile: {e}")))
+}
+
+/// Decrypt a stored config; falls back to the raw value (with a log line)
+/// when it cannot be decrypted so listings never hard-fail.
+fn open(config_json: &str) -> String {
+    match secuscan_core::crypto::decrypt_from_storage(config_json) {
+        Ok(plain) => plain,
+        Err(e) => {
+            tracing::error!("auth profile config is encrypted but undecryptable ({e}); returning raw value");
+            config_json.to_string()
+        }
+    }
+}
+
+fn decrypt_row(mut row: AuthProfileRow) -> AuthProfileRow {
+    row.config_json = open(&row.config_json);
+    row
+}
 
 pub async fn create(
     db: &SqlitePool,
@@ -16,6 +44,7 @@ pub async fn create(
 ) -> DbResult<AuthProfileRow> {
     let id = new_id();
     let now = crate::now();
+    let config_json = seal(config_json)?;
     sqlx::query(
         "INSERT INTO auth_profiles (id, workspace_id, name, method, config_json, notes,
                                      created_by, created_at)
@@ -44,20 +73,24 @@ pub async fn list(
         )
         .bind(ws)
         .fetch_all(db)
-        .await.map_err(Into::into),
+        .await,
         None => sqlx::query_as::<_, AuthProfileRow>(
             "SELECT * FROM auth_profiles ORDER BY created_at DESC",
         )
         .fetch_all(db)
-        .await.map_err(Into::into),
+        .await,
     }
+    .map(|rows| rows.into_iter().map(decrypt_row).collect())
+    .map_err(Into::into)
 }
 
 pub async fn get(db: &SqlitePool, id: &str) -> DbResult<AuthProfileRow> {
     sqlx::query_as::<_, AuthProfileRow>("SELECT * FROM auth_profiles WHERE id = ?")
         .bind(id)
-        .fetch_one(db)
-        .await.map_err(Into::into)
+        .fetch_optional(db)
+        .await?
+        .map(decrypt_row)
+        .ok_or_else(|| crate::DbError::NotFound(format!("auth profile {id}")))
 }
 
 pub async fn update(
@@ -69,6 +102,7 @@ pub async fn update(
     notes: &str,
 ) -> DbResult<()> {
     let now = crate::now();
+    let config_json = seal(config_json)?;
     sqlx::query(
         "UPDATE auth_profiles SET name = ?, method = ?, config_json = ?, notes = ?, updated_at = ?
          WHERE id = ?",

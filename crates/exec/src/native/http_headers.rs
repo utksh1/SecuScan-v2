@@ -259,6 +259,15 @@ fn finding(
 }
 
 pub(crate) fn build_client(follow: bool, timeout: Duration) -> Result<Client, String> {
+    client_builder(follow, timeout)?
+        .build()
+        .map_err(|e| format!("client build failed: {e}"))
+}
+
+/// The shared ClientBuilder (same-host redirect policy, timeouts, no
+/// proxy). Callers that need client-wide defaults (e.g. auth cookies for
+/// authenticated scans) can extend the builder before building.
+pub(crate) fn client_builder(follow: bool, timeout: Duration) -> Result<reqwest::ClientBuilder, String> {
     // Only same-host redirects: a target must not be able to pivot the
     // scanner onto arbitrary internal endpoints via a redirect.
     let policy = if follow {
@@ -288,9 +297,7 @@ pub(crate) fn build_client(follow: bool, timeout: Duration) -> Result<Client, St
     if let Ok(p) = std::env::var("SECUSCAN_TEST_NO_PROXY_FIX") {
         builder = builder.proxy(Proxy::all(&p).map_err(|e| e.to_string())?);
     }
-    builder
-        .build()
-        .map_err(|e| format!("client build failed: {e}"))
+    Ok(builder)
 }
 
 pub(crate) fn normalize_url(raw: &str) -> Result<String, String> {
@@ -356,6 +363,7 @@ mod tests {
                 sink: crate::events::EventSink::new(uuid::Uuid::new_v4(), tx),
                 cancel: tokio_util::sync::CancellationToken::new(),
                 timeout: std::time::Duration::from_secs(10),
+                auth: None,
             },
             rx,
         )

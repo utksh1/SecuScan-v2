@@ -363,6 +363,7 @@ mod tests {
             sink: crate::events::EventSink::new(uuid::Uuid::new_v4(), tx),
             cancel: tokio_util::sync::CancellationToken::new(),
             timeout: std::time::Duration::from_secs(10),
+            auth: None,
         };
         let inputs: BTreeMap<String, serde_json::Value> = [(
             "target".to_string(),

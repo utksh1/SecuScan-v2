@@ -3,6 +3,115 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.3.0 -- Max-Parity Sprint 1.1: FP memory, authenticated scanning, encryption at rest
+
+First slice of the Max-Parity Phased Implementation Plan
+(`docs/MAX_PARITY_PLAN.md`): "fix the broken plumbing first". The false-positive
+memory, dedup-group propagation, authenticated scanning and Sniper XSS chain
+that existed as scaffolding are now wired end-to-end, credential columns are
+encrypted at rest, and the Phase 0 groundwork (AI env vars, acceptance
+criteria, baseline benchmark) is in place for the phases that follow.
+
+### False-positive memory is now a closed loop (Plan tasks 1.1-1.3)
+
+- Marking a finding `false_positive` now persists to `fp_memory` with the
+  **acting user and an optional reason**; re-scans of the same target
+  auto-suppress the identical finding (insert-time suppression was already
+  in place — the triage side simply never recorded anything, so the memory
+  could never be written through the UI).
+- Any non-FP triage status **forgets** the memory, so the next scan reports
+  the finding fresh again.
+- Triage responses and `GET /findings/:id` carry an `fp_memory` audit block
+  (deciding user's email, timestamp, reason) which the Findings page renders
+  in the expanded row.
+- The Findings UI asks for an optional justification when a finding is
+  marked false-positive (inline input + **Mark FP** button; Enter applies,
+  Escape cancels).
+- **Bug found and fixed along the way**: dedup groups were silently dead —
+  the post-insert attach used `UPDATE … ORDER BY … LIMIT 1`, which SQLite
+  does not support, and the swallowed error meant `group_id` was never set.
+  Rows are now attached via the ids `insert_many` returns, so status changes
+  **propagate to duplicate findings across scans** (task 1.2 actually
+  works now, with an E2E test proving run-1 → run-2 propagation).
+
+### Authenticated scanning (Plan task 1.4)
+
+- Tasks that carry an `auth_profile_id` now resolve their profile into
+  concrete request material **before** execution: `cookie` profiles inject a
+  Cookie header, `header` profiles inject arbitrary headers (Bearer tokens,
+  API keys), and `form` profiles perform the login POST and harvest the
+  session cookies automatically.
+- The website scanner applies the material as **client-level default
+  headers**, so every request — crawl, discovery paths, canaries, CORS
+  preflight, redirects, host-header probes, SSTI, form reflection and the
+  DAST engine's active probes — runs with the session. http-recon applies
+  it per request.
+- A task whose profile cannot be resolved **fails loudly** ("auth profile
+  resolution failed") instead of silently scanning unauthenticated.
+- Admission now **validates ownership**: attaching an auth profile you do
+  not own (and are not admin for) is a 404, closing an access-control gap
+  where any logged-in scanner could attach another user's credentials by id.
+- `recorded` (multi-step) profiles return a clear "not yet supported by the
+  executor" error rather than being silently ignored.
+
+### Encryption at rest (Plan task 1.5)
+
+- New `secuscan_core::crypto`: AES-256-GCM with a versioned `enc:v1:`
+  ciphertext format. Key from `SECUSCAN_ENC_KEY` (64-hex used verbatim, any
+  other string stretched via SHA-256) or an auto-generated 0600 key file at
+  `data/.secuscan-enc-key` — encryption is on by default, and the SQLite
+  file alone is no longer enough to recover secrets.
+- `auth_profiles.config_json` and `vpn_profiles.config_text` are sealed on
+  write and opened on read at the repository layer; legacy plaintext rows
+  decrypt transparently (no migration), and rows re-seal on their next write.
+- The E2E suite now initializes crypto and proves the raw SQLite row holds
+  ciphertext while the API transparently returns the plaintext config to
+  the owner.
+
+### Sniper XSS chain unblocked (Plan task 1.6)
+
+- The XSS chain step defines its own `target` — the **handler name** — via
+  an `@run:` sentinel that expands to a per-run unique, pattern-valid label
+  (`sniper-xss-<run prefix>`). Previously the finding's URL overwrote the
+  handler field, failed the `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` pattern at
+  admission, and made the XSS chain **impossible to run**.
+- Step-defined inputs now always win: the finding target (URL, else task
+  target) is injected only when the step doesn't provide one, and a step
+  that cannot resolve a target is marked failed without aborting the chain.
+
+### Phase 0 groundwork
+
+- `docs/MAX_PARITY_PLAN.md` — the full 30-week phased implementation plan
+  (phases 0-5, sprints, dependency graph, staffing, risks, success metrics).
+- `docs/MAX_PARITY_CRITERIA.md` — per-domain acceptance criteria that the
+  final parity audit runs against, with verification keys.
+- `scripts/benchmark.mjs` — baseline metrics harness (FP suppression rate,
+  scan latency p50/p95, OOB callback hit rate, per-format report
+  generation time); writes `data/baseline-metrics.json`. First capture:
+  latency p50 ≈ 260ms, FP suppression 1/1, OOB 3/3, reports 1-2ms/format.
+- `.env.example` + `config.rs`: `SECUSCAN_AI_BASE_URL` / `SECUSCAN_AI_API_KEY`
+  (parsed now, consumed by the Phase 3 AI layer) and `SECUSCAN_ENC_KEY`.
+- CI workflow branch filter repaired (`branches: [main]`).
+
+### Smaller fixes
+
+- `auth_profiles::get` / `vpn::get` now return 404 (not 500) for unknown ids.
+- `http_headers::client_builder` extracted so auth-aware clients share the
+  same redirect policy/timeout profile.
+
+### Tests
+
+- Rust: 284 passed (was 259) — +7 sniper input-resolution, +9 crypto
+  round-trip/tamper, +8 auth-material parsing, +2 E2E (FP-memory lifecycle
+  incl. re-scan suppression + group propagation; encryption-at-rest with
+  raw-row ciphertext assertion).
+- Frontend: 75 passed (was 73) — FP reason input sends `reason` in the
+  PATCH body; expanded FP row renders the audit trail.
+- `scripts/verify.mjs`: 150 checks passed (was 129) — Sprint 1.1 section
+  (triage audit echo, re-scan auto-suppression, forget-on-unmark, auth
+  profile round-trip, loud failure on unknown profile) + Phase 0 artifact
+  checks.
+
 ## 4.2.2 -- Profiles in the UI browser, in the attack suites, and with runtime hints
 
 Follow-up polish to the scan-profile program (85 profiles across 32

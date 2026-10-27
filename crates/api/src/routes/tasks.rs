@@ -250,8 +250,13 @@ pub async fn validate_and_create_task(
     .await?;
 
     // v2.6.0 — attach auth profile if provided (sets task.auth_profile_id;
-    // the executor reads it to inject cookies/headers into the subprocess).
+    // the executor reads it to inject cookies/headers into the scan).
+    // Max-Parity Sprint 1.1: the profile must exist AND belong to the
+    // caller (admins may attach anyone's) — attaching another user's
+    // credentials would be an access-control violation.
     if let Some(pid) = &req.auth_profile_id {
+        let profile = repo::auth_profiles::get(&state.db, pid).await?;
+        crate::access::require_owner(user, &profile.created_by)?;
         let _ = sqlx::query("UPDATE tasks SET auth_profile_id = ? WHERE id = ?")
             .bind(pid)
             .bind(&row.id)

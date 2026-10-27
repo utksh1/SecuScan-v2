@@ -7,7 +7,7 @@ use crate::state::SharedState;
 use axum::extract::{Path, RawQuery, State};
 use axum::Json;
 use secuscan_core::models::AnalystStatus;
-use secuscan_db::models::FindingRow;
+use secuscan_db::models::{FindingRow, FpMemoryRow};
 use secuscan_db::repo;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -153,7 +153,48 @@ async fn get_one(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let f = load_finding_for_user(&state, &user, &id).await?;
-    Ok(Json(finding_to_json(&f)))
+    let mut body = finding_to_json(&f);
+    // Max-Parity Sprint 1.1 — attach the FP-memory audit trail so the UI
+    // can show who marked a finding false-positive, when, and why.
+    if let Ok(Some(fp)) = fp_memory_for_finding(&state, &f).await {
+        body["fp_memory"] = fp_memory_to_json(&state, &fp).await;
+    }
+    Ok(Json(body))
+}
+
+/// Resolve the FP-memory row (if any) matching a finding's
+/// (workspace, plugin, title, target-fingerprint) tuple.
+async fn fp_memory_for_finding(
+    state: &SharedState,
+    f: &FindingRow,
+) -> ApiResult<Option<FpMemoryRow>> {
+    let task = repo::tasks::get(&state.db, &f.task_id).await?;
+    let fingerprint =
+        repo::finding_dedup::target_fingerprint(f.url.as_deref(), task.target.as_deref());
+    Ok(repo::finding_dedup::is_remembered_false_positive(
+        &state.db,
+        task.workspace_id.as_deref(),
+        &f.plugin_id,
+        &f.title,
+        &fingerprint,
+    )
+    .await?)
+}
+
+/// FP-memory row as JSON, with the deciding user's email resolved for display.
+async fn fp_memory_to_json(state: &SharedState, fp: &FpMemoryRow) -> Value {
+    let decided_by_email = repo::users::find_by_id(&state.db, &fp.decided_by)
+        .await
+        .ok()
+        .flatten()
+        .map(|u| u.email)
+        .unwrap_or_else(|| fp.decided_by.clone());
+    json!({
+        "decided_by": fp.decided_by,
+        "decided_by_email": decided_by_email,
+        "decided_at": fp.decided_at,
+        "reason": fp.reason,
+    })
 }
 
 pub async fn load_finding_for_user(
@@ -172,6 +213,10 @@ pub async fn load_finding_for_user(
 #[derive(Deserialize)]
 struct TriageRequest {
     analyst_status: String,
+    /// Optional justification, recorded in the FP-memory audit trail when
+    /// the finding is marked false_positive (Max-Parity Sprint 1.1).
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 async fn triage(
@@ -184,7 +229,67 @@ async fn triage(
     let status = AnalystStatus::parse(&req.analyst_status).ok_or_else(|| {
         ApiError::BadRequest(format!("unknown analyst_status `{}`", req.analyst_status))
     })?;
-    load_finding_for_user(&state, &user, &id).await?;
+    let finding = load_finding_for_user(&state, &user, &id).await?;
+    let task = repo::tasks::get(&state.db, &finding.task_id).await?;
+    let fingerprint = repo::finding_dedup::target_fingerprint(
+        finding.url.as_deref(),
+        task.target.as_deref(),
+    );
+
+    // 1) Propagate the new status to every duplicate in the same dedup
+    // group, so re-scan copies inherit the analyst's decision.
+    if let Some(group_id) = finding.group_id.as_deref().filter(|g| !g.is_empty()) {
+        match repo::finding_dedup::propagate_status_to_group(
+            &state.db,
+            group_id,
+            status.label(),
+        )
+        .await
+        {
+            Ok(n) if n > 1 => {
+                tracing::info!(
+                    "triage: propagated `{}` to {n} findings in group {group_id}",
+                    status.label()
+                )
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("triage: group propagation failed: {e}"),
+        }
+    }
+
+    // 2) Maintain FP memory: marking false_positive remembers the tuple
+    // (future scans auto-suppress it); any other status forgets it so the
+    // finding reports fresh on the next scan.
+    let mut remembered: Option<FpMemoryRow> = None;
+    match status {
+        AnalystStatus::FalsePositive => {
+            remembered = Some(repo::finding_dedup::remember_false_positive(
+                &state.db,
+                task.workspace_id.as_deref(),
+                &finding.plugin_id,
+                &finding.title,
+                &fingerprint,
+                &user.0.id,
+                req.reason.as_deref(),
+            )
+            .await?);
+        }
+        _ => {
+            repo::finding_dedup::forget_false_positive(
+                &state.db,
+                task.workspace_id.as_deref(),
+                &finding.plugin_id,
+                &finding.title,
+                &fingerprint,
+            )
+            .await?;
+        }
+    }
+
     let updated = repo::findings::update_analyst_status(&state.db, &id, status).await?;
-    Ok(Json(finding_to_json(&updated)))
+    let mut body = finding_to_json(&updated);
+    if let Some(fp) = &remembered {
+        body["fp_memory"] = fp_memory_to_json(&state, fp).await;
+    }
+    Ok(Json(body))
 }

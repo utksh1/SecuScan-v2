@@ -603,6 +603,130 @@ async function main() {
     ok(String(merged.ports) === String(PORT), "explicit caller input (ports) wins over preset merge");
   }
 
+  // --- Max-Parity Sprint 1.1: FP memory + triage audit + auth profiles ------------
+  section("Max-Parity Sprint 1.1 plumbing (FP memory, triage audit, auth profiles)");
+  {
+    // Fresh scan so the finding set for this section is predictable.
+    const { status: mps, json: mpScan } = await req("POST", "/tasks", {
+      token,
+      body: { plugin_id: "http-headers", inputs: { target: `http://127.0.0.1:${PORT}/` }, consent_granted: true },
+    });
+    ok(mps === 201 && !!mpScan.id, "S1.1 scan created");
+    await waitTask(token, mpScan.id);
+    const { json: mpFl } = await req("GET", `/findings?task_id=${mpScan.id}`, { token });
+    const mpItems = mpFl.items ?? [];
+    ok(mpItems.length > 0, `S1.1 scan produced findings (${mpItems.length})`);
+    if (mpItems.length > 0) {
+      const fpTarget = mpItems[0];
+      // Triage to false_positive WITH a reason → FP memory + audit trail.
+      const tri = await req("PATCH", `/findings/${fpTarget.id}/triage`, {
+        token,
+        body: { analyst_status: "false_positive", reason: "verify: intentional FP mark" },
+      });
+      ok(tri.status === 200, "triage false_positive -> 200");
+      ok(
+        tri.json.fp_memory?.reason === "verify: intentional FP mark",
+        `triage response carries fp_memory.reason (got ${tri.json.fp_memory?.reason})`,
+      );
+      ok(
+        typeof tri.json.fp_memory?.decided_by_email === "string" && tri.json.fp_memory.decided_by_email.length > 0,
+        "triage response carries fp_memory.decided_by_email",
+      );
+      const one = await req("GET", `/findings/${fpTarget.id}`, { token });
+      ok(
+        one.json.fp_memory?.reason === "verify: intentional FP mark",
+        "GET /findings/:id exposes the FP-memory audit trail",
+      );
+      // Re-scan: the identical finding must arrive auto-suppressed.
+      const { status: rs, json: reScan } = await req("POST", "/tasks", {
+        token,
+        body: { plugin_id: "http-headers", inputs: { target: `http://127.0.0.1:${PORT}/` }, consent_granted: true },
+      });
+      ok(rs === 201, "re-scan admitted");
+      await waitTask(token, reScan.id);
+      const { json: reFl } = await req("GET", `/findings?task_id=${reScan.id}`, { token });
+      const reSame = (reFl.items ?? []).filter((f) => f.title === fpTarget.title);
+      ok(
+        reSame.length > 0 && reSame.every((f) => f.analyst_status === "false_positive"),
+        `re-scan copies auto-suppressed (${reSame.filter((f) => f.analyst_status === "false_positive").length}/${reSame.length})`,
+      );
+      // Un-mark: forgets memory + propagates to the group.
+      const back = await req("PATCH", `/findings/${fpTarget.id}/triage`, {
+        token,
+        body: { analyst_status: "confirmed" },
+      });
+      ok(back.status === 200 && back.json.analyst_status === "confirmed", "un-mark -> confirmed");
+      const oneAfter = await req("GET", `/findings/${fpTarget.id}`, { token });
+      ok(!oneAfter.json.fp_memory, "FP memory forgotten after un-marking");
+    }
+
+    // Auth profiles: create → read (transparent decrypt) → update → read.
+    const ap = await req("POST", "/auth-profiles", {
+      token,
+      body: {
+        name: "verify session",
+        method: "cookie",
+        config: { cookies: [{ name: "sid", value: "verify-secret-cookie" }] },
+        notes: "verify.mjs",
+      },
+    });
+    ok(ap.status === 201 && !!ap.json.id, "cookie auth profile created");
+    const apg = await req("GET", `/auth-profiles/${ap.json.id}`, { token });
+    ok(
+      apg.status === 200 && apg.json.config?.cookies?.[0]?.value === "verify-secret-cookie",
+      "auth profile config readable via API (transparent decrypt)",
+    );
+    const apu = await req("PATCH", `/auth-profiles/${ap.json.id}`, {
+      token,
+      body: {
+        name: "verify session v2",
+        method: "cookie",
+        config: { cookies: [{ name: "sid", value: "rotated-cookie" }] },
+        notes: "verify.mjs",
+      },
+    });
+    ok(apu.status === 204, "auth profile update -> 204");
+    const apg2 = await req("GET", `/auth-profiles/${ap.json.id}`, { token });
+    ok(
+      apg2.json.config?.cookies?.[0]?.value === "rotated-cookie",
+      "updated auth profile reads back the rotated value",
+    );
+    // A task with an UNKNOWN auth profile id must fail loudly (never scan
+    // silently unauthenticated).
+    const badAuth = await req("POST", "/tasks", {
+      token,
+      body: {
+        plugin_id: "http-headers",
+        inputs: { target: `http://127.0.0.1:${PORT}/` },
+        consent_granted: true,
+        auth_profile_id: "no-such-profile",
+      },
+    });
+    if (badAuth.status === 201) {
+      const doneBad = await waitTask(token, badAuth.json.id);
+      ok(
+        doneBad.status === "failed" && /auth profile/i.test(doneBad.error ?? ""),
+        "task with unloadable auth profile fails loudly",
+      );
+    } else {
+      ok(badAuth.status === 400 || badAuth.status === 404, "unknown auth profile rejected at admission");
+    }
+  }
+
+  // --- Phase 0 artifacts -------------------------------------------------------------
+  section("Max-Parity Phase 0 artifacts");
+  {
+    const env = readFileSync(path.join(ROOT, ".env.example"), "utf8");
+    ok(env.includes("SECUSCAN_AI_BASE_URL"), ".env.example documents SECUSCAN_AI_BASE_URL");
+    ok(env.includes("SECUSCAN_AI_API_KEY"), ".env.example documents SECUSCAN_AI_API_KEY");
+    ok(env.includes("SECUSCAN_ENC_KEY"), ".env.example documents SECUSCAN_ENC_KEY");
+    for (const doc of ["docs/MAX_PARITY_PLAN.md", "docs/MAX_PARITY_CRITERIA.md", "scripts/benchmark.mjs"]) {
+      let exists = false;
+      try { readFileSync(path.join(ROOT, doc)); exists = true; } catch { /* absent */ }
+      ok(exists, `${doc} exists`);
+    }
+  }
+
   // --- People Hunter ---------------------------------------------------------------
   section("People Hunter");
   const { status: ph, json: pht } = await req("POST", "/tasks", {

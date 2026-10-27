@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "4.2.2"
+version = "4.3.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/utksh1/SecuScan-v2"
@@ -44,6 +44,9 @@ rand = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 hmac = "0.12"
+# Encryption at rest (Max-Parity Sprint 1.1).
+aes-gcm = "0.10"
+base64 = "0.22"
 # Report renderers (async report jobs).
 rust_xlsxwriter = "0.79"
 docx-rs = "0.4"

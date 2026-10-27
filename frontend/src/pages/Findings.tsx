@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
-import { Search, ChevronRight, Zap } from 'lucide-react'
+import { Search, ChevronRight, Zap, Ban } from 'lucide-react'
 import { request, sniperApi } from '@/api/client'
 import type { Finding, AnalystStatus } from '@/api/types'
 import { SeverityBadge } from '@/components/SeverityBadge'
@@ -42,8 +42,19 @@ export function FindingsPage() {
   })
 
   const triageMut = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: AnalystStatus }) =>
-      request(`/findings/${id}/triage`, { method: 'PATCH', body: { analyst_status: status } }),
+    mutationFn: ({
+      id,
+      status,
+      reason,
+    }: {
+      id: string
+      status: AnalystStatus
+      reason?: string
+    }) =>
+      request(`/findings/${id}/triage`, {
+        method: 'PATCH',
+        body: { analyst_status: status, ...(reason ? { reason } : {}) },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['findings'] }),
   })
 
@@ -173,7 +184,7 @@ export function FindingsPage() {
                       findingId: f.id,
                     })
                   }
-                  onTriage={(s) => triageMut.mutate({ id: f.id, status: s })}
+                  onTriage={(s, reason) => triageMut.mutate({ id: f.id, status: s, reason })}
                 />
               ))}
             </tbody>
@@ -199,9 +210,32 @@ function FindingTableEntry({
   sniperPending: boolean
   sniperError: string | null
   onSnipe: () => void
-  onTriage: (status: AnalystStatus) => void
+  onTriage: (status: AnalystStatus, reason?: string) => void
 }) {
   const [open, setOpen] = useState(false)
+  // Max-Parity Sprint 1.1 — false-positive marking collects an optional
+  // justification for the FP-memory audit trail, and the expanded row
+  // lazy-fetches the single finding to surface that audit trail.
+  const [fpPromptOpen, setFpPromptOpen] = useState(false)
+  const [fpReason, setFpReason] = useState('')
+
+  const { data: full } = useQuery({
+    queryKey: ['finding', f.id],
+    queryFn: () => request<Finding>(`/findings/${f.id}`),
+    enabled: open && f.analyst_status === 'false_positive',
+  })
+  const fp = full?.fp_memory
+
+  function handleStatusChange(status: AnalystStatus) {
+    if (status === 'false_positive') {
+      setFpReason('')
+      setFpPromptOpen(true)
+      return
+    }
+    setFpPromptOpen(false)
+    onTriage(status)
+  }
+
   return (
     <>
       <tr
@@ -239,7 +273,7 @@ function FindingTableEntry({
               )}
               value={f.analyst_status}
               disabled={!canTriage}
-              onChange={(e) => onTriage(e.target.value as AnalystStatus)}
+              onChange={(e) => handleStatusChange(e.target.value as AnalystStatus)}
               aria-label="Triage"
             >
               {TRIAGE.map((t) => (
@@ -248,6 +282,41 @@ function FindingTableEntry({
                 </option>
               ))}
             </select>
+            {canTriage && fpPromptOpen && (
+              <span
+                className="inline-flex items-center gap-1.5"
+                role="group"
+                aria-label="False-positive reason controls"
+              >
+                <input
+                  className="input w-44 px-2 py-1 text-xs"
+                  placeholder="Why is this a false positive?"
+                  value={fpReason}
+                  autoFocus
+                  onChange={(e) => setFpReason(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      setFpPromptOpen(false)
+                      onTriage('false_positive', fpReason.trim() || undefined)
+                    }
+                    if (e.key === 'Escape') setFpPromptOpen(false)
+                  }}
+                  aria-label="False-positive reason"
+                />
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-md bg-slate-800 px-2 py-1 text-xs font-medium text-white hover:bg-slate-700"
+                  title="Mark as false positive (recorded in FP memory)"
+                  onClick={() => {
+                    setFpPromptOpen(false)
+                    onTriage('false_positive', fpReason.trim() || undefined)
+                  }}
+                >
+                  <Ban className="h-3.5 w-3.5" />
+                  Mark FP
+                </button>
+              </span>
+            )}
             {canSnipe && (
               <button
                 type="button"
@@ -273,6 +342,18 @@ function FindingTableEntry({
       {open && (
         <tr className="bg-slate-50/70">
           <td colSpan={5} className="px-4 py-4">
+            {f.analyst_status === 'false_positive' && fp && (
+              <div
+                className="mb-3 rounded-md bg-slate-100 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200"
+                data-testid="fp-audit"
+              >
+                <span className="font-semibold">False-positive memory:</span>{' '}
+                marked by <span className="font-medium">{fp.decided_by_email}</span> on{' '}
+                {new Date(fp.decided_at).toLocaleString()}
+                {fp.reason ? ` — “${fp.reason}”` : ''}. Re-scans of this target will
+                auto-suppress this finding until it is re-triaged.
+              </div>
+            )}
             <div className="grid gap-4 md:grid-cols-3">
               <DetailBlock label="Description">{f.description || '—'}</DetailBlock>
               <DetailBlock label="Evidence">

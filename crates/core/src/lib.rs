@@ -12,6 +12,7 @@
 //! - the target/safety policy engine ([`policy`]) used to decide whether a
 //!   scan may run against a given host.
 
+pub mod crypto;
 pub mod error;
 pub mod loader;
 pub mod manifest;

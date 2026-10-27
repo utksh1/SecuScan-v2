@@ -90,6 +90,17 @@ async fn main() {
     // can persist their handlers.
     secuscan_exec::native::set_db_pool(db.clone());
 
+    // Max-Parity Sprint 1.1 — encryption at rest for credential-bearing
+    // columns (auth profiles, VPN configs). Key comes from SECUSCAN_ENC_KEY
+    // or an auto-generated key file in the data dir.
+    match secuscan_core::crypto::init_from_env_or_file(&config.data_dir) {
+        Ok(source) => tracing::info!("at-rest encryption enabled (key source: {source})"),
+        Err(e) => {
+            tracing::error!("failed to initialize at-rest encryption: {e}");
+            std::process::exit(1);
+        }
+    }
+
     // v3.1.0 — reconcile VPN profile statuses (detect tunnels that died
     // while the server was down).
     secuscan_api::vpn_manager::reconcile(&db).await;

@@ -71,10 +71,17 @@ pub fn chains() -> Vec<SniperChain> {
             ],
         },
         // --- XSS: prove via OOB callback handler ---
+        // NOTE (Sprint 1.1 task 1.6): the step carries its own `target` — the
+        // HANDLER NAME. xss-exploiter's `target` field is a handler label
+        // constrained to ^[a-zA-Z0-9][a-zA-Z0-9._-]*$, and the finding URL
+        // (http://…) overwriting it used to break task admission, so the
+        // XSS chain could never run. `@run:` expands to a run-scoped suffix
+        // so each Sniper run gets a unique handler label.
         SniperChain {
             category_match: "XSS",
             steps: vec![
                 step("Create XSS callback handler", "xss-exploiter", &[
+                    ("target", json!("@run:sniper-xss")),
                     ("capture_cookies", json!(true)),
                     ("capture_html", json!(true)),
                     ("delivery_mode", json!("script_tag")),
@@ -237,6 +244,47 @@ pub fn chains() -> Vec<SniperChain> {
     ]
 }
 
+/// Compute a step's final inputs (Max-Parity Sprint 1.1, task 1.6):
+/// - step-defined values always win — the finding's target (URL, else the
+///   task target) is injected only when the step doesn't provide its own;
+/// - `@run:`-prefixed string values expand to `{rest}-{run_prefix}` so each
+///   run gets unique, pattern-valid identifiers (handler names).
+fn resolve_step_inputs(
+    step_def: &SniperStep,
+    finding_url: Option<&str>,
+    task_target: Option<&str>,
+    run_id: &str,
+) -> Result<BTreeMap<String, Value>, String> {
+    let mut inputs = step_def.inputs.clone();
+    if !inputs.contains_key("target") {
+        let target = finding_url
+            .map(str::to_string)
+            .or_else(|| task_target.map(str::to_string));
+        match target {
+            Some(t) => {
+                inputs.insert("target".into(), json!(t));
+            }
+            None => return Err("finding has no target".into()),
+        }
+    }
+    expand_run_sentinels(&mut inputs, run_id);
+    Ok(inputs)
+}
+
+/// Expand `@run:`-prefixed string sentinels into run-scoped values.
+fn expand_run_sentinels(inputs: &mut BTreeMap<String, Value>, run_id: &str) {
+    let suffix: String = run_id
+        .chars()
+        .take(8)
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    for v in inputs.values_mut() {
+        if let Some(rest) = v.as_str().and_then(|s| s.strip_prefix("@run:")) {
+            *v = json!(format!("{rest}-{suffix}"));
+        }
+    }
+}
+
 /// Pick the chain for a finding category. Returns None when nothing matches.
 pub fn pick_chain(category: &str) -> Option<SniperChain> {
     let cat = category.to_ascii_lowercase();
@@ -257,6 +305,8 @@ pub async fn run_chain(
     let mut steps_state: Vec<Value> = Vec::new();
     let mut proofs: Vec<String> = Vec::new();
     let mut proven = false;
+    // Task target fallback, resolved once (used when the finding has no URL).
+    let task_target = finding_target(state, &finding.task_id).await;
 
     for (i, step_def) in chain.steps.iter().enumerate() {
         // Record step start.
@@ -270,17 +320,23 @@ pub async fn run_chain(
         }));
         persist_state(state, run_id, &steps_state).await?;
 
-        let mut inputs = step_def.inputs.clone();
-        // Map the finding's target: prefer URL, fall back to task target.
-        let mut target = finding.url.clone();
-        if target.is_none() {
-            target = finding_target(state, &finding.task_id).await;
-        }
-        let target = match target {
-            Some(t) => t,
-            None => return Err(format!("step {}: finding has no target", i + 1)),
+        let inputs = match resolve_step_inputs(
+            step_def,
+            finding.url.as_deref(),
+            task_target.as_deref(),
+            run_id,
+        ) {
+            Ok(i) => i,
+            Err(e) => {
+                // One step being unrunnable (e.g. no target anywhere)
+                // shouldn't abort the whole chain.
+                steps_state.last_mut().unwrap()["status"] = json!("failed");
+                steps_state.last_mut().unwrap()["error"] =
+                    json!(format!("step {}: {e}", i + 1));
+                persist_state(state, run_id, &steps_state).await?;
+                continue;
+            }
         };
-        inputs.insert("target".into(), json!(target));
 
         let req = StartTaskRequest {
             plugin_id: step_def.plugin_id.to_string(),
@@ -386,6 +442,62 @@ mod tests {
     fn pick_chain_xss_matches_xss() {
         let c = pick_chain("XSS Reflection").unwrap();
         assert_eq!(c.category_match, "XSS");
+    }
+
+    #[test]
+    fn xss_chain_step_keeps_handler_name_not_finding_url() {
+        // Sprint 1.1 task 1.6: the XSS chain step defines its own `target`
+        // (the handler-name sentinel). run_chain must not overwrite it with
+        // the finding URL, which fails the handler-name pattern.
+        let c = pick_chain("XSS Reflection").unwrap();
+        let step = &c.steps[0];
+        assert_eq!(step.plugin_id, "xss-exploiter");
+        assert_eq!(step.inputs.get("target"), Some(&json!("@run:sniper-xss")));
+    }
+
+    #[test]
+    fn resolve_step_inputs_preserves_step_defined_target() {
+        // Step with its own target: the finding URL must NOT win.
+        let step = step("handler", "xss-exploiter", &[("target", json!("@run:sniper-xss"))]);
+        let inputs = resolve_step_inputs(&step, Some("http://vuln.app/search?q=<x>"), Some("vuln.app"), "run-1234")
+            .unwrap();
+        assert!(inputs["target"].as_str().unwrap().starts_with("sniper-xss-"), "{:?}", inputs["target"]);
+        assert!(!inputs["target"].as_str().unwrap().contains("://"));
+    }
+
+    #[test]
+    fn resolve_step_inputs_injects_finding_url_when_step_has_no_target() {
+        let step = step("recheck", "http-headers", &[]);
+        let inputs = resolve_step_inputs(&step, Some("http://example.com/a"), None, "run-1").unwrap();
+        assert_eq!(inputs["target"], json!("http://example.com/a"));
+    }
+
+    #[test]
+    fn resolve_step_inputs_falls_back_to_task_target() {
+        let step = step("recheck", "website-scanner", &[]);
+        let inputs = resolve_step_inputs(&step, None, Some("example.com"), "run-1").unwrap();
+        assert_eq!(inputs["target"], json!("example.com"));
+    }
+
+    #[test]
+    fn resolve_step_inputs_errors_without_any_target() {
+        let step = step("recheck", "website-scanner", &[]);
+        assert!(resolve_step_inputs(&step, None, None, "run-1").is_err());
+    }
+
+    #[test]
+    fn run_sentinels_expand_to_pattern_valid_handler_names() {
+        let mut inputs = BTreeMap::new();
+        inputs.insert("target".to_string(), json!("@run:sniper-xss"));
+        inputs.insert("delivery_mode".to_string(), json!("script_tag"));
+        expand_run_sentinels(&mut inputs, "a1b2c3d4-ef56-7890");
+        let t = inputs["target"].as_str().unwrap();
+        assert!(t.starts_with("sniper-xss-a1b2c3d4"), "{t}");
+        // Must satisfy xss-exploiter's handler pattern ^[a-zA-Z0-9][a-zA-Z0-9._-]*$.
+        assert!(t.chars().next().unwrap().is_ascii_alphanumeric());
+        assert!(t.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_'));
+        // Non-sentinel values pass through untouched.
+        assert_eq!(inputs["delivery_mode"], json!("script_tag"));
     }
 
     #[test]

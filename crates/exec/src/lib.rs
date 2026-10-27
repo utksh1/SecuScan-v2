@@ -16,6 +16,7 @@ pub mod runner;
 pub use events::{EventEnvelope, EventSink, StreamKind, TaskEvent};
 pub use limiter::{LimitVerdict, PluginLimiter};
 pub use native::{NativeCtx, NativeScanner};
+pub use native::AuthMaterial;
 pub use runner::{run_cli, CliOutcome};
 
 use secuscan_core::manifest::PluginManifest;
@@ -45,11 +46,14 @@ pub struct TaskOutcome {
 
 /// Execute a plugin task end-to-end (engine dispatch + parsing).
 /// Inputs must already be normalized via [`secuscan_core::validate::normalize_inputs`].
+/// `auth` carries resolved auth-profile material for native HTTP scanners
+/// (None = unauthenticated).
 pub async fn execute_task(
     manifest: &PluginManifest,
     inputs: &BTreeMap<String, serde_json::Value>,
     sink: &EventSink,
     cancel: tokio_util::sync::CancellationToken,
+    auth: Option<AuthMaterial>,
 ) -> TaskOutcome {
     let started = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(match &manifest.engine {
@@ -108,6 +112,7 @@ pub async fn execute_task(
                 sink: sink.clone(),
                 cancel: cancel.clone(),
                 timeout,
+                auth,
             };
             match tokio::time::timeout(timeout, scanner.run(inputs, &ctx)).await {
                 Err(_) => {
