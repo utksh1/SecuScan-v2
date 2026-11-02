@@ -114,10 +114,8 @@ async fn run_sniper(
     if let Some(ws) = &req.workspace_id {
         repo::workspaces::get_workspace(&state.db, ws).await?;
     }
-    let target = finding.url.clone().or_else(|| {
-        // Fall back to the source task's target — resolved in the engine.
-        None
-    });
+    // The chain engine resolves the source task target when this URL is absent.
+    let target = finding.url.clone();
     let run = repo::sniper::create_run(
         &state.db,
         &finding.id,
@@ -207,10 +205,11 @@ async fn cancel_sniper_run(
     .await?;
     let mut cancelled = 0;
     for t in tasks {
-        if !t.status().is_terminal() && t.sniper_run_id.as_deref() == Some(&id) {
-            if state.tasks.cancel(&t.id).await {
-                cancelled += 1;
-            }
+        if !t.status().is_terminal()
+            && t.sniper_run_id.as_deref() == Some(&id)
+            && state.tasks.cancel(&t.id).await
+        {
+            cancelled += 1;
         }
     }
     repo::sniper::finish_run(&state.db, &id, "cancelled", None, None, None).await?;
