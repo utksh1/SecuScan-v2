@@ -11,6 +11,8 @@ WORKDIR /build
 # Install the plugins source for the CLI validation step (kept in the final image via copy below)
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+# Compile-time include_str! dependencies (OpenAPI used by API and CLI).
+COPY docs ./docs
 COPY plugins ./plugins
 RUN cargo build --release --bin secuscan-server --bin secuscan
 
