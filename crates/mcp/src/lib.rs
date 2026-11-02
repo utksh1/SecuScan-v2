@@ -89,7 +89,7 @@ pub async fn run_stdio(client: SecuScanClient) -> Result<()> {
             Err(e) => {
                 let resp = JsonRpcResponse::error(
                     None,
-                    proto::ErrorCodes::PARSE_ERROR,
+                    proto::error_codes::PARSE_ERROR,
                     &format!("parse error: {e}"),
                 );
                 writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
@@ -97,7 +97,6 @@ pub async fn run_stdio(client: SecuScanClient) -> Result<()> {
                 continue;
             }
         };
-        let id = req.id.clone();
         let resp = dispatch(&client, req).await;
         writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
         stdout.flush()?;
@@ -118,7 +117,7 @@ async fn dispatch(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcRespon
         "prompts/get" => proto::get_prompt(req),
         _ => JsonRpcResponse::error(
             id,
-            proto::ErrorCodes::METHOD_NOT_FOUND,
+            proto::error_codes::METHOD_NOT_FOUND,
             &format!("unknown method: {}", req.method),
         ),
     }
