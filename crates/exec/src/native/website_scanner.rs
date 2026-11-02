@@ -124,7 +124,7 @@ impl NativeScanner for WebsiteScanner {
         let auth = ctx.auth.clone();
         let client = super::auth::authed_client(true, timeout, auth.as_ref())?;
         let no_follow = super::auth::authed_client(false, timeout, auth.as_ref())?;
-        let marker = format!("ptt{}", &uuid_like());
+        let marker = format!("ptt{}", uuid_like());
         let mut findings = Vec::new();
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut queue = vec![target.clone()];
@@ -553,6 +553,9 @@ fn passive_headers(
     }
 }
 
+// This stable helper signature is shared by many detection probes.
+// Bundle the evidence parameters in a follow-up API refactor.
+#[allow(clippy::too_many_arguments)]
 fn issue(
     severity: Severity,
     kind: FindingKind,
