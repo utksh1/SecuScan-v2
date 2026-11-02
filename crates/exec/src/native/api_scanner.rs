@@ -131,81 +131,78 @@ impl NativeScanner for ApiScanner {
                 if url.contains('{') {
                     continue;
                 }
-                match method.to_ascii_uppercase().as_str() {
-                    "GET" => {
-                        let Ok(resp) = client.get(&url).send().await else {
-                            continue;
-                        };
-                        let status = resp.status().as_u16();
-                        let headers = resp.headers().clone();
-                        let body = resp.text().await.unwrap_or_default();
-                        if (200..300).contains(&status) {
-                            unauth_ok += 1;
-                            if let Some(key) = json_secret_key(&body) {
+                if method.eq_ignore_ascii_case("GET") {
+                    let Ok(resp) = client.get(&url).send().await else {
+                        continue;
+                    };
+                    let status = resp.status().as_u16();
+                    let headers = resp.headers().clone();
+                    let body = resp.text().await.unwrap_or_default();
+                    if (200..300).contains(&status) {
+                        unauth_ok += 1;
+                        if let Some(key) = json_secret_key(&body) {
+                            findings.push(Finding {
+                                title: format!("Response JSON contains sensitive key `{key}`"),
+                                category: "API".into(),
+                                severity: Severity::Medium,
+                                kind: FindingKind::SuspectedIssue,
+                                description: "An unauthenticated GET returned a JSON object with a credential-like key.".into(),
+                                remediation: "Never return secrets, tokens, or password hashes in API responses.".into(),
+                                proof: format!("GET {url} → {status}\n{}", truncate_json(&body, 400)),
+                                url: Some(url.clone()),
+                                metadata: json!({ "status": status, "key": key }),
+                                cwe: Some("CWE-200".into()),
+                                owasp: Some("A02:2021-Cryptographic Failures".into()),
+                                confidence: Some("uncertain".into()),
+                                ..Default::default()
+                            });
+                        }
+                    }
+                    if !headers.keys().any(|k| {
+                        k.as_str().to_ascii_lowercase().contains("ratelimit")
+                            || k.as_str().eq_ignore_ascii_case("x-ratelimit-limit")
+                    }) && (200..500).contains(&status)
+                    {
+                        findings.push(Finding {
+                            title: format!("Missing rate-limit headers on {method} {path}"),
+                            category: "API".into(),
+                            severity: Severity::Low,
+                            kind: FindingKind::SuspectedIssue,
+                            description: "No RateLimit / X-RateLimit-* header on a documented GET.".into(),
+                            remediation: "Send IETF RateLimit headers (or vendor equivalents) on every API response.".into(),
+                            proof: format!("GET {url} → {status}"),
+                            url: Some(url.clone()),
+                            metadata: json!({ "status": status }),
+                            cwe: Some("CWE-770".into()),
+                            owasp: Some("A04:2021-Insecure Design".into()),
+                            confidence: Some("uncertain".into()),
+                            ..Default::default()
+                        });
+                    }
+                    // Verb tamper: documented GET also answers DELETE unauthenticated.
+                    // Gated by the probe_verb_tamper profile knob (v4.2.1).
+                    if probe_verb_tamper && (200..300).contains(&status) {
+                        if let Ok(del) = client.delete(&url).send().await {
+                            let ds = del.status().as_u16();
+                            if (200..300).contains(&ds) {
                                 findings.push(Finding {
-                                    title: format!("Response JSON contains sensitive key `{key}`"),
+                                    title: format!("DELETE accepted on documented GET {path}"),
                                     category: "API".into(),
                                     severity: Severity::Medium,
                                     kind: FindingKind::SuspectedIssue,
-                                    description: "An unauthenticated GET returned a JSON object with a credential-like key.".into(),
-                                    remediation: "Never return secrets, tokens, or password hashes in API responses.".into(),
-                                    proof: format!("GET {url} → {status}\n{}", truncate_json(&body, 400)),
-                                    url: Some(url.clone()),
-                                    metadata: json!({ "status": status, "key": key }),
-                                    cwe: Some("CWE-200".into()),
-                                    owasp: Some("A02:2021-Cryptographic Failures".into()),
+                                    description: "An unauthenticated DELETE against a read path returned 2xx.".into(),
+                                    remediation: "Reject unadvertised verbs; require auth on mutating methods.".into(),
+                                    proof: format!("DELETE {url} → {ds}"),
+                                    url: Some(url),
+                                    metadata: json!({ "status": ds }),
+                                    cwe: Some("CWE-650".into()),
+                                    owasp: Some("A01:2021-Broken Access Control".into()),
                                     confidence: Some("uncertain".into()),
                                     ..Default::default()
                                 });
                             }
                         }
-                        if !headers.keys().any(|k| {
-                            k.as_str().to_ascii_lowercase().contains("ratelimit")
-                                || k.as_str().eq_ignore_ascii_case("x-ratelimit-limit")
-                        }) && (200..500).contains(&status)
-                        {
-                            findings.push(Finding {
-                                title: format!("Missing rate-limit headers on {method} {path}"),
-                                category: "API".into(),
-                                severity: Severity::Low,
-                                kind: FindingKind::SuspectedIssue,
-                                description: "No RateLimit / X-RateLimit-* header on a documented GET.".into(),
-                                remediation: "Send IETF RateLimit headers (or vendor equivalents) on every API response.".into(),
-                                proof: format!("GET {url} → {status}"),
-                                url: Some(url.clone()),
-                                metadata: json!({ "status": status }),
-                                cwe: Some("CWE-770".into()),
-                                owasp: Some("A04:2021-Insecure Design".into()),
-                                confidence: Some("uncertain".into()),
-                                ..Default::default()
-                            });
-                        }
-                        // Verb tamper: documented GET also answers DELETE unauthenticated.
-                        // Gated by the probe_verb_tamper profile knob (v4.2.1).
-                        if probe_verb_tamper && (200..300).contains(&status) {
-                            if let Ok(del) = client.delete(&url).send().await {
-                                let ds = del.status().as_u16();
-                                if (200..300).contains(&ds) {
-                                    findings.push(Finding {
-                                        title: format!("DELETE accepted on documented GET {path}"),
-                                        category: "API".into(),
-                                        severity: Severity::Medium,
-                                        kind: FindingKind::SuspectedIssue,
-                                        description: "An unauthenticated DELETE against a read path returned 2xx.".into(),
-                                        remediation: "Reject unadvertised verbs; require auth on mutating methods.".into(),
-                                        proof: format!("DELETE {url} → {ds}"),
-                                        url: Some(url),
-                                        metadata: json!({ "status": ds }),
-                                        cwe: Some("CWE-650".into()),
-                                        owasp: Some("A01:2021-Broken Access Control".into()),
-                                        confidence: Some("uncertain".into()),
-                                        ..Default::default()
-                                    });
-                                }
-                            }
-                        }
                     }
-                    _ => {}
                 }
             }
             if unauth_ok >= 3 {
