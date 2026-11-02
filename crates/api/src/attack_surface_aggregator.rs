@@ -185,23 +185,6 @@ fn dedup_values(values: Vec<Value>) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use secuscan_core::models::{FindingKind, Severity};
-
-    fn make_finding(title: &str, url: Option<&str>, meta: Value) -> Finding {
-        Finding {
-            title: title.into(),
-            category: "test".into(),
-            severity: Severity::Info,
-            kind: FindingKind::Observation,
-            description: String::new(),
-            remediation: String::new(),
-            proof: String::new(),
-            url: url.map(str::to_string),
-            metadata: meta,
-            ..Default::default()
-        }
-    }
-
     #[test]
     fn extract_host_strips_scheme_and_path() {
         assert_eq!(
