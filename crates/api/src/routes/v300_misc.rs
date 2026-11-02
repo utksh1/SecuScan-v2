@@ -8,7 +8,6 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::path::PathBuf;
 
 pub fn router() -> axum::Router<SharedState> {
     axum::Router::new()
