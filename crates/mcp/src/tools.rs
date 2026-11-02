@@ -1,7 +1,7 @@
 //! MCP tool definitions + dispatch. Each tool wraps one or two REST calls.
 
 use crate::client::SecuScanClient;
-use crate::proto::{ErrorCodes, JsonRpcRequest, JsonRpcResponse};
+use crate::proto::{error_codes, JsonRpcRequest, JsonRpcResponse};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -141,7 +141,7 @@ pub async fn call_tool(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcR
     let params = match req.params {
         Some(p) => p,
         None => {
-            return JsonRpcResponse::error(req.id, ErrorCodes::INVALID_PARAMS, "missing params")
+            return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing params")
         }
     };
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
