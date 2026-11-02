@@ -7,7 +7,7 @@
 
 use crate::models::AttackSurfaceAssetRow;
 use crate::new_id;
-use crate::{DbError, DbResult};
+use crate::DbResult;
 use sqlx::SqlitePool;
 
 /// Canonical key for an asset. Deduplication happens on this string.
