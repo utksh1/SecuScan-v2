@@ -18,11 +18,15 @@ plugins — [PLUGIN_DEVELOPMENT](docs/PLUGIN_DEVELOPMENT.md).
 ```bash
 git clone … && cd SecuScan-v2
 cargo build --workspace
-cargo test --workspace            # 88 tests
-cd frontend && npm ci && npm test # 41 tests
+cargo test --workspace --locked
+cd frontend && npm ci && npm run typecheck && npm test
 ```
 
 ## Quality gates (CI enforces these)
+
+The CI pipeline runs Rust formatting, Clippy, Rust tests and plugin validation as **independent jobs**, so an early formatting failure does not hide results from the other checks. All jobs must pass before merging; a successful job does not override a failed job. Docker and product E2E also run separately, and can expose independent failures.
+
+For a full local check, use `make verify`. To fix formatting drift, run `make fmt` and commit the resulting changes; do not weaken or skip the formatting check.
 
 ```bash
 cargo fmt --all --check
