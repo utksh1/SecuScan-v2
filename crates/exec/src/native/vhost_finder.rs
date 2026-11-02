@@ -82,7 +82,7 @@ impl NativeScanner for VhostFinderScanner {
         for label in &labels {
             let ip_url = ip_url.clone();
             let client = client.clone();
-            let base = baseline.clone();
+            let base = baseline;
             let host_header = format!("{label}.{base_host_header}");
             set.spawn(async move {
                 let probe = probe(&client, &ip_url, &host_header, port).await.ok()?;
@@ -185,7 +185,7 @@ fn load_labels(path: &str, max_labels: usize) -> Result<Vec<String>, String> {
 /// Pure conversion — unit-testable.
 pub(super) fn vhost_findings(baseline: &Probe, found: &[(String, u16, usize)]) -> Vec<Finding> {
     if found.is_empty() {
-        return vec![finding(
+        vec![finding(
             Severity::Info,
             "No distinct virtual hosts found",
             format!(
