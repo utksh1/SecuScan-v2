@@ -2206,9 +2206,25 @@ async fn report_job_webhook_delivery_is_signed() {
     let body_str = String::from_utf8_lossy(&body);
     assert!(!body_str.contains("whsec_test_123"));
 
-    // First-attempt success recorded.
-    let j = wait_report_terminal(&c, &s.base, &token, &id).await;
-    assert_eq!(j["webhook_attempts"], serde_json::json!(1));
+    // The callback can reach the receiver before the worker commits
+    // webhook_attempts; poll the database-backed API for eventual persistence.
+    let mut recorded = false;
+    for _ in 0..100 {
+        let response = c
+            .get(format!("{}/reports/{id}", s.base))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let job: serde_json::Value = response.json().await.unwrap();
+        if job["webhook_attempts"] == serde_json::json!(1) {
+            recorded = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(recorded, "signed webhook must record exactly one delivery attempt");
 }
 
 #[tokio::test]
