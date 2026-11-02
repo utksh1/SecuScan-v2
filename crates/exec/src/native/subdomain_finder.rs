@@ -229,10 +229,8 @@ pub(super) fn extract_ct_names(body: &serde_json::Value, domain: &str) -> Vec<St
         };
         for n in nv.split('\n') {
             let n = n.trim().trim_start_matches("*.").to_ascii_lowercase();
-            if n == domain || n.ends_with(&format!(".{domain}")) {
-                if dns::valid_name(&n) {
-                    names.push(n);
-                }
+            if (n == domain || n.ends_with(&format!(".{domain}"))) && dns::valid_name(&n) {
+                names.push(n);
             }
         }
     }
