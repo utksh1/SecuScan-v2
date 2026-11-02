@@ -2,7 +2,7 @@
 
 use crate::models::{FindingCommentRow, MentionRow, WorkspaceMemberRow};
 use crate::new_id;
-use crate::{DbError, DbResult};
+use crate::DbResult;
 use sqlx::SqlitePool;
 
 // --- workspace members -----------------------------------------------------
