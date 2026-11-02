@@ -148,12 +148,11 @@ fn substitute_groups(template: &str, caps: &regex::Captures<'_>) -> String {
             }
             Some(end) => {
                 let name = &after[..end];
-                match caps.name(name) {
-                    Some(m) => out.push_str(m.as_str()),
-                    // Unmatched optional capture groups render as empty
-                    // (mustache-style) so patterns with optional groups can
-                    // feed every template field.
-                    None => {}
+                // Unmatched optional capture groups render as empty
+                // (mustache-style) so patterns with optional groups can
+                // feed every template field.
+                if let Some(m) = caps.name(name) {
+                    out.push_str(m.as_str());
                 }
                 rest = &after[end + 1..];
             }
