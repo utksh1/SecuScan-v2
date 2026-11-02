@@ -323,7 +323,7 @@ fn hmac_sha256_hex(key: &str, msg: &str) -> String {
     let inner_hash = inner.finalize();
     let mut outer = Sha256::new();
     outer.update(&opad);
-    outer.update(&inner_hash);
+    outer.update(inner_hash);
     let result = outer.finalize();
     hex::encode(result)
 }
