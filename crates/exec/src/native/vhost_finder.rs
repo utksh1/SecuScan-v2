@@ -197,7 +197,7 @@ pub(super) fn vhost_findings(baseline: &Probe, found: &[(String, u16, usize)]) -
             "Try a larger vhost wordlist, or enumerate via TLS SNI / DNS instead.",
             "0 distinct vhosts",
             json!({"count": 0}),
-        )];
+        )]
     } else {
         found
             .iter()
