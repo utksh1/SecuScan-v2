@@ -616,8 +616,8 @@ fn eval_filter(pred: &Value, item: &Item) -> bool {
                 let want_idx = order.iter().position(|s| *s == val).unwrap_or(0);
                 let max_seen = item
                     .severity
-                    .iter()
-                    .filter_map(|(k, _)| order.iter().position(|s| s == k))
+                    .keys()
+                    .filter_map(|k| order.iter().position(|s| s == k))
                     .max()
                     .unwrap_or(0);
                 let pass = match op {
