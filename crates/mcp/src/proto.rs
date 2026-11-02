@@ -47,7 +47,7 @@ impl JsonRpcResponse {
             id,
             result: None,
             error: Some(JsonRpcError {
-                code: code.into(),
+                code,
                 message: message.into(),
                 data: None,
             }),
@@ -55,9 +55,8 @@ impl JsonRpcResponse {
     }
 }
 
-pub mod ErrorCodes {
+pub mod error_codes {
     pub const PARSE_ERROR: i32 = -32700;
-    pub const INVALID_REQUEST: i32 = -32600;
     pub const METHOD_NOT_FOUND: i32 = -32601;
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
@@ -100,12 +99,12 @@ pub async fn read_resource(client: &SecuScanClient, req: JsonRpcRequest) -> Json
         .and_then(|v| v.as_str())
     {
         Some(u) => u.to_string(),
-        None => return JsonRpcResponse::error(req.id, ErrorCodes::INVALID_PARAMS, "missing `uri`"),
+        None => return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing `uri`"),
     };
     let body = match client.get_resource(&uri).await {
         Ok(b) => b,
         Err(e) => {
-            return JsonRpcResponse::error(req.id, ErrorCodes::INTERNAL_ERROR, &e.to_string())
+            return JsonRpcResponse::error(req.id, error_codes::INTERNAL_ERROR, &e.to_string())
         }
     };
     JsonRpcResponse::ok(
@@ -136,7 +135,7 @@ pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
     let params = match req.params {
         Some(p) => p,
         None => {
-            return JsonRpcResponse::error(req.id, ErrorCodes::INVALID_PARAMS, "missing params")
+            return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing params")
         }
     };
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -205,7 +204,7 @@ pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
         _ => {
             return JsonRpcResponse::error(
                 req.id,
-                ErrorCodes::INVALID_PARAMS,
+                error_codes::INVALID_PARAMS,
                 &format!("unknown prompt: {name}"),
             )
         }
