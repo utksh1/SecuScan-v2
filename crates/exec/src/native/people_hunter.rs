@@ -416,7 +416,7 @@ fn analyze_patterns(emails: &[String]) -> Vec<(String, u32, Vec<String>)> {
     push(&mut out, "first_last", &first_underscore_last);
     push(&mut out, "first-last", &first_dash_last);
     push(&mut out, "first_only", &other);
-    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out.sort_by_key(|item| std::cmp::Reverse(item.1));
     out
 }
 
