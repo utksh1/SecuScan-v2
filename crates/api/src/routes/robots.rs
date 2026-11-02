@@ -2,7 +2,7 @@
 
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
-use crate::robot_runtime::{self, NodeKind, RobotGraph, RobotNode};
+use crate::robot_runtime::{self, RobotGraph, RobotNode};
 use crate::state::SharedState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -10,7 +10,6 @@ use axum::Json;
 use secuscan_db::repo;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 
 pub fn router() -> axum::Router<SharedState> {
     axum::Router::new()
