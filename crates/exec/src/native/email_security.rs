@@ -171,14 +171,13 @@ pub(super) fn spf_findings(domain: &str, spf: Option<&str>) -> Vec<Finding> {
             let mut out = Vec::new();
             let qualifier = rec
                 .split_whitespace()
-                .filter(|m| {
+                .rfind(|m| {
                     m.eq_ignore_ascii_case("all")
                         || m.eq_ignore_ascii_case("+all")
                         || m.eq_ignore_ascii_case("?all")
                         || m.eq_ignore_ascii_case("~all")
                         || m.eq_ignore_ascii_case("-all")
-                })
-                .next_back();
+                });
             match qualifier {
                 Some(q) if q.eq_ignore_ascii_case("+all") => out.push(finding(
                     Severity::High,
