@@ -62,7 +62,7 @@ pub async fn create(
     .bind(&now)
     .execute(db)
     .await?;
-    get(db, &id).await.map_err(Into::into)
+    get(db, &id).await
 }
 
 pub async fn list(db: &SqlitePool, workspace_id: Option<&str>) -> DbResult<Vec<AuthProfileRow>> {
