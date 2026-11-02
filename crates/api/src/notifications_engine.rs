@@ -21,7 +21,7 @@
 //! Triggers are OR-combined: any match fires all actions.
 
 use secuscan_core::models::Finding;
-use secuscan_db::models::{FindingRow, NotificationRuleRow, TaskRow};
+use secuscan_db::models::{NotificationRuleRow, TaskRow};
 use secuscan_db::repo;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -300,7 +300,6 @@ fn sev_rank(label: &str) -> usize {
 
 fn hmac_sha256_hex(key: &str, msg: &str) -> String {
     use sha2::{Digest, Sha256};
-    use std::io::Write;
     // Simple HMAC-SHA256 implementation (avoids pulling in the hmac crate).
     let block_size = 64;
     let key_bytes = if key.len() > block_size {
