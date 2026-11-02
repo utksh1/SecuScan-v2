@@ -10,6 +10,9 @@ use std::time::Duration;
 
 use super::website_scanner::{append_query, looks_like_sql_error};
 
+// This helper preserves a shared DAST finding contract across existing callers.
+// A typed request object should be introduced in a separate API refactor.
+#[allow(clippy::too_many_arguments)]
 pub fn finding(
     severity: Severity,
     kind: FindingKind,
@@ -369,7 +372,7 @@ pub async fn run_active(
     }
 
     // CRLF (crlfuzz-class): inject Set-Cookie via %0d%0a and see if it lands.
-    let crlf_canary = format!("secuscan{}", &uuid_short());
+    let crlf_canary = format!("secuscan{}", uuid_short());
     let crlf_url = append_query(target, "q", &format!("%0d%0aSet-Cookie:%20{crlf_canary}=1"));
     if let Ok(resp) = client.get(&crlf_url).send().await {
         let status = resp.status().as_u16();
