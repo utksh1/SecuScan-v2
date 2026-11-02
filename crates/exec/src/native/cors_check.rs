@@ -149,7 +149,7 @@ pub(super) fn cors_findings_for_origin(
              this endpoint cross-origin."
                 .to_string(),
             "Do not reflect `null`; allow-list real origins only.",
-            format!("origin: null → access-control-allow-origin: null"),
+            "origin: null → access-control-allow-origin: null".to_string(),
             json!({"origin": "null", "reflected": true, "credentials": acac, "probe": label}),
         )]
     } else if reflected {
