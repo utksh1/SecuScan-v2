@@ -1,7 +1,7 @@
 //! Branding: single per-instance row controlling report look-and-feel.
 
 use crate::models::BrandingRow;
-use crate::{DbError, DbResult};
+use crate::DbResult;
 use sqlx::SqlitePool;
 
 pub async fn get(db: &SqlitePool) -> DbResult<BrandingRow> {
@@ -35,5 +35,5 @@ pub async fn update(
     .bind(updated_by)
     .execute(db)
     .await?;
-    get(db).await.map_err(Into::into)
+    get(db).await
 }
