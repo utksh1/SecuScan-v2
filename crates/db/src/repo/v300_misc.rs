@@ -89,6 +89,9 @@ pub async fn delete_scan_group(db: &SqlitePool, id: &str) -> DbResult<()> {
 
 // --- Wordlists ------------------------------------------------------------
 
+// The existing repository API maps directly to one row's insertion fields.
+// Group these in a typed input during a separate API migration.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_wordlist(
     db: &SqlitePool,
     workspace_id: Option<&str>,
@@ -167,6 +170,9 @@ pub async fn delete_wordlist(db: &SqlitePool, id: &str) -> DbResult<()> {
 
 // --- Finding Templates ----------------------------------------------------
 
+// Keep the existing insert contract stable for its API callers.
+// Consider a typed input structure when revising the template domain model.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_template(
     db: &SqlitePool,
     scope: &str,
