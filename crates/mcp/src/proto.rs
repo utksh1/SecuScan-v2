@@ -99,7 +99,9 @@ pub async fn read_resource(client: &SecuScanClient, req: JsonRpcRequest) -> Json
         .and_then(|v| v.as_str())
     {
         Some(u) => u.to_string(),
-        None => return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing `uri`"),
+        None => {
+            return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing `uri`")
+        }
     };
     let body = match client.get_resource(&uri).await {
         Ok(b) => b,
