@@ -454,6 +454,15 @@ pub fn valid_name(name: &str) -> bool {
         && !name.contains("..")
 }
 
+/// Convenience: resolve MX records for a domain using the system resolver.
+/// Returns an empty vec when the domain has no MX records; errors on
+/// transport failure.
+pub async fn resolve_mx(domain: &str) -> Result<Vec<DnsRecord>, DnsError> {
+    let server =
+        system_server().ok_or_else(|| DnsError::Transport("no nameserver available".into()))?;
+    query(server, domain, 15).await // 15 = MX
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,13 +670,4 @@ mod tests {
         m[2] = 0x01; // RD only
         assert!(matches!(parse_response(&m), Err(DnsError::Transport(_))));
     }
-}
-
-/// Convenience: resolve MX records for a domain using the system resolver.
-/// Returns an empty vec when the domain has no MX records; errors on
-/// transport failure.
-pub async fn resolve_mx(domain: &str) -> Result<Vec<DnsRecord>, DnsError> {
-    let server =
-        system_server().ok_or_else(|| DnsError::Transport("no nameserver available".into()))?;
-    query(server, domain, 15).await // 15 = MX
 }
