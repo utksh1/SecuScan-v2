@@ -2224,7 +2224,10 @@ async fn report_job_webhook_delivery_is_signed() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
-    assert!(recorded, "signed webhook must record exactly one delivery attempt");
+    assert!(
+        recorded,
+        "signed webhook must record exactly one delivery attempt"
+    );
 }
 
 #[tokio::test]
