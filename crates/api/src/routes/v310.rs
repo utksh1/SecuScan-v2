@@ -6,7 +6,6 @@ use crate::state::SharedState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use secuscan_core::models::TaskStatus;
 use secuscan_db::repo;
 use serde::Deserialize;
 use serde_json::{json, Value};
