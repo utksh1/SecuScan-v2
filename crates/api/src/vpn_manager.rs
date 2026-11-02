@@ -191,15 +191,12 @@ pub async fn disconnect(db: &SqlitePool, profile: &VpnProfileRow) -> Result<(), 
     if let Some(pid) = profile.process_id {
         if pid_alive(pid) {
             // Best-effort SIGTERM via the kill syscall.
-            unsafe {
-                // libc isn't a direct dependency; use the std trick of
-                // spawning `kill`. This keeps the crate dependency-light.
-                let _ = std::process::Command::new("kill")
-                    .arg(pid.to_string())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            // Invoke the system kill utility; no unsafe Rust is needed.
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
         }
     }
     repo::vpn::update_status(db, &profile.id, "disconnected", None, None, None)
