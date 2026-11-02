@@ -12,7 +12,10 @@ use serde_json::{json, Value};
 pub fn router() -> axum::Router<SharedState> {
     axum::Router::new()
         .route("/notifications", axum::routing::get(list).post(create))
-        .route("/notifications/:id", axum::routing::get(get_one).patch(update).delete(delete))
+        .route(
+            "/notifications/:id",
+            axum::routing::get(get_one).patch(update).delete(delete),
+        )
         .route("/notifications/:id/log", axum::routing::get(list_log))
 }
 
@@ -40,7 +43,8 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows = secuscan_db::repo::notifications::list_rules(&state.db, q.workspace_id.as_deref()).await?;
+    let rows =
+        secuscan_db::repo::notifications::list_rules(&state.db, q.workspace_id.as_deref()).await?;
     let items: Vec<Value> = rows
         .iter()
         .filter(|r| crate::access::is_owner_or_admin(&user, &r.created_by))
@@ -64,7 +68,9 @@ async fn create(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     if req.name.trim().is_empty() || req.name.len() > 120 {
-        return Err(ApiError::BadRequest("name must be 1..=120 characters".into()));
+        return Err(ApiError::BadRequest(
+            "name must be 1..=120 characters".into(),
+        ));
     }
     validate_notification_rules(&req.rules)?;
     if let Some(ws) = &req.workspace_id {
@@ -72,8 +78,13 @@ async fn create(
     }
     let rules_json = serde_json::to_string(&req.rules).unwrap_or_else(|_| "{}".into());
     let row = secuscan_db::repo::notifications::create_rule(
-        &state.db, req.workspace_id.as_deref(), &user.0.id, &req.name, &rules_json,
-    ).await?;
+        &state.db,
+        req.workspace_id.as_deref(),
+        &user.0.id,
+        &req.name,
+        &rules_json,
+    )
+    .await?;
     Ok((StatusCode::CREATED, Json(rule_to_json(&row))))
 }
 
@@ -105,13 +116,20 @@ async fn update(
     let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
     if req.name.trim().is_empty() || req.name.len() > 120 {
-        return Err(ApiError::BadRequest("name must be 1..=120 characters".into()));
+        return Err(ApiError::BadRequest(
+            "name must be 1..=120 characters".into(),
+        ));
     }
     validate_notification_rules(&req.rules)?;
     let rules_json = serde_json::to_string(&req.rules).unwrap_or_else(|_| "{}".into());
     secuscan_db::repo::notifications::update_rule(
-        &state.db, &id, &req.name, &rules_json, req.enabled,
-    ).await?;
+        &state.db,
+        &id,
+        &req.name,
+        &rules_json,
+        req.enabled,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -142,7 +160,8 @@ async fn list_log(
     let rule = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &rule.created_by)?;
     let limit = q.limit.unwrap_or(100);
-    let rows = secuscan_db::repo::notifications::list_delivery_log(&state.db, Some(&id), limit).await?;
+    let rows =
+        secuscan_db::repo::notifications::list_delivery_log(&state.db, Some(&id), limit).await?;
     Ok(Json(json!({
         "items": rows.iter().map(|l| json!({
             "id": l.id,
@@ -165,7 +184,9 @@ fn validate_notification_rules(rules: &Value) -> ApiResult<()> {
         .and_then(|v| v.as_array())
         .ok_or_else(|| ApiError::BadRequest("rules.actions must be an array".into()))?;
     if actions.is_empty() {
-        return Err(ApiError::BadRequest("rules.actions must not be empty".into()));
+        return Err(ApiError::BadRequest(
+            "rules.actions must not be empty".into(),
+        ));
     }
     for a in actions {
         let kind = a.get("kind").and_then(|v| v.as_str()).unwrap_or("");

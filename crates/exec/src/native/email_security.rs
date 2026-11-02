@@ -17,8 +17,22 @@ use std::collections::BTreeMap;
 pub struct EmailSecurityScanner;
 
 const COMMON_DKIM_SELECTORS: &[&str] = &[
-    "google", "default", "selector", "selector1", "selector2", "k1", "s1", "s2", "mail",
-    "dkim", "smtp", "zoho", "everlytickey1", "everlytickey2", "freshmail", "mte",
+    "google",
+    "default",
+    "selector",
+    "selector1",
+    "selector2",
+    "k1",
+    "s1",
+    "s2",
+    "mail",
+    "dkim",
+    "smtp",
+    "zoho",
+    "everlytickey1",
+    "everlytickey2",
+    "freshmail",
+    "mte",
 ];
 
 #[async_trait]
@@ -41,7 +55,10 @@ impl NativeScanner for EmailSecurityScanner {
         inputs: &BTreeMap<String, serde_json::Value>,
         ctx: &NativeCtx,
     ) -> Result<Vec<Finding>, String> {
-        let domain = get_str(inputs, "target")?.trim().trim_end_matches('.').to_ascii_lowercase();
+        let domain = get_str(inputs, "target")?
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         if !dns::valid_name(&domain) {
             return Err(format!("invalid domain name `{domain}`"));
         }
@@ -154,11 +171,13 @@ pub(super) fn spf_findings(domain: &str, spf: Option<&str>) -> Vec<Finding> {
             let mut out = Vec::new();
             let qualifier = rec
                 .split_whitespace()
-                .filter(|m| m.eq_ignore_ascii_case("all")
-                    || m.eq_ignore_ascii_case("+all")
-                    || m.eq_ignore_ascii_case("?all")
-                    || m.eq_ignore_ascii_case("~all")
-                    || m.eq_ignore_ascii_case("-all"))
+                .filter(|m| {
+                    m.eq_ignore_ascii_case("all")
+                        || m.eq_ignore_ascii_case("+all")
+                        || m.eq_ignore_ascii_case("?all")
+                        || m.eq_ignore_ascii_case("~all")
+                        || m.eq_ignore_ascii_case("-all")
+                })
                 .last();
             match qualifier {
                 Some(q) if q.eq_ignore_ascii_case("+all") => out.push(finding(
@@ -205,8 +224,7 @@ pub(super) fn spf_findings(domain: &str, spf: Option<&str>) -> Vec<Finding> {
                 _ => out.push(finding(
                     Severity::Info,
                     format!("SPF for {domain} is strict (-all)"),
-                    "Unlisted senders fail the policy — the strongest SPF posture."
-                        .to_string(),
+                    "Unlisted senders fail the policy — the strongest SPF posture.".to_string(),
                     "Keep the record current; monitor DMARC reports for legitimate \
                      senders being rejected.",
                     rec.to_string(),
@@ -267,8 +285,7 @@ pub(super) fn dmarc_findings(domain: &str, dmarc: Option<&str>) -> Vec<Finding> 
                 Some("p=reject") => vec![finding(
                     Severity::Info,
                     format!("DMARC for {domain} is at enforcement (p=reject)"),
-                    "Failing mail is rejected — the strongest DMARC posture."
-                        .to_string(),
+                    "Failing mail is rejected — the strongest DMARC posture.".to_string(),
                     "Keep rua reporting in place to catch breakage early.",
                     rec.to_string(),
                     json!({"domain": domain, "check": "dmarc", "policy": "reject"}),
@@ -299,11 +316,7 @@ pub(super) fn dmarc_findings(domain: &str, dmarc: Option<&str>) -> Vec<Finding> 
 }
 
 /// Pure: DKIM selector hits → findings.
-pub(super) fn dkim_findings(
-    domain: &str,
-    hits: &[String],
-    tried: usize,
-) -> Vec<Finding> {
+pub(super) fn dkim_findings(domain: &str, hits: &[String], tried: usize) -> Vec<Finding> {
     if hits.is_empty() {
         vec![finding(
             Severity::Low,
@@ -323,8 +336,10 @@ pub(super) fn dkim_findings(
                 finding(
                     Severity::Info,
                     format!("DKIM key published for selector `{sel}` ({domain})"),
-                    format!("`{sel}._domainkey.{domain}` resolves — the domain \
-                             signs mail with this key."),
+                    format!(
+                        "`{sel}._domainkey.{domain}` resolves — the domain \
+                             signs mail with this key."
+                    ),
                     "Rotate DKIM keys periodically (≥2048-bit RSA or Ed25519).",
                     format!("{sel}._domainkey.{domain}: TXT present"),
                     json!({"domain": domain, "check": "dkim", "selector": sel}),
@@ -372,8 +387,14 @@ mod tests {
 
     #[test]
     fn softfail_and_neutral_are_low() {
-        assert_eq!(spf_findings("x.test", Some("v=spf1 ~all"))[0].severity, Severity::Low);
-        assert_eq!(spf_findings("x.test", Some("v=spf1 ?all"))[0].severity, Severity::Low);
+        assert_eq!(
+            spf_findings("x.test", Some("v=spf1 ~all"))[0].severity,
+            Severity::Low
+        );
+        assert_eq!(
+            spf_findings("x.test", Some("v=spf1 ?all"))[0].severity,
+            Severity::Low
+        );
     }
 
     #[test]
@@ -429,7 +450,11 @@ mod tests {
     #[test]
     fn mx_absent_low_present_info() {
         assert_eq!(mx_findings("x.test", &[])[0].severity, Severity::Low);
-        let rec = dns::DnsRecord { rtype: rtype::MX, ttl: 60, data: "10 mail.x.test".into() };
+        let rec = dns::DnsRecord {
+            rtype: rtype::MX,
+            ttl: 60,
+            data: "10 mail.x.test".into(),
+        };
         assert_eq!(mx_findings("x.test", &[rec])[0].severity, Severity::Info);
     }
 }

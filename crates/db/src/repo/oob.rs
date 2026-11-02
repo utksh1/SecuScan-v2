@@ -95,7 +95,10 @@ pub async fn get_handler(db: &SqlitePool, id: &str) -> DbResult<OobHandlerRow> {
         .map_err(Into::into)
 }
 
-pub async fn get_handler_by_secret(db: &SqlitePool, secret: &str) -> DbResult<Option<OobHandlerRow>> {
+pub async fn get_handler_by_secret(
+    db: &SqlitePool,
+    secret: &str,
+) -> DbResult<Option<OobHandlerRow>> {
     sqlx::query_as::<_, OobHandlerRow>("SELECT * FROM oob_handlers WHERE secret = ?")
         .bind(secret)
         .fetch_optional(db)
@@ -131,13 +134,11 @@ pub async fn record_hit(
     .execute(db)
     .await?;
     // Bump hit count + last_hit_at on the handler.
-    sqlx::query(
-        "UPDATE oob_handlers SET hit_count = hit_count + 1, last_hit_at = ? WHERE id = ?",
-    )
-    .bind(&now_ts)
-    .bind(handler_id)
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE oob_handlers SET hit_count = hit_count + 1, last_hit_at = ? WHERE id = ?")
+        .bind(&now_ts)
+        .bind(handler_id)
+        .execute(db)
+        .await?;
     get_hit(db, &id).await
 }
 
@@ -149,11 +150,7 @@ pub async fn get_hit(db: &SqlitePool, id: &str) -> DbResult<OobHitRow> {
         .map_err(Into::into)
 }
 
-pub async fn list_hits(
-    db: &SqlitePool,
-    handler_id: &str,
-    limit: u32,
-) -> DbResult<Vec<OobHitRow>> {
+pub async fn list_hits(db: &SqlitePool, handler_id: &str, limit: u32) -> DbResult<Vec<OobHitRow>> {
     let limit = limit.clamp(1, 500) as i64;
     sqlx::query_as::<_, OobHitRow>(
         "SELECT * FROM oob_hits WHERE handler_id = ? ORDER BY received_at DESC LIMIT ?",

@@ -15,8 +15,12 @@ pub struct JsAnalyzer;
 
 #[async_trait]
 impl NativeScanner for JsAnalyzer {
-    fn id(&self) -> &'static str { "js_analyzer" }
-    fn name(&self) -> &'static str { "JavaScript Analyzer" }
+    fn id(&self) -> &'static str {
+        "js_analyzer"
+    }
+    fn name(&self) -> &'static str {
+        "JavaScript Analyzer"
+    }
     fn description(&self) -> &'static str {
         "Harvest same-origin JS: API paths, source maps, redacted secret patterns"
     }
@@ -33,7 +37,11 @@ impl NativeScanner for JsAnalyzer {
         let max_scripts = get_i64_or(inputs, "max_scripts", 8).clamp(1, 20) as usize;
         let client = super::http_headers::build_client(true, timeout)?;
 
-        let landing = client.get(&target).header("user-agent", "SecuScan-2.0 (js-analyzer)").send().await
+        let landing = client
+            .get(&target)
+            .header("user-agent", "SecuScan-2.0 (js-analyzer)")
+            .send()
+            .await
             .map_err(|e| e.to_string())?;
         let html = landing.text().await.unwrap_or_default();
         let mut scripts: Vec<String> = harvest_js_paths(&html)
@@ -55,9 +63,15 @@ impl NativeScanner for JsAnalyzer {
         let mut findings = Vec::new();
         let mut bodies = vec![html];
         for url in &scripts {
-            if ctx.cancel.is_cancelled() { break; }
-            let Ok(resp) = client.get(url).send().await else { continue };
-            if !resp.status().is_success() { continue; }
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
+            let Ok(resp) = client.get(url).send().await else {
+                continue;
+            };
+            if !resp.status().is_success() {
+                continue;
+            }
             let text = resp.text().await.unwrap_or_default();
             findings.extend(analyze_js(url, &text));
             bodies.push(text);
@@ -83,7 +97,12 @@ impl NativeScanner for JsAnalyzer {
                 kind: FindingKind::Observation,
                 description: "Same-origin scripts reference these API paths.".into(),
                 remediation: "Confirm each is intentionally public.".into(),
-                proof: endpoints.iter().take(30).cloned().collect::<Vec<_>>().join("\n"),
+                proof: endpoints
+                    .iter()
+                    .take(30)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 url: Some(target.clone()),
                 metadata: json!({ "endpoints": endpoints }),
                 ..Default::default()
@@ -96,7 +115,10 @@ impl NativeScanner for JsAnalyzer {
                 category: "Web".into(),
                 severity: Severity::Info,
                 kind: FindingKind::Observation,
-                description: format!("Fetched {} script(s); no secret regex or source map hit.", scripts.len()),
+                description: format!(
+                    "Fetched {} script(s); no secret regex or source map hit.",
+                    scripts.len()
+                ),
                 url: Some(target),
                 ..Default::default()
             });
@@ -115,7 +137,9 @@ pub fn analyze_js(url: &str, body: &str) -> Vec<Finding> {
                 severity: Severity::High,
                 kind: FindingKind::SuspectedIssue,
                 description: format!("A {kind} pattern matched in {url}. Value is redacted."),
-                remediation: "Rotate the credential; load secrets from the environment, not the bundle.".into(),
+                remediation:
+                    "Rotate the credential; load secrets from the environment, not the bundle."
+                        .into(),
                 proof: format!("{url}\n{}…", redact(m.as_str())),
                 url: Some(url.into()),
                 metadata: json!({ "kind": kind }),
@@ -150,7 +174,10 @@ fn secret_regexes() -> Vec<(&'static str, regex::Regex)> {
         ("Google API key", r"AIza[0-9A-Za-z\-_]{35}"),
         ("Slack token", r"xox[baprs]-[A-Za-z0-9-]{10,}"),
         ("Private key header", r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
-        ("JWT", r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+"),
+        (
+            "JWT",
+            r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+",
+        ),
     ]
     .into_iter()
     .filter_map(|(k, p)| regex::Regex::new(p).ok().map(|r| (k, r)))

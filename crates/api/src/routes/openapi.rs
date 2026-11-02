@@ -38,7 +38,9 @@ fn spec() -> Result<serde_json::Value, String> {
 
 /// JSON spec.
 async fn openapi_json() -> Result<Json<serde_json::Value>, (StatusCode, String)> {
-    spec().map(Json).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
+    spec()
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))
 }
 
 /// YAML spec, serialized from the embedded JSON on each request (the
@@ -50,8 +52,14 @@ async fn openapi_yaml() -> Response {
             Ok(yaml) => (
                 StatusCode::OK,
                 [
-                    (header::CONTENT_TYPE, HeaderValue::from_static("application/yaml; charset=utf-8")),
-                    (header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=300")),
+                    (
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/yaml; charset=utf-8"),
+                    ),
+                    (
+                        header::CACHE_CONTROL,
+                        HeaderValue::from_static("public, max-age=300"),
+                    ),
                 ],
                 yaml,
             )
@@ -102,7 +110,10 @@ async fn openapi_landing() -> Response {
 </html>"##;
     (
         StatusCode::OK,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
         html,
     )
         .into_response()
@@ -133,7 +144,10 @@ mod tests {
     fn yaml_serialization_round_trips_the_spec() {
         let v = spec().expect("embedded spec must parse");
         let yaml = serde_yaml::to_string(&v).expect("spec must serialize to YAML");
-        assert!(yaml.starts_with("openapi: 3.1"), "YAML must start with `openapi: 3.1`");
+        assert!(
+            yaml.starts_with("openapi: 3.1"),
+            "YAML must start with `openapi: 3.1`"
+        );
         // Round-trip: YAML -> JSON Value must equal the original spec.
         let back: serde_json::Value = serde_yaml::from_str(&yaml).expect("YAML must re-parse");
         assert_eq!(back, v, "YAML round-trip must preserve the spec");

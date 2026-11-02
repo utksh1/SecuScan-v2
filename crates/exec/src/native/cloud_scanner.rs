@@ -12,16 +12,27 @@ pub struct CloudScanner;
 
 #[async_trait]
 impl NativeScanner for CloudScanner {
-    fn id(&self) -> &'static str { "cloud_scanner" }
-    fn name(&self) -> &'static str { "Cloud Scanner" }
-    fn description(&self) -> &'static str { "S3/GCS bucket permission + configuration auditing" }
+    fn id(&self) -> &'static str {
+        "cloud_scanner"
+    }
+    fn name(&self) -> &'static str {
+        "Cloud Scanner"
+    }
+    fn description(&self) -> &'static str {
+        "S3/GCS bucket permission + configuration auditing"
+    }
 
-    async fn run(&self, inputs: &BTreeMap<String, serde_json::Value>, _ctx: &NativeCtx) -> Result<Vec<Finding>, String> {
+    async fn run(
+        &self,
+        inputs: &BTreeMap<String, serde_json::Value>,
+        _ctx: &NativeCtx,
+    ) -> Result<Vec<Finding>, String> {
         let target = get_str(inputs, "target")?;
         let client = Client::builder()
             .timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::limited(5))
-            .build().map_err(|e| format!("build client: {e}"))?;
+            .build()
+            .map_err(|e| format!("build client: {e}"))?;
 
         let (provider, bucket_name, base_url) = classify_target(target);
         if provider == "unknown" {
@@ -41,7 +52,9 @@ impl NativeScanner for CloudScanner {
         if let Ok(resp) = client.get(&list_url).send().await {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            if status.is_success() && (body.contains("<ListBucketResult") || body.contains("<Contents>")) {
+            if status.is_success()
+                && (body.contains("<ListBucketResult") || body.contains("<Contents>"))
+            {
                 let object_count = body.matches("<Contents>").count();
                 findings.push(Finding {
                     title: "Public bucket listing enabled".into(),
@@ -62,11 +75,22 @@ impl NativeScanner for CloudScanner {
 
         // Test public write.
         let write_url = match provider {
-            "aws" => format!("https://{bucket_name}.s3.amazonaws.com/secuscan-probe-{}.txt", rand_hex()),
-            "gcs" => format!("https://storage.googleapis.com/{bucket_name}/secuscan-probe-{}.txt", rand_hex()),
+            "aws" => format!(
+                "https://{bucket_name}.s3.amazonaws.com/secuscan-probe-{}.txt",
+                rand_hex()
+            ),
+            "gcs" => format!(
+                "https://storage.googleapis.com/{bucket_name}/secuscan-probe-{}.txt",
+                rand_hex()
+            ),
             _ => base_url.clone(),
         };
-        if let Ok(resp) = client.put(&write_url).body("SecuScan probe — please delete").send().await {
+        if let Ok(resp) = client
+            .put(&write_url)
+            .body("SecuScan probe — please delete")
+            .send()
+            .await
+        {
             if resp.status().is_success() {
                 findings.push(Finding {
                     title: "Public bucket write enabled".into(),
@@ -88,9 +112,16 @@ impl NativeScanner for CloudScanner {
 
         // Look for sensitive files.
         let sensitive_files = [
-            "wp-config.php", "wp-config.bak", ".env", "credentials.json",
-            "id_rsa", "secret.key", "backup.sql", "db_dump.sql",
-            ".git/config", "config.php.bak",
+            "wp-config.php",
+            "wp-config.bak",
+            ".env",
+            "credentials.json",
+            "id_rsa",
+            "secret.key",
+            "backup.sql",
+            "db_dump.sql",
+            ".git/config",
+            "config.php.bak",
         ];
         for fname in &sensitive_files {
             let probe_url = match provider {
@@ -124,7 +155,10 @@ impl NativeScanner for CloudScanner {
 
 fn classify_target(target: &str) -> (&'static str, String, String) {
     let (host, path) = if let Ok(u) = url::Url::parse(target) {
-        (u.host_str().unwrap_or("").to_string(), u.path().trim_start_matches('/').to_string())
+        (
+            u.host_str().unwrap_or("").to_string(),
+            u.path().trim_start_matches('/').to_string(),
+        )
     } else {
         (target.to_string(), String::new())
     };

@@ -239,26 +239,26 @@ impl TaskManager {
                 .await
                 .ok()
                 .flatten();
-                let status = if fp.is_some() { "false_positive" } else { "new" };
+                let status = if fp.is_some() {
+                    "false_positive"
+                } else {
+                    "new"
+                };
                 out.push((f.clone(), status.to_string()));
             }
             out
         };
 
-        let inserted_ids = match repo::findings::insert_many(
-            &self.pool,
-            &task.id,
-            &task.plugin_id,
-            o.findings,
-        )
-        .await
-        {
-            Ok(ids) => ids,
-            Err(e) => {
-                tracing::error!("failed to persist findings for task {}: {e}", task.id);
-                Vec::new()
-            }
-        };
+        let inserted_ids =
+            match repo::findings::insert_many(&self.pool, &task.id, &task.plugin_id, o.findings)
+                .await
+            {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::error!("failed to persist findings for task {}: {e}", task.id);
+                    Vec::new()
+                }
+            };
 
         // v3.0.0 — apply dedup grouping + FP-memory status overrides.
         // Max-Parity Sprint 1.1 fix: rows are attached via the ids
@@ -278,18 +278,22 @@ impl TaskManager {
                 &task.plugin_id,
                 &f.title,
                 &fp_target,
-            ).await {
+            )
+            .await
+            {
                 if let Some(row_id) = inserted_ids.get(idx) {
                     let _ = sqlx::query("UPDATE findings SET group_id = ? WHERE id = ?")
                         .bind(&group.id)
                         .bind(row_id)
-                        .execute(&self.pool).await;
+                        .execute(&self.pool)
+                        .await;
                     if status == "false_positive" {
                         let _ = sqlx::query(
                             "UPDATE findings SET analyst_status = 'false_positive' WHERE id = ?",
                         )
                         .bind(row_id)
-                        .execute(&self.pool).await;
+                        .execute(&self.pool)
+                        .await;
                     }
                 }
             }
@@ -307,9 +311,9 @@ impl TaskManager {
         .await;
 
         // v3.0.0 — fire notification rules for this task + its findings.
-        if let Err(e) = crate::notifications_engine::fire_for_task(
-            &self.pool, task, o.findings,
-        ).await {
+        if let Err(e) =
+            crate::notifications_engine::fire_for_task(&self.pool, task, o.findings).await
+        {
             tracing::warn!("notification dispatch for task {} failed: {e}", task.id);
         }
 

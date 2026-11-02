@@ -4,8 +4,11 @@
 //! implement the same contract as CLI wrappers — validated inputs in,
 //! [`Finding`]s and live events out — with strict timeouts and cancellation.
 
+pub mod api_scanner;
+pub mod auth;
 pub mod cloud_scanner;
 pub mod cors_check;
+pub mod dast_engine;
 pub mod dns;
 pub mod dns_lookup;
 pub mod domain_finder;
@@ -15,6 +18,8 @@ pub mod google_dorks;
 pub mod http_headers;
 pub mod http_recon;
 pub mod http_request_logger;
+pub mod js_analyzer;
+pub mod param_finder;
 pub mod password_audit;
 pub mod people_hunter;
 pub mod port_scanner;
@@ -23,12 +28,7 @@ pub mod subdomain_finder;
 pub mod tls_check;
 pub mod vhost_finder;
 pub mod website_scanner;
-pub mod api_scanner;
 pub mod xss_exploiter;
-pub mod dast_engine;
-pub mod param_finder;
-pub mod js_analyzer;
-pub mod auth;
 
 pub use auth::{apply_auth, resolve_for_task, AuthMaterial};
 

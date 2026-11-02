@@ -15,8 +15,12 @@ pub struct ApiScanner;
 
 #[async_trait]
 impl NativeScanner for ApiScanner {
-    fn id(&self) -> &'static str { "api_scanner" }
-    fn name(&self) -> &'static str { "API Scanner" }
+    fn id(&self) -> &'static str {
+        "api_scanner"
+    }
+    fn name(&self) -> &'static str {
+        "API Scanner"
+    }
     fn description(&self) -> &'static str {
         "Parse OpenAPI/Postman from disk or URL; probe operations; flag GraphQL introspection and missing rate-limit headers"
     }
@@ -44,7 +48,11 @@ impl NativeScanner for ApiScanner {
             std::fs::read_to_string(spec_path)
                 .map_err(|e| format!("read spec_path `{spec_path}`: {e}"))?
         } else if !spec_url.is_empty() {
-            let resp = client.get(spec_url).send().await.map_err(|e| e.to_string())?;
+            let resp = client
+                .get(spec_url)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
             resp.text().await.map_err(|e| e.to_string())?
         } else {
             String::new()
@@ -52,11 +60,22 @@ impl NativeScanner for ApiScanner {
 
         let base = target.trim_end_matches('/');
         if spec_text.is_empty() {
-            for guess in ["/openapi.json", "/swagger.json", "/v3/api-docs", "/api-docs"] {
-                if ctx.cancel.is_cancelled() { break; }
+            for guess in [
+                "/openapi.json",
+                "/swagger.json",
+                "/v3/api-docs",
+                "/api-docs",
+            ] {
+                if ctx.cancel.is_cancelled() {
+                    break;
+                }
                 let url = format!("{base}{guess}");
-                let Ok(resp) = client.get(&url).send().await else { continue };
-                if !resp.status().is_success() { continue; }
+                let Ok(resp) = client.get(&url).send().await else {
+                    continue;
+                };
+                if !resp.status().is_success() {
+                    continue;
+                }
                 let text = resp.text().await.unwrap_or_default();
                 if parse_spec(&text).is_ok() && text.contains("paths") {
                     spec_text = text;
@@ -88,7 +107,10 @@ impl NativeScanner for ApiScanner {
                 category: "API".into(),
                 severity: Severity::Info,
                 kind: FindingKind::Observation,
-                description: format!("Loaded {} path operations from the supplied specification.", ops.len()),
+                description: format!(
+                    "Loaded {} path operations from the supplied specification.",
+                    ops.len()
+                ),
                 remediation: String::new(),
                 proof: ops.iter().take(40).cloned().collect::<Vec<_>>().join("\n"),
                 url: Some(target.to_string()),
@@ -97,13 +119,23 @@ impl NativeScanner for ApiScanner {
             });
             let mut unauth_ok = 0u32;
             for op in ops.into_iter().take(max_operations) {
-                if ctx.cancel.is_cancelled() { break; }
+                if ctx.cancel.is_cancelled() {
+                    break;
+                }
                 let (method, path) = op.split_once(' ').unwrap_or(("GET", op.as_str()));
-                let url = if path.starts_with("http") { path.to_string() } else { format!("{base}{path}") };
-                if url.contains('{') { continue; }
+                let url = if path.starts_with("http") {
+                    path.to_string()
+                } else {
+                    format!("{base}{path}")
+                };
+                if url.contains('{') {
+                    continue;
+                }
                 match method.to_ascii_uppercase().as_str() {
                     "GET" => {
-                        let Ok(resp) = client.get(&url).send().await else { continue };
+                        let Ok(resp) = client.get(&url).send().await else {
+                            continue;
+                        };
                         let status = resp.status().as_u16();
                         let headers = resp.headers().clone();
                         let body = resp.text().await.unwrap_or_default();
@@ -127,9 +159,10 @@ impl NativeScanner for ApiScanner {
                                 });
                             }
                         }
-                        if !headers.keys().any(|k| k.as_str().to_ascii_lowercase().contains("ratelimit")
-                            || k.as_str().eq_ignore_ascii_case("x-ratelimit-limit"))
-                            && (200..500).contains(&status)
+                        if !headers.keys().any(|k| {
+                            k.as_str().to_ascii_lowercase().contains("ratelimit")
+                                || k.as_str().eq_ignore_ascii_case("x-ratelimit-limit")
+                        }) && (200..500).contains(&status)
                         {
                             findings.push(Finding {
                                 title: format!("Missing rate-limit headers on {method} {path}"),
@@ -181,8 +214,10 @@ impl NativeScanner for ApiScanner {
                     category: "API".into(),
                     severity: Severity::Low,
                     kind: FindingKind::Observation,
-                    description: "Several spec paths answered 2xx with no credentials presented.".into(),
-                    remediation: "Confirm each is intentionally public; require auth on the rest.".into(),
+                    description: "Several spec paths answered 2xx with no credentials presented."
+                        .into(),
+                    remediation: "Confirm each is intentionally public; require auth on the rest."
+                        .into(),
                     proof: format!("{unauth_ok} unauthenticated 2xx GETs against {base}"),
                     url: Some(base.to_string()),
                     metadata: json!({ "unauth_ok": unauth_ok }),
@@ -230,7 +265,11 @@ impl NativeScanner for ApiScanner {
         if findings.is_empty() {
             return Err(format!(
                 "no specification loaded{} — provide spec_path or spec_url",
-                if probe_graphql { " and GraphQL introspection did not respond" } else { " and GraphQL probe is disabled" }
+                if probe_graphql {
+                    " and GraphQL introspection did not respond"
+                } else {
+                    " and GraphQL probe is disabled"
+                }
             ));
         }
         Ok(findings)
@@ -250,7 +289,10 @@ pub fn operations(spec: &Value) -> Vec<String> {
         for (path, item) in paths {
             if let Some(obj) = item.as_object() {
                 for method in obj.keys() {
-                    if matches!(method.as_str(), "get" | "post" | "put" | "patch" | "delete" | "head" | "options") {
+                    if matches!(
+                        method.as_str(),
+                        "get" | "post" | "put" | "patch" | "delete" | "head" | "options"
+                    ) {
                         out.push(format!("{} {path}", method.to_ascii_uppercase()));
                     }
                 }
@@ -273,7 +315,8 @@ fn collect_postman(items: &[Value], out: &mut Vec<String>) {
         }
         if let Some(req) = item.get("request") {
             let method = req.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
-            let url = req.get("url")
+            let url = req
+                .get("url")
                 .and_then(|u| u.get("raw").and_then(|v| v.as_str()).or_else(|| u.as_str()))
                 .unwrap_or("");
             if !url.is_empty() {
@@ -317,7 +360,8 @@ mod tests {
 
     #[test]
     fn openapi_paths_extracted() {
-        let spec = r#"{"openapi":"3.0.0","paths":{"/pets":{"get":{},"post":{}},"/pets/{id}":{"get":{}}}}"#;
+        let spec =
+            r#"{"openapi":"3.0.0","paths":{"/pets":{"get":{},"post":{}},"/pets/{id}":{"get":{}}}}"#;
         let v = parse_spec(spec).unwrap();
         let ops = operations(&v);
         assert!(ops.contains(&"GET /pets".into()));
@@ -335,7 +379,10 @@ mod tests {
     #[test]
     fn secret_keys_detected() {
         assert_eq!(json_secret_key(r#"{"ok":true}"#), None);
-        assert_eq!(json_secret_key(r#"{"access_token":"x"}"#).as_deref(), Some("access_token"));
+        assert_eq!(
+            json_secret_key(r#"{"access_token":"x"}"#).as_deref(),
+            Some("access_token")
+        );
         assert_eq!(json_secret_key("not-json"), None);
     }
 }

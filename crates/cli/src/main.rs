@@ -115,8 +115,8 @@ fn main() -> Result<()> {
 
 fn export_openapi(output: Option<PathBuf>) -> Result<()> {
     // Validate that the embedded artifact is well-formed JSON before emitting.
-    let spec: serde_json::Value =
-        serde_json::from_str(OPENAPI_SPEC_JSON).context("embedded docs/openapi.json is not valid JSON")?;
+    let spec: serde_json::Value = serde_json::from_str(OPENAPI_SPEC_JSON)
+        .context("embedded docs/openapi.json is not valid JSON")?;
     let pretty = serde_json::to_string_pretty(&spec).context("cannot serialize spec")?;
     match output {
         Some(path) => {

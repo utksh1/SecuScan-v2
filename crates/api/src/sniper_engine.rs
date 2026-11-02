@@ -42,7 +42,11 @@ fn step(label: &'static str, plugin_id: &'static str, kvs: &[(&str, Value)]) -> 
     for (k, v) in kvs {
         inputs.insert(k.to_string(), v.clone());
     }
-    SniperStep { label, plugin_id, inputs }
+    SniperStep {
+        label,
+        plugin_id,
+        inputs,
+    }
 }
 
 /// Build the chain catalog. Matched case-insensitively against the finding's
@@ -53,21 +57,27 @@ pub fn chains() -> Vec<SniperChain> {
         SniperChain {
             category_match: "SQL",
             steps: vec![
-                step("Confirm injection point", "sqli-exploiter", &[
-                    ("level", json!(3)),
-                    ("risk", json!(2)),
-                    ("techniques", json!("BEUST")),
-                    ("current_user", json!(true)),
-                    ("current_db", json!(true)),
-                ]),
-                step("Enumerate databases", "sqli-exploiter", &[
-                    ("databases", json!(true)),
-                    ("tables", json!(true)),
-                ]),
-                step("Extract credential hashes", "sqli-exploiter", &[
-                    ("users", json!(true)),
-                    ("passwords", json!(true)),
-                ]),
+                step(
+                    "Confirm injection point",
+                    "sqli-exploiter",
+                    &[
+                        ("level", json!(3)),
+                        ("risk", json!(2)),
+                        ("techniques", json!("BEUST")),
+                        ("current_user", json!(true)),
+                        ("current_db", json!(true)),
+                    ],
+                ),
+                step(
+                    "Enumerate databases",
+                    "sqli-exploiter",
+                    &[("databases", json!(true)), ("tables", json!(true))],
+                ),
+                step(
+                    "Extract credential hashes",
+                    "sqli-exploiter",
+                    &[("users", json!(true)), ("passwords", json!(true))],
+                ),
             ],
         },
         // --- XSS: prove via OOB callback handler ---
@@ -79,57 +89,45 @@ pub fn chains() -> Vec<SniperChain> {
         // so each Sniper run gets a unique handler label.
         SniperChain {
             category_match: "XSS",
-            steps: vec![
-                step("Create XSS callback handler", "xss-exploiter", &[
+            steps: vec![step(
+                "Create XSS callback handler",
+                "xss-exploiter",
+                &[
                     ("target", json!("@run:sniper-xss")),
                     ("capture_cookies", json!(true)),
                     ("capture_html", json!(true)),
                     ("delivery_mode", json!("script_tag")),
-                ]),
-            ],
+                ],
+            )],
         },
         // --- Weak/default credentials ---
         SniperChain {
             category_match: "Credential",
-            steps: vec![
-                step("Default-credential audit", "password-audit", &[]),
-            ],
+            steps: vec![step("Default-credential audit", "password-audit", &[])],
         },
         SniperChain {
             category_match: "Auth",
-            steps: vec![
-                step("Default-credential audit", "password-audit", &[]),
-            ],
+            steps: vec![step("Default-credential audit", "password-audit", &[])],
         },
         SniperChain {
             category_match: "API",
-            steps: vec![
-                step("API scanner follow-up", "api-scanner", &[]),
-            ],
+            steps: vec![step("API scanner follow-up", "api-scanner", &[])],
         },
         SniperChain {
             category_match: "CORS",
-            steps: vec![
-                step("CORS policy re-check", "cors-check", &[]),
-            ],
+            steps: vec![step("CORS policy re-check", "cors-check", &[])],
         },
         SniperChain {
             category_match: "CRLF",
-            steps: vec![
-                step("Website DAST refresh", "website-scanner", &[]),
-            ],
+            steps: vec![step("Website DAST refresh", "website-scanner", &[])],
         },
         SniperChain {
             category_match: "LFI",
-            steps: vec![
-                step("Website DAST refresh", "website-scanner", &[]),
-            ],
+            steps: vec![step("Website DAST refresh", "website-scanner", &[])],
         },
         SniperChain {
             category_match: "JWT",
-            steps: vec![
-                step("Website DAST refresh", "website-scanner", &[]),
-            ],
+            steps: vec![step("Website DAST refresh", "website-scanner", &[])],
         },
         SniperChain {
             category_match: "Web",
@@ -141,32 +139,26 @@ pub fn chains() -> Vec<SniperChain> {
         // --- WordPress: deep CMS-specific chain ---
         SniperChain {
             category_match: "WordPress",
-            steps: vec![
-                step("WordPress deep scan", "wordpress-audit", &[]),
-            ],
+            steps: vec![step("WordPress deep scan", "wordpress-audit", &[])],
         },
         // --- Drupal: CVE-focused chain ---
         SniperChain {
             category_match: "Drupal",
-            steps: vec![
-                step("Drupal CVE scan", "drupal-scanner", &[]),
-            ],
+            steps: vec![step("Drupal CVE scan", "drupal-scanner", &[])],
         },
         // --- TLS: full config audit ---
         SniperChain {
             category_match: "TLS",
-            steps: vec![
-                step("Full TLS configuration audit", "testssl", &[]),
-            ],
+            steps: vec![step("Full TLS configuration audit", "testssl", &[])],
         },
         // --- Network services: NSE script sweep ---
         SniperChain {
             category_match: "Port",
-            steps: vec![
-                step("Service-version + script sweep", "nmap", &[
-                    ("scan_type", json!("T")),
-                ]),
-            ],
+            steps: vec![step(
+                "Service-version + script sweep",
+                "nmap",
+                &[("scan_type", json!("T"))],
+            )],
         },
         // --- Vulnerability (nuclei template hits): deep re-verification.
         // The source finding already carries the template's severity +
@@ -176,9 +168,11 @@ pub fn chains() -> Vec<SniperChain> {
         SniperChain {
             category_match: "Vulnerability",
             steps: vec![
-                step("Template re-verification (high/critical)", "nuclei", &[
-                    ("severity", json!("high,critical")),
-                ]),
+                step(
+                    "Template re-verification (high/critical)",
+                    "nuclei",
+                    &[("severity", json!("high,critical"))],
+                ),
                 step("Website DAST refresh", "website-scanner", &[]),
                 step("Security header audit", "http-headers", &[]),
             ],
@@ -215,9 +209,11 @@ pub fn chains() -> Vec<SniperChain> {
         SniperChain {
             category_match: "Command Injection",
             steps: vec![
-                step("commix verbose re-verification", "command-injection", &[
-                    ("level", json!(2)),
-                ]),
+                step(
+                    "commix verbose re-verification",
+                    "command-injection",
+                    &[("level", json!(2))],
+                ),
                 step("Website DAST refresh", "website-scanner", &[]),
             ],
         },
@@ -288,7 +284,9 @@ fn expand_run_sentinels(inputs: &mut BTreeMap<String, Value>, run_id: &str) {
 /// Pick the chain for a finding category. Returns None when nothing matches.
 pub fn pick_chain(category: &str) -> Option<SniperChain> {
     let cat = category.to_ascii_lowercase();
-    chains().into_iter().find(|c| cat.contains(c.category_match.to_ascii_lowercase().as_str()))
+    chains()
+        .into_iter()
+        .find(|c| cat.contains(c.category_match.to_ascii_lowercase().as_str()))
 }
 
 /// Run the chain for a finding. Returns (outcome, proof_markdown).
@@ -331,8 +329,7 @@ pub async fn run_chain(
                 // One step being unrunnable (e.g. no target anywhere)
                 // shouldn't abort the whole chain.
                 steps_state.last_mut().unwrap()["status"] = json!("failed");
-                steps_state.last_mut().unwrap()["error"] =
-                    json!(format!("step {}: {e}", i + 1));
+                steps_state.last_mut().unwrap()["error"] = json!(format!("step {}: {e}", i + 1));
                 persist_state(state, run_id, &steps_state).await?;
                 continue;
             }
@@ -346,17 +343,18 @@ pub async fn run_chain(
             workspace_id: workspace_id.map(str::to_string),
             auth_profile_id: None,
         };
-        let (task, manifest, normalized) = match validate_and_create_task(state, user, &req, None, None).await {
-            Ok(t) => t,
-            Err(e) => {
-                // Mark step failed but continue the chain — one step failing
-                // (e.g. missing binary) should not abort the whole run.
-                steps_state.last_mut().unwrap()["status"] = json!("failed");
-                steps_state.last_mut().unwrap()["error"] = json!(e.to_string());
-                persist_state(state, run_id, &steps_state).await?;
-                continue;
-            }
-        };
+        let (task, manifest, normalized) =
+            match validate_and_create_task(state, user, &req, None, None).await {
+                Ok(t) => t,
+                Err(e) => {
+                    // Mark step failed but continue the chain — one step failing
+                    // (e.g. missing binary) should not abort the whole run.
+                    steps_state.last_mut().unwrap()["status"] = json!("failed");
+                    steps_state.last_mut().unwrap()["error"] = json!(e.to_string());
+                    persist_state(state, run_id, &steps_state).await?;
+                    continue;
+                }
+            };
         let _ = repo::sniper::attach_task(&state.db, run_id, &task.id).await;
         steps_state.last_mut().unwrap()["task_id"] = json!(task.id);
         persist_state(state, run_id, &steps_state).await?;
@@ -366,7 +364,9 @@ pub async fn run_chain(
         // Wait for terminal state.
         let deadline = Instant::now() + std::time::Duration::from_secs(3_600);
         let final_status = loop {
-            let t = repo::tasks::get(&state.db, &task.id).await.map_err(|e| e.to_string())?;
+            let t = repo::tasks::get(&state.db, &task.id)
+                .await
+                .map_err(|e| e.to_string())?;
             if t.status().is_terminal() {
                 break t.status();
             }
@@ -381,8 +381,11 @@ pub async fn run_chain(
         let step_findings = repo::findings::list_all_for_task(&state.db, &task.id)
             .await
             .unwrap_or_default();
-        let validated: Vec<&secuscan_db::models::FindingRow> = step_findings.iter()
-            .filter(|f| f.kind == "validated_issue" || f.severity == "critical" || f.severity == "high")
+        let validated: Vec<&secuscan_db::models::FindingRow> = step_findings
+            .iter()
+            .filter(|f| {
+                f.kind == "validated_issue" || f.severity == "critical" || f.severity == "high"
+            })
             .collect();
 
         steps_state.last_mut().unwrap()["status"] = json!(final_status.label());
@@ -400,7 +403,13 @@ pub async fn run_chain(
         }
     }
 
-    let outcome = if proven { "proven" } else if !proofs.is_empty() { "inconclusive" } else { "not_proven" };
+    let outcome = if proven {
+        "proven"
+    } else if !proofs.is_empty() {
+        "inconclusive"
+    } else {
+        "not_proven"
+    };
     let proof_md = if proofs.is_empty() {
         format!(
             "Sniper chain for category `{}` completed without producing validated findings. \
@@ -410,13 +419,19 @@ pub async fn run_chain(
     } else {
         format!(
             "Sniper proven impact for finding `{}` ({}):\n\n{}",
-            finding.title, finding.category, proofs.join("\n\n")
+            finding.title,
+            finding.category,
+            proofs.join("\n\n")
         )
     };
     Ok((outcome.to_string(), proof_md))
 }
 
-async fn persist_state(state: &SharedState, run_id: &str, steps_state: &[Value]) -> Result<(), String> {
+async fn persist_state(
+    state: &SharedState,
+    run_id: &str,
+    steps_state: &[Value],
+) -> Result<(), String> {
     let state_json = serde_json::to_string(steps_state).unwrap_or_else(|_| "[]".into());
     repo::sniper::set_run_state(&state.db, run_id, &state_json)
         .await
@@ -424,7 +439,10 @@ async fn persist_state(state: &SharedState, run_id: &str, steps_state: &[Value])
 }
 
 async fn finding_target(state: &SharedState, task_id: &str) -> Option<String> {
-    repo::tasks::get(&state.db, task_id).await.ok().and_then(|t| t.target)
+    repo::tasks::get(&state.db, task_id)
+        .await
+        .ok()
+        .and_then(|t| t.target)
 }
 
 #[cfg(test)]
@@ -458,17 +476,34 @@ mod tests {
     #[test]
     fn resolve_step_inputs_preserves_step_defined_target() {
         // Step with its own target: the finding URL must NOT win.
-        let step = step("handler", "xss-exploiter", &[("target", json!("@run:sniper-xss"))]);
-        let inputs = resolve_step_inputs(&step, Some("http://vuln.app/search?q=<x>"), Some("vuln.app"), "run-1234")
-            .unwrap();
-        assert!(inputs["target"].as_str().unwrap().starts_with("sniper-xss-"), "{:?}", inputs["target"]);
+        let step = step(
+            "handler",
+            "xss-exploiter",
+            &[("target", json!("@run:sniper-xss"))],
+        );
+        let inputs = resolve_step_inputs(
+            &step,
+            Some("http://vuln.app/search?q=<x>"),
+            Some("vuln.app"),
+            "run-1234",
+        )
+        .unwrap();
+        assert!(
+            inputs["target"]
+                .as_str()
+                .unwrap()
+                .starts_with("sniper-xss-"),
+            "{:?}",
+            inputs["target"]
+        );
         assert!(!inputs["target"].as_str().unwrap().contains("://"));
     }
 
     #[test]
     fn resolve_step_inputs_injects_finding_url_when_step_has_no_target() {
         let step = step("recheck", "http-headers", &[]);
-        let inputs = resolve_step_inputs(&step, Some("http://example.com/a"), None, "run-1").unwrap();
+        let inputs =
+            resolve_step_inputs(&step, Some("http://example.com/a"), None, "run-1").unwrap();
         assert_eq!(inputs["target"], json!("http://example.com/a"));
     }
 
@@ -495,7 +530,9 @@ mod tests {
         assert!(t.starts_with("sniper-xss-a1b2c3d4"), "{t}");
         // Must satisfy xss-exploiter's handler pattern ^[a-zA-Z0-9][a-zA-Z0-9._-]*$.
         assert!(t.chars().next().unwrap().is_ascii_alphanumeric());
-        assert!(t.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_'));
+        assert!(t
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_'));
         // Non-sentinel values pass through untouched.
         assert_eq!(inputs["delivery_mode"], json!("script_tag"));
     }
@@ -509,9 +546,15 @@ mod tests {
     #[test]
     fn pick_chain_web_and_api() {
         assert_eq!(pick_chain("Web").unwrap().category_match, "Web");
-        assert_eq!(pick_chain("API specification").unwrap().category_match, "API");
+        assert_eq!(
+            pick_chain("API specification").unwrap().category_match,
+            "API"
+        );
         assert_eq!(pick_chain("Authentication").unwrap().category_match, "Auth");
-        assert_eq!(pick_chain("CORS misconfiguration").unwrap().category_match, "CORS");
+        assert_eq!(
+            pick_chain("CORS misconfiguration").unwrap().category_match,
+            "CORS"
+        );
     }
 
     #[test]
@@ -529,7 +572,10 @@ mod tests {
         let ids: Vec<&str> = c.steps.iter().map(|s| s.plugin_id).collect();
         assert_eq!(ids, vec!["nuclei", "website-scanner", "http-headers"]);
         // The nuclei step focuses on high/critical severities.
-        assert_eq!(c.steps[0].inputs.get("severity"), Some(&json!("high,critical")));
+        assert_eq!(
+            c.steps[0].inputs.get("severity"),
+            Some(&json!("high,critical"))
+        );
     }
 
     #[test]
@@ -576,7 +622,11 @@ mod tests {
     #[test]
     fn all_chains_have_steps() {
         for c in chains() {
-            assert!(!c.steps.is_empty(), "chain {} has no steps", c.category_match);
+            assert!(
+                !c.steps.is_empty(),
+                "chain {} has no steps",
+                c.category_match
+            );
             for s in &c.steps {
                 assert!(!s.plugin_id.is_empty());
             }

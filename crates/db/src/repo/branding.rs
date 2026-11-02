@@ -1,13 +1,14 @@
 //! Branding: single per-instance row controlling report look-and-feel.
 
-use crate::{DbError, DbResult};
 use crate::models::BrandingRow;
+use crate::{DbError, DbResult};
 use sqlx::SqlitePool;
 
 pub async fn get(db: &SqlitePool) -> DbResult<BrandingRow> {
     sqlx::query_as::<_, BrandingRow>("SELECT * FROM branding WHERE id = 1")
         .fetch_one(db)
-        .await.map_err(Into::into)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn update(

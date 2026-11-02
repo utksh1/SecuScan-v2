@@ -231,20 +231,14 @@ async fn triage(
     })?;
     let finding = load_finding_for_user(&state, &user, &id).await?;
     let task = repo::tasks::get(&state.db, &finding.task_id).await?;
-    let fingerprint = repo::finding_dedup::target_fingerprint(
-        finding.url.as_deref(),
-        task.target.as_deref(),
-    );
+    let fingerprint =
+        repo::finding_dedup::target_fingerprint(finding.url.as_deref(), task.target.as_deref());
 
     // 1) Propagate the new status to every duplicate in the same dedup
     // group, so re-scan copies inherit the analyst's decision.
     if let Some(group_id) = finding.group_id.as_deref().filter(|g| !g.is_empty()) {
-        match repo::finding_dedup::propagate_status_to_group(
-            &state.db,
-            group_id,
-            status.label(),
-        )
-        .await
+        match repo::finding_dedup::propagate_status_to_group(&state.db, group_id, status.label())
+            .await
         {
             Ok(n) if n > 1 => {
                 tracing::info!(
@@ -263,16 +257,18 @@ async fn triage(
     let mut remembered: Option<FpMemoryRow> = None;
     match status {
         AnalystStatus::FalsePositive => {
-            remembered = Some(repo::finding_dedup::remember_false_positive(
-                &state.db,
-                task.workspace_id.as_deref(),
-                &finding.plugin_id,
-                &finding.title,
-                &fingerprint,
-                &user.0.id,
-                req.reason.as_deref(),
-            )
-            .await?);
+            remembered = Some(
+                repo::finding_dedup::remember_false_positive(
+                    &state.db,
+                    task.workspace_id.as_deref(),
+                    &finding.plugin_id,
+                    &finding.title,
+                    &fingerprint,
+                    &user.0.id,
+                    req.reason.as_deref(),
+                )
+                .await?,
+            );
         }
         _ => {
             repo::finding_dedup::forget_false_positive(

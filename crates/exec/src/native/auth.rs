@@ -52,7 +52,10 @@ impl AuthMaterial {
 }
 
 /// Apply optional auth material to a request builder (no-op when None).
-pub fn apply_auth(auth: Option<&AuthMaterial>, rb: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+pub fn apply_auth(
+    auth: Option<&AuthMaterial>,
+    rb: reqwest::RequestBuilder,
+) -> reqwest::RequestBuilder {
     match auth {
         Some(a) => a.apply(rb),
         None => rb,
@@ -135,19 +138,36 @@ pub async fn resolve(
             if cookies.is_empty() {
                 return Err("cookie auth profile has no cookies".into());
             }
-            Ok(Some(AuthMaterial { method: method.into(), cookies, headers: Vec::new() }))
+            Ok(Some(AuthMaterial {
+                method: method.into(),
+                cookies,
+                headers: Vec::new(),
+            }))
         }
         "header" => {
             let headers = parse_pairs(&config, "headers");
             if headers.is_empty() {
                 return Err("header auth profile has no headers".into());
             }
-            Ok(Some(AuthMaterial { method: method.into(), cookies: Vec::new(), headers }))
+            Ok(Some(AuthMaterial {
+                method: method.into(),
+                cookies: Vec::new(),
+                headers,
+            }))
         }
         "form" => {
-            let login_url = config.get("login_url").and_then(|v| v.as_str()).unwrap_or("");
-            let username = config.get("username").and_then(|v| v.as_str()).unwrap_or("");
-            let password = config.get("password").and_then(|v| v.as_str()).unwrap_or("");
+            let login_url = config
+                .get("login_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let username = config
+                .get("username")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let password = config
+                .get("password")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             if login_url.is_empty() || username.is_empty() {
                 return Err("form auth profile missing login_url/username".into());
             }
@@ -192,10 +212,8 @@ async fn form_login(
 ) -> Result<Option<AuthMaterial>, String> {
     let client = super::http_headers::build_client(true, Duration::from_secs(15))
         .map_err(|e| format!("build login client: {e}"))?;
-    let form: BTreeMap<&str, &str> = BTreeMap::from([
-        ("username", username),
-        ("password", password),
-    ]);
+    let form: BTreeMap<&str, &str> =
+        BTreeMap::from([("username", username), ("password", password)]);
     let resp = client
         .post(login_url)
         .header("user-agent", "SecuScan-2.0 (auth)")
@@ -231,7 +249,11 @@ async fn form_login(
         cookies.len(),
     )))
     .await;
-    Ok(Some(AuthMaterial { method: "form".into(), cookies, headers: Vec::new() }))
+    Ok(Some(AuthMaterial {
+        method: "form".into(),
+        cookies,
+        headers: Vec::new(),
+    }))
 }
 
 #[cfg(test)]
@@ -242,7 +264,10 @@ mod tests {
     fn cookie_header_joins_pairs() {
         let a = AuthMaterial {
             method: "cookie".into(),
-            cookies: vec![("session".into(), "abc".into()), ("lang".into(), "en".into())],
+            cookies: vec![
+                ("session".into(), "abc".into()),
+                ("lang".into(), "en".into()),
+            ],
             headers: vec![],
         };
         assert_eq!(a.cookie_header().unwrap(), "session=abc; lang=en");
@@ -273,20 +298,25 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_method_rejected() {
-        let sink = crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
+        let sink =
+            crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
         assert!(resolve("bogus", "{}", &sink).await.is_err());
     }
 
     #[tokio::test]
     async fn recorded_method_not_yet_supported() {
-        let sink = crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
-        let err = resolve("recorded", r#"{"steps": []}"#, &sink).await.unwrap_err();
+        let sink =
+            crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
+        let err = resolve("recorded", r#"{"steps": []}"#, &sink)
+            .await
+            .unwrap_err();
         assert!(err.contains("not yet supported"), "{err}");
     }
 
     #[tokio::test]
     async fn cookie_method_parses() {
-        let sink = crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
+        let sink =
+            crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
         let m = resolve(
             "cookie",
             r#"{"cookies": [{"name": "sid", "value": "42"}]}"#,
@@ -301,7 +331,8 @@ mod tests {
 
     #[tokio::test]
     async fn header_method_parses() {
-        let sink = crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
+        let sink =
+            crate::events::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(16).0);
         let m = resolve(
             "header",
             r#"{"headers": [{"name": "X-API-Key", "value": "k-123"}]}"#,
@@ -310,6 +341,9 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        assert_eq!(m.headers, vec![("X-API-Key".to_string(), "k-123".to_string())]);
+        assert_eq!(
+            m.headers,
+            vec![("X-API-Key".to_string(), "k-123".to_string())]
+        );
     }
 }

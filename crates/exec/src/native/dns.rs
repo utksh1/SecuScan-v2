@@ -224,10 +224,9 @@ fn parse_name(msg: &[u8], pos: usize) -> Result<(String, usize), String> {
 /// final record).
 fn render_rdata(msg: &[u8], rtype: u16, rdstart: usize, rdata: &[u8]) -> Result<String, String> {
     match rtype {
-        rtype::A if rdata.len() == 4 => Ok(Ipv4Addr::new(
-            rdata[0], rdata[1], rdata[2], rdata[3],
-        )
-        .to_string()),
+        rtype::A if rdata.len() == 4 => {
+            Ok(Ipv4Addr::new(rdata[0], rdata[1], rdata[2], rdata[3]).to_string())
+        }
         rtype::AAAA if rdata.len() == 16 => {
             let mut o = [0u8; 16];
             o.copy_from_slice(rdata);
@@ -288,7 +287,12 @@ fn render_rdata(msg: &[u8], rtype: u16, rdstart: usize, rdata: &[u8]) -> Result<
             }
             let tag = String::from_utf8_lossy(&rdata[2..2 + tag_len]);
             let value = String::from_utf8_lossy(&rdata[2 + tag_len..]);
-            Ok(format!("{} {} \"{}\"", if flag == 0 { "0" } else { "128" }, tag, value))
+            Ok(format!(
+                "{} {} \"{}\"",
+                if flag == 0 { "0" } else { "128" },
+                tag,
+                value
+            ))
         }
         _ => Ok(format!("{} (unrendered)", hex(rdata))),
     }
@@ -362,11 +366,7 @@ pub fn parse_response(msg: &[u8]) -> Result<Vec<DnsRecord>, DnsError> {
 
 /// Query `name`/`rtype` against `server`. One attempt; caller-level
 /// timeouts bound the total. Records are returned in wire order.
-pub async fn query(
-    server: SocketAddr,
-    name: &str,
-    rtype: u16,
-) -> Result<Vec<DnsRecord>, DnsError> {
+pub async fn query(server: SocketAddr, name: &str, rtype: u16) -> Result<Vec<DnsRecord>, DnsError> {
     // bind an ephemeral local port per query — scanners run few queries
     // per task (or bounded by their own concurrency limiter).
     let bind: SocketAddr = if server.is_ipv4() {
@@ -498,7 +498,10 @@ mod tests {
     #[test]
     fn name_roundtrip() {
         let w = encode_name("example.com").unwrap();
-        assert_eq!(w, vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0]);
+        assert_eq!(
+            w,
+            vec![7, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 3, b'c', b'o', b'm', 0]
+        );
         assert!(encode_name("").is_err());
         assert!(encode_name("a..b").is_err());
         let long = "a".repeat(64);
@@ -664,7 +667,7 @@ mod tests {
 /// Returns an empty vec when the domain has no MX records; errors on
 /// transport failure.
 pub async fn resolve_mx(domain: &str) -> Result<Vec<DnsRecord>, DnsError> {
-    let server = system_server()
-        .ok_or_else(|| DnsError::Transport("no nameserver available".into()))?;
+    let server =
+        system_server().ok_or_else(|| DnsError::Transport("no nameserver available".into()))?;
     query(server, domain, 15).await // 15 = MX
 }

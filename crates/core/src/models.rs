@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Normalized finding severity, ordered from least to most severe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     #[default]

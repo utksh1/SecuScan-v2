@@ -135,7 +135,9 @@ pub(super) fn cors_findings_for_origin(
                 .to_string(),
             "Allow-list exact origins server-side; never reflect an unvalidated \
              Origin header when `Access-Control-Allow-Credentials: true`.",
-            format!("origin: {origin} → access-control-allow-origin: {acao}, allow-credentials: true"),
+            format!(
+                "origin: {origin} → access-control-allow-origin: {acao}, allow-credentials: true"
+            ),
             json!({"origin": origin, "reflected": true, "credentials": true, "probe": label}),
         )]
     } else if reflected && origin == "null" {
@@ -247,7 +249,10 @@ mod tests {
         let fs = cors_findings_for_origin(
             "https://attacker.example.com",
             &headers(&[
-                ("access-control-allow-origin", "https://attacker.example.com"),
+                (
+                    "access-control-allow-origin",
+                    "https://attacker.example.com",
+                ),
                 ("access-control-allow-credentials", "true"),
             ]),
             "target.test",
@@ -270,7 +275,10 @@ mod tests {
     fn arbitrary_reflection_without_creds_is_medium() {
         let fs = cors_findings_for_origin(
             "https://attacker.example.com",
-            &headers(&[("access-control-allow-origin", "https://attacker.example.com")]),
+            &headers(&[(
+                "access-control-allow-origin",
+                "https://attacker.example.com",
+            )]),
             "target.test",
         );
         assert_eq!(fs[0].severity, Severity::Medium);

@@ -75,7 +75,7 @@ async fn create(
         inputs: req.inputs.clone(),
         preset: req.preset.clone(),
         consent_granted: req.consent_granted,
-            auth_profile_id: None,
+        auth_profile_id: None,
         workspace_id: req.workspace_id.clone(),
     };
     let admitted = admit_request(&state, &user, &task_req).await?;
@@ -254,7 +254,7 @@ async fn update(
                 // Consent was captured when the schedule was created; the
                 // admission pipeline only checks the flag, not its provenance.
                 consent_granted: true,
-            auth_profile_id: None,
+                auth_profile_id: None,
                 workspace_id: workspace_id.clone(),
             };
             let admitted = admit_request(&state, &user, &task_req).await?;
@@ -339,7 +339,7 @@ async fn run_now(
         inputs: serde_json::from_str(&s.inputs_json).unwrap_or_default(),
         preset: s.preset.clone(),
         consent_granted: true,
-            auth_profile_id: None,
+        auth_profile_id: None,
         workspace_id: s.workspace_id.clone(),
     };
     let (task, manifest, inputs) =

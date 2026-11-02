@@ -445,9 +445,11 @@ mod tests {
         .collect();
         let findings = PortScanner.run(&inputs, &ctx).await.unwrap();
         assert!(
-            findings.iter().any(|f| f.description.contains("down, firewalled")
-                || f.title.to_ascii_lowercase().contains("unreachable")
-                || f.title.to_ascii_lowercase().contains("down")),
+            findings
+                .iter()
+                .any(|f| f.description.contains("down, firewalled")
+                    || f.title.to_ascii_lowercase().contains("unreachable")
+                    || f.title.to_ascii_lowercase().contains("down")),
             "expected a host-down observation, got {findings:?}"
         );
     }

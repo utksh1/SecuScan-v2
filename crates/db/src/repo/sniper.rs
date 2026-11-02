@@ -39,7 +39,11 @@ pub async fn get_run(db: &SqlitePool, id: &str) -> DbResult<SniperRunRow> {
         .map_err(Into::into)
 }
 
-pub async fn list_runs(db: &SqlitePool, finding_id: Option<&str>, limit: u32) -> DbResult<Vec<SniperRunRow>> {
+pub async fn list_runs(
+    db: &SqlitePool,
+    finding_id: Option<&str>,
+    limit: u32,
+) -> DbResult<Vec<SniperRunRow>> {
     let limit = limit.clamp(1, 200) as i64;
     match finding_id {
         Some(fid) => sqlx::query_as::<_, SniperRunRow>(
@@ -103,11 +107,7 @@ pub async fn finish_run(
 }
 
 /// Mark the source finding as validated with the chain's proof.
-pub async fn validate_finding(
-    db: &SqlitePool,
-    finding_id: &str,
-    proof: &str,
-) -> DbResult<()> {
+pub async fn validate_finding(db: &SqlitePool, finding_id: &str, proof: &str) -> DbResult<()> {
     sqlx::query(
         "UPDATE findings SET kind = 'validated_issue', analyst_status = 'confirmed', proof = ?
          WHERE id = ?",

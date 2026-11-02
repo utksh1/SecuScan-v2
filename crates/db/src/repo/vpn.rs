@@ -77,7 +77,11 @@ pub async fn update_status(
     interface: Option<&str>,
 ) -> DbResult<()> {
     let ts = now();
-    let connected_at = if status == "connected" { Some(now()) } else { None };
+    let connected_at = if status == "connected" {
+        Some(now())
+    } else {
+        None
+    };
     sqlx::query(
         "UPDATE vpn_profiles SET status = ?, last_error = ?, process_id = ?, interface = ?,
                                 connected_at = COALESCE(?, connected_at), updated_at = ?

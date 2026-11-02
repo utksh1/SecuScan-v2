@@ -97,8 +97,7 @@ impl NativeScanner for PasswordAuditScanner {
                     .send()
                     .await
                     .ok()?;
-                (resp.status().as_u16() != 401 && resp.status().as_u16() != 403)
-                    .then_some((u, p))
+                (resp.status().as_u16() != 401 && resp.status().as_u16() != 403).then_some((u, p))
             });
         }
         while let Some(item) = set.join_next().await {
@@ -165,7 +164,14 @@ async fn run_form(
 /// Conservative success: redirect away from the login URL, or 200 that
 /// looks logged-in and does not contain a failure phrase.
 pub fn form_login_accepted(status: u16, location: &str, login_url: &str, body: &str) -> bool {
-    let fail = ["invalid", "incorrect", "failed", "unauthor", "denied", "wrong password"];
+    let fail = [
+        "invalid",
+        "incorrect",
+        "failed",
+        "unauthor",
+        "denied",
+        "wrong password",
+    ];
     let lower = body.to_ascii_lowercase();
     if fail.iter().any(|w| lower.contains(w)) {
         return false;
@@ -173,7 +179,8 @@ pub fn form_login_accepted(status: u16, location: &str, login_url: &str, body: &
     if (300..400).contains(&status) && !location.is_empty() && !location.contains(login_url) {
         return true;
     }
-    status == 200 && (lower.contains("logout") || lower.contains("sign out") || lower.contains("dashboard"))
+    status == 200
+        && (lower.contains("logout") || lower.contains("sign out") || lower.contains("dashboard"))
 }
 
 async fn preflight(client: &reqwest::Client, target: &str) -> Result<(u16, bool), String> {
@@ -198,8 +205,7 @@ fn load_pairs(path: &str) -> Result<Vec<(String, String)>, String> {
     let raw: &str = if path.is_empty() {
         DEFAULT_PAIRS
     } else {
-        &std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read wordlist `{path}`: {e}"))?
+        &std::fs::read_to_string(path).map_err(|e| format!("cannot read wordlist `{path}`: {e}"))?
     };
     let mut out = Vec::new();
     for line in raw.lines() {
@@ -222,10 +228,7 @@ fn load_pairs(path: &str) -> Result<Vec<(String, String)>, String> {
 }
 
 /// Pure conversion — unit-testable.
-pub(super) fn audit_findings(
-    target: &str,
-    successes: &[(String, String)],
-) -> Vec<Finding> {
+pub(super) fn audit_findings(target: &str, successes: &[(String, String)]) -> Vec<Finding> {
     if successes.is_empty() {
         vec![finding(
             Severity::Info,
@@ -270,7 +273,12 @@ fn finding(
     proof: impl Into<String>,
     metadata: serde_json::Value,
 ) -> Finding {
-    let mut f = Finding::new(title, "Authentication", severity, FindingKind::SuspectedIssue);
+    let mut f = Finding::new(
+        title,
+        "Authentication",
+        severity,
+        FindingKind::SuspectedIssue,
+    );
     f.description = description.into();
     f.remediation = remediation.to_string();
     f.proof = proof.into();
@@ -292,9 +300,19 @@ mod tests {
     #[test]
     fn malformed_lines_skipped() {
         let path = std::env::temp_dir().join("secuscan-pw-test.txt");
-        std::fs::write(&path, "admin:admin\n# comment\nnouserpwd\n:emptyuser\nok:pass\n\n").unwrap();
+        std::fs::write(
+            &path,
+            "admin:admin\n# comment\nnouserpwd\n:emptyuser\nok:pass\n\n",
+        )
+        .unwrap();
         let pairs = load_pairs(path.to_str().unwrap()).unwrap();
-        assert_eq!(pairs, vec![("admin".into(), "admin".into()), ("ok".into(), "pass".into())]);
+        assert_eq!(
+            pairs,
+            vec![
+                ("admin".into(), "admin".into()),
+                ("ok".into(), "pass".into())
+            ]
+        );
     }
 
     #[test]
@@ -306,10 +324,7 @@ mod tests {
 
     #[test]
     fn success_is_critical() {
-        let fs = audit_findings(
-            "http://x/",
-            &[("admin".to_string(), "admin".to_string())],
-        );
+        let fs = audit_findings("http://x/", &[("admin".to_string(), "admin".to_string())]);
         assert_eq!(fs[0].severity, Severity::Critical);
         assert!(fs[0].title.contains("admin:admin"));
     }
@@ -322,8 +337,18 @@ mod tests {
     #[test]
     fn form_success_is_conservative() {
         assert!(form_login_accepted(302, "/home", "https://app/login", ""));
-        assert!(!form_login_accepted(200, "", "https://app/login", "invalid password"));
-        assert!(form_login_accepted(200, "", "https://app/login", "Welcome — logout"));
+        assert!(!form_login_accepted(
+            200,
+            "",
+            "https://app/login",
+            "invalid password"
+        ));
+        assert!(form_login_accepted(
+            200,
+            "",
+            "https://app/login",
+            "Welcome — logout"
+        ));
         assert!(!form_login_accepted(401, "", "https://app/login", ""));
     }
 }

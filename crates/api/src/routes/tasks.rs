@@ -217,12 +217,14 @@ pub async fn validate_and_create_task(
                     profile.name
                 )));
             }
-            crate::vpn_manager::connect(&state.db, &profile).await.map_err(|e| {
-                ApiError::Conflict(format!(
-                    "workspace requires VPN profile `{}` but the tunnel is not up: {e}",
-                    profile.name
-                ))
-            })?;
+            crate::vpn_manager::connect(&state.db, &profile)
+                .await
+                .map_err(|e| {
+                    ApiError::Conflict(format!(
+                        "workspace requires VPN profile `{}` but the tunnel is not up: {e}",
+                        profile.name
+                    ))
+                })?;
             vpn_stamp = Some(vpid);
         }
     }

@@ -52,11 +52,7 @@ impl NativeScanner for ReverseDnsScanner {
 }
 
 /// Pure conversion, unit-tested without a resolver.
-pub(super) fn ptr_findings(
-    ip: &str,
-    arpa: &str,
-    records: &[dns::DnsRecord],
-) -> Vec<Finding> {
+pub(super) fn ptr_findings(ip: &str, arpa: &str, records: &[dns::DnsRecord]) -> Vec<Finding> {
     let names: Vec<String> = records
         .iter()
         .filter(|r| r.rtype == rtype::PTR)
@@ -83,12 +79,29 @@ pub(super) fn ptr_findings(
     for name in &names {
         // Generic cloud pool names hint at shared infrastructure; that is
         // useful recon context for the analyst.
-        let shared = ["aws", "amazonaws", "compute", "ec2", "cloudfront", "googleusercontent",
-            "azure", "cloudapp", "linode", "vultr", "ovh", "hetzner", "digitalocean"]
-            .iter()
-            .any(|k| name.to_ascii_lowercase().contains(k));
+        let shared = [
+            "aws",
+            "amazonaws",
+            "compute",
+            "ec2",
+            "cloudfront",
+            "googleusercontent",
+            "azure",
+            "cloudapp",
+            "linode",
+            "vultr",
+            "ovh",
+            "hetzner",
+            "digitalocean",
+        ]
+        .iter()
+        .any(|k| name.to_ascii_lowercase().contains(k));
         out.push(finding(
-            if shared { Severity::Info } else { Severity::Low },
+            if shared {
+                Severity::Info
+            } else {
+                Severity::Low
+            },
             format!("PTR for {ip}: {name}"),
             format!(
                 "The IP reverse-resolves to `{name}`.{}",
@@ -146,7 +159,11 @@ mod tests {
 
     #[test]
     fn descriptive_ptr_is_low() {
-        let fs = ptr_findings("192.0.2.9", "9.2.0.192.in-addr.arpa", &[rec("mail.acme-corp.internal.")]);
+        let fs = ptr_findings(
+            "192.0.2.9",
+            "9.2.0.192.in-addr.arpa",
+            &[rec("mail.acme-corp.internal.")],
+        );
         assert_eq!(fs[0].severity, Severity::Low);
         assert!(fs[0].title.contains("mail.acme-corp.internal"));
     }

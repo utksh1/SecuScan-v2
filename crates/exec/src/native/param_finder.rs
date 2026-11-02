@@ -14,23 +14,92 @@ use std::time::Duration;
 
 /// Common parameter names used by x8-style hunters (subset, not a dump).
 const PARAMS: &[&str] = &[
-    "id", "uid", "user", "user_id", "account", "page", "p", "q", "query", "search",
-    "s", "keyword", "file", "path", "dir", "folder", "doc", "document", "url",
-    "uri", "src", "dest", "redirect", "next", "return", "callback", "cb", "jsonp",
-    "token", "key", "api_key", "access_token", "auth", "debug", "test", "admin",
-    "edit", "action", "cmd", "exec", "command", "ping", "host", "ip", "port",
-    "lang", "locale", "theme", "view", "format", "callback_url", "webhook",
-    "email", "from", "to", "template", "include", "ref", "referer", "sort",
-    "order", "filter", "limit", "offset", "size", "count", "tab", "step",
-    "download", "export", "preview", "print", "raw", "callbackUri",
+    "id",
+    "uid",
+    "user",
+    "user_id",
+    "account",
+    "page",
+    "p",
+    "q",
+    "query",
+    "search",
+    "s",
+    "keyword",
+    "file",
+    "path",
+    "dir",
+    "folder",
+    "doc",
+    "document",
+    "url",
+    "uri",
+    "src",
+    "dest",
+    "redirect",
+    "next",
+    "return",
+    "callback",
+    "cb",
+    "jsonp",
+    "token",
+    "key",
+    "api_key",
+    "access_token",
+    "auth",
+    "debug",
+    "test",
+    "admin",
+    "edit",
+    "action",
+    "cmd",
+    "exec",
+    "command",
+    "ping",
+    "host",
+    "ip",
+    "port",
+    "lang",
+    "locale",
+    "theme",
+    "view",
+    "format",
+    "callback_url",
+    "webhook",
+    "email",
+    "from",
+    "to",
+    "template",
+    "include",
+    "ref",
+    "referer",
+    "sort",
+    "order",
+    "filter",
+    "limit",
+    "offset",
+    "size",
+    "count",
+    "tab",
+    "step",
+    "download",
+    "export",
+    "preview",
+    "print",
+    "raw",
+    "callbackUri",
 ];
 
 pub struct ParamFinder;
 
 #[async_trait]
 impl NativeScanner for ParamFinder {
-    fn id(&self) -> &'static str { "param_finder" }
-    fn name(&self) -> &'static str { "Hidden Parameter Finder" }
+    fn id(&self) -> &'static str {
+        "param_finder"
+    }
+    fn name(&self) -> &'static str {
+        "Hidden Parameter Finder"
+    }
     fn description(&self) -> &'static str {
         "x8-class hidden parameter discovery: canary reflection and response deltas"
     }
@@ -58,9 +127,13 @@ impl NativeScanner for ParamFinder {
         let mut findings = Vec::new();
 
         for name in PARAMS.iter().take(max) {
-            if ctx.cancel.is_cancelled() { break; }
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
             let url = append_query(&target, name, &canary);
-            let Ok((status, len, body)) = fetch(&client, &url).await else { continue };
+            let Ok((status, len, body)) = fetch(&client, &url).await else {
+                continue;
+            };
             let reflected = body.contains(&canary);
             let status_changed = status != base_status;
             let len_delta = (len as i64 - base_len as i64).abs();
@@ -105,7 +178,11 @@ impl NativeScanner for ParamFinder {
 }
 
 async fn fetch(client: &reqwest::Client, url: &str) -> Result<(u16, usize, String), String> {
-    let resp = client.get(url).header("user-agent", "SecuScan-2.0 (param-finder)").send().await
+    let resp = client
+        .get(url)
+        .header("user-agent", "SecuScan-2.0 (param-finder)")
+        .send()
+        .await
         .map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let body = resp.text().await.unwrap_or_default();
@@ -113,10 +190,13 @@ async fn fetch(client: &reqwest::Client, url: &str) -> Result<(u16, usize, Strin
 }
 
 fn now_hex() -> String {
-    format!("{:x}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() % 0xffff_ffff)
-        .unwrap_or(1))
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() % 0xffff_ffff)
+            .unwrap_or(1)
+    )
 }
 
 #[cfg(test)]

@@ -381,7 +381,9 @@ fn validate_parser(m: &PluginManifest, errs: &mut Vec<String>) {
             };
             for sp in skip_patterns {
                 if let Err(e) = regex::Regex::new(sp) {
-                    errs.push(format!("parser.skip_patterns: `{sp}` is not a valid regex: {e}"));
+                    errs.push(format!(
+                        "parser.skip_patterns: `{sp}` is not a valid regex: {e}"
+                    ));
                 }
             }
             if finding.title.trim().is_empty() {

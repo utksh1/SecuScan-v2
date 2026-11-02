@@ -110,13 +110,11 @@ pub async fn propagate_status_to_group(
     group_id: &str,
     new_status: &str,
 ) -> DbResult<u64> {
-    let result = sqlx::query(
-        "UPDATE findings SET analyst_status = ? WHERE group_id = ?",
-    )
-    .bind(new_status)
-    .bind(group_id)
-    .execute(db)
-    .await?;
+    let result = sqlx::query("UPDATE findings SET analyst_status = ? WHERE group_id = ?")
+        .bind(new_status)
+        .bind(group_id)
+        .execute(db)
+        .await?;
     Ok(result.rows_affected())
 }
 

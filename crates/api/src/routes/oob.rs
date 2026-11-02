@@ -8,24 +8,29 @@
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::Json;
-use axum::body::Bytes;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 pub fn router() -> axum::Router<SharedState> {
     // Public callback receiver (no auth).
-    let public = axum::Router::new()
-        .route("/oob/:secret", axum::routing::any(receive_callback));
+    let public = axum::Router::new().route("/oob/:secret", axum::routing::any(receive_callback));
 
     // Authed CRUD.
     let authed = axum::Router::new()
         .route("/oob-handlers", axum::routing::get(list).post(create))
-        .route("/oob-handlers/:id", axum::routing::get(get_one).delete(delete))
+        .route(
+            "/oob-handlers/:id",
+            axum::routing::get(get_one).delete(delete),
+        )
         .route("/oob-handlers/:id/hits", axum::routing::get(list_hits))
-        .route("/oob-handlers/:id/hits/clear", axum::routing::post(clear_hits));
+        .route(
+            "/oob-handlers/:id/hits/clear",
+            axum::routing::post(clear_hits),
+        );
 
     public.merge(authed)
 }
@@ -191,33 +196,51 @@ async fn receive_callback(
 
     // Capture request data.
     let (parts, body) = req.into_parts();
-    let body_bytes: Bytes = axum::body::to_bytes(body, 256 * 1024).await
+    let body_bytes: Bytes = axum::body::to_bytes(body, 256 * 1024)
+        .await
         .map_err(|e| ApiError::BadRequest(format!("read body: {e}")))?;
     let method = parts.method.as_str().to_string();
     let uri = parts.uri.to_string();
-    let headers: serde_json::Map<String, Value> = parts.headers.iter()
-        .map(|(k, v)| (k.as_str().to_string(), Value::String(v.to_str().unwrap_or("").to_string())))
+    let headers: serde_json::Map<String, Value> = parts
+        .headers
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.as_str().to_string(),
+                Value::String(v.to_str().unwrap_or("").to_string()),
+            )
+        })
         .collect();
-    let source_ip = parts.headers.get("x-forwarded-for")
+    let source_ip = parts
+        .headers
+        .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .or_else(|| parts.headers.get("x-real-ip").and_then(|v| v.to_str().ok()).map(String::from))
+        .or_else(|| {
+            parts
+                .headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(String::from)
+        })
         .unwrap_or_default();
-    let user_agent = parts.headers.get("user-agent")
-        .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let user_agent = parts
+        .headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
 
     // Try to extract the OOB marker from query/body to correlate with a task.
     let marker = extract_marker(&uri, &body_bytes);
     let task_id: Option<String> = if let Some(ref m) = marker {
-        sqlx::query_scalar::<_, Option<String>>(
-            "SELECT id FROM tasks WHERE oob_marker = ? LIMIT 1",
-        )
-        .bind(m)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .flatten()
+        sqlx::query_scalar::<_, Option<String>>("SELECT id FROM tasks WHERE oob_marker = ? LIMIT 1")
+            .bind(m)
+            .fetch_optional(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .flatten()
     } else {
         None
     };
@@ -233,10 +256,8 @@ async fn receive_callback(
     });
     let payload_json = serde_json::to_string(&payload).unwrap_or_else(|_| "{}".into());
 
-    secuscan_db::repo::oob::record_hit(
-        &state.db, &handler.id, task_id.as_deref(), &payload_json,
-    )
-    .await?;
+    secuscan_db::repo::oob::record_hit(&state.db, &handler.id, task_id.as_deref(), &payload_json)
+        .await?;
 
     Ok(StatusCode::OK)
 }

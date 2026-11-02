@@ -12,10 +12,19 @@ use serde_json::{json, Value};
 pub fn router() -> axum::Router<SharedState> {
     axum::Router::new()
         // workspace members
-        .route("/workspaces/:id/members", axum::routing::get(list_members).post(add_member))
-        .route("/workspaces/:id/members/:user_id", axum::routing::delete(remove_member))
+        .route(
+            "/workspaces/:id/members",
+            axum::routing::get(list_members).post(add_member),
+        )
+        .route(
+            "/workspaces/:id/members/:user_id",
+            axum::routing::delete(remove_member),
+        )
         // finding comments
-        .route("/findings/:id/comments", axum::routing::get(list_comments).post(add_comment))
+        .route(
+            "/findings/:id/comments",
+            axum::routing::get(list_comments).post(add_comment),
+        )
         // mentions
         .route("/mentions", axum::routing::get(list_mentions))
         .route("/mentions/:id/read", axum::routing::post(mark_mention_read))
@@ -59,22 +68,23 @@ async fn add_member(
     user.require_scanner()?;
     if !["owner", "editor", "viewer"].contains(&req.role.as_str()) {
         return Err(ApiError::BadRequest(
-            "role must be one of owner/editor/viewer".into()
+            "role must be one of owner/editor/viewer".into(),
         ));
     }
     // Verify workspace exists and the caller is the owner or admin.
     let ws = secuscan_db::repo::workspaces::get_workspace(&state.db, &id).await?;
     if !user.is_admin() && ws.created_by != user.0.id {
         return Err(ApiError::Forbidden(
-            "only the workspace owner or an admin can add members".into()
+            "only the workspace owner or an admin can add members".into(),
         ));
     }
     // Verify the target user exists.
-    secuscan_db::repo::users::find_by_id(&state.db, &req.user_id).await?
+    secuscan_db::repo::users::find_by_id(&state.db, &req.user_id)
+        .await?
         .ok_or_else(|| ApiError::NotFound(format!("user {}", req.user_id)))?;
-    let row = secuscan_db::repo::collab::add_member(
-        &state.db, &id, &req.user_id, &req.role, &user.0.id,
-    ).await?;
+    let row =
+        secuscan_db::repo::collab::add_member(&state.db, &id, &req.user_id, &req.role, &user.0.id)
+            .await?;
     Ok((StatusCode::CREATED, Json(member_to_json(&row))))
 }
 
@@ -87,7 +97,7 @@ async fn remove_member(
     let ws = secuscan_db::repo::workspaces::get_workspace(&state.db, &id).await?;
     if !user.is_admin() && ws.created_by != user.0.id {
         return Err(ApiError::Forbidden(
-            "only the workspace owner or an admin can remove members".into()
+            "only the workspace owner or an admin can remove members".into(),
         ));
     }
     secuscan_db::repo::collab::remove_member(&state.db, &id, &user_id).await?;
@@ -130,19 +140,22 @@ async fn add_comment(
     Json(req): Json<AddCommentRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     if req.body.trim().is_empty() || req.body.len() > 4_000 {
-        return Err(ApiError::BadRequest("body must be 1..=4000 characters".into()));
+        return Err(ApiError::BadRequest(
+            "body must be 1..=4000 characters".into(),
+        ));
     }
     // Verify the finding exists.
     secuscan_db::repo::findings::get(&state.db, &id).await?;
-    let row = secuscan_db::repo::collab::add_comment(
-        &state.db, &id, &user.0.id, &req.body, "comment",
-    ).await?;
+    let row =
+        secuscan_db::repo::collab::add_comment(&state.db, &id, &user.0.id, &req.body, "comment")
+            .await?;
 
     // Parse @mentions and record them. Mentions are @email or @name; we look
     // up by email first, then by exact name match.
     let mentions = parse_mentions(&req.body);
     for m in mentions {
-        let target = secuscan_db::repo::users::find_by_email(&state.db, &m).await
+        let target = secuscan_db::repo::users::find_by_email(&state.db, &m)
+            .await
             .ok()
             .flatten();
         let target = match target {
@@ -150,14 +163,13 @@ async fn add_comment(
             None => match secuscan_db::repo::users::find_by_name(&state.db, &m).await {
                 Ok(Some(u)) => u,
                 _ => continue,
-            }
+            },
         };
         if target.id == user.0.id {
             continue; // don't mention yourself
         }
-        let _ = secuscan_db::repo::collab::add_mention(
-            &state.db, &row.id, &target.id, &id, None,
-        ).await;
+        let _ =
+            secuscan_db::repo::collab::add_mention(&state.db, &row.id, &target.id, &id, None).await;
     }
     Ok((StatusCode::CREATED, Json(comment_to_json(&row))))
 }
@@ -173,7 +185,11 @@ fn parse_mentions(body: &str) -> Vec<String> {
             let mut end = start;
             while end < bytes.len()
                 && (bytes[end].is_ascii_alphanumeric()
-                    || bytes[end] == b'.' || bytes[end] == b'_' || bytes[end] == b'-' || bytes[end] == b'@') {
+                    || bytes[end] == b'.'
+                    || bytes[end] == b'_'
+                    || bytes[end] == b'-'
+                    || bytes[end] == b'@')
+            {
                 end += 1;
             }
             if end > start {
@@ -208,9 +224,9 @@ async fn list_mentions(
 ) -> ApiResult<Json<Value>> {
     let unread = q.unread_only.unwrap_or(false);
     let limit = q.limit.unwrap_or(50);
-    let rows = secuscan_db::repo::collab::list_mentions_for_user(
-        &state.db, &user.0.id, unread, limit,
-    ).await?;
+    let rows =
+        secuscan_db::repo::collab::list_mentions_for_user(&state.db, &user.0.id, unread, limit)
+            .await?;
     Ok(Json(json!({
         "items": rows.iter().map(|m| json!({
             "id": m.id,

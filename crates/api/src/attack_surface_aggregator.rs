@@ -64,7 +64,9 @@ async fn try_aggregate(
                     None
                 }
             });
-        let url = f.url.clone()
+        let url = f
+            .url
+            .clone()
             .or_else(|| string_field(meta, "url"))
             .or_else(|| string_field(meta, "final"))
             .or_else(|| string_field(meta, "original"));
@@ -74,7 +76,8 @@ async fn try_aggregate(
             continue;
         }
 
-        let key = hostname.clone()
+        let key = hostname
+            .clone()
             .or_else(|| ip.clone())
             .or_else(|| url.clone())
             .unwrap_or_default();
@@ -106,10 +109,16 @@ async fn try_aggregate(
         }
         // Risk flags from severity.
         if f.severity.label() == "high" || f.severity.label() == "critical" {
-            entry.risks.push(Value::String(format!("{}: {}", f.severity.label(), f.title)));
+            entry.risks.push(Value::String(format!(
+                "{}: {}",
+                f.severity.label(),
+                f.title
+            )));
         }
         // Track contributing scan.
-        entry.contributed_by.push(Value::String(plugin_id.to_string()));
+        entry
+            .contributed_by
+            .push(Value::String(plugin_id.to_string()));
         entry.last_scan_id = Some(task_id.to_string());
     }
 
@@ -155,7 +164,9 @@ fn string_field(meta: &Value, name: &str) -> Option<String> {
 }
 
 fn extract_host(url: &str) -> Option<String> {
-    Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string))
+    Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
 }
 
 /// Deduplicate JSON values by their string representation, preserving order.
@@ -193,7 +204,10 @@ mod tests {
 
     #[test]
     fn extract_host_strips_scheme_and_path() {
-        assert_eq!(extract_host("http://example.com:8080/foo"), Some("example.com".into()));
+        assert_eq!(
+            extract_host("http://example.com:8080/foo"),
+            Some("example.com".into())
+        );
         assert_eq!(extract_host("https://1.2.3.4/"), Some("1.2.3.4".into()));
         assert_eq!(extract_host("not a url"), None);
     }

@@ -1,7 +1,7 @@
 //! SecuScan MCP server entrypoint.
 
-use secuscan_mcp::{run_http, run_stdio, Cli, SecuScanClient};
 use clap::Parser;
+use secuscan_mcp::{run_http, run_stdio, Cli, SecuScanClient};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

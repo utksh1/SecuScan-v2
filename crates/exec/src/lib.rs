@@ -15,8 +15,8 @@ pub mod runner;
 
 pub use events::{EventEnvelope, EventSink, StreamKind, TaskEvent};
 pub use limiter::{LimitVerdict, PluginLimiter};
-pub use native::{NativeCtx, NativeScanner};
 pub use native::AuthMaterial;
+pub use native::{NativeCtx, NativeScanner};
 pub use runner::{run_cli, CliOutcome};
 
 use secuscan_core::manifest::PluginManifest;

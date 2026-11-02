@@ -11,31 +11,66 @@ use std::time::Duration;
 pub struct DrupalScanner;
 
 const DRUPAL_CVES: &[(&str, &str, f64, &str, &str)] = &[
-    ("CVE-2014-3704", "Drupalgeddon — SQL injection in expandArguments()", 7.5, "7.0-7.31", "CWE-89"),
-    ("CVE-2018-7600", "Drupalgeddon 2 — RCE via multiple endpoints", 9.8, "7.0-7.57 / 8.0-8.3.9", "CWE-20"),
-    ("CVE-2018-7602", "Drupalgeddon 3 — RCE via file upload", 8.1, "7.0-7.58 / 8.0-8.4.7", "CWE-94"),
+    (
+        "CVE-2014-3704",
+        "Drupalgeddon — SQL injection in expandArguments()",
+        7.5,
+        "7.0-7.31",
+        "CWE-89",
+    ),
+    (
+        "CVE-2018-7600",
+        "Drupalgeddon 2 — RCE via multiple endpoints",
+        9.8,
+        "7.0-7.57 / 8.0-8.3.9",
+        "CWE-20",
+    ),
+    (
+        "CVE-2018-7602",
+        "Drupalgeddon 3 — RCE via file upload",
+        8.1,
+        "7.0-7.58 / 8.0-8.4.7",
+        "CWE-94",
+    ),
 ];
 
 #[async_trait]
 impl NativeScanner for DrupalScanner {
-    fn id(&self) -> &'static str { "drupal_scanner" }
-    fn name(&self) -> &'static str { "Drupal Scanner" }
-    fn description(&self) -> &'static str { "Drupal CMS fingerprinting + CVE matching + module enumeration" }
+    fn id(&self) -> &'static str {
+        "drupal_scanner"
+    }
+    fn name(&self) -> &'static str {
+        "Drupal Scanner"
+    }
+    fn description(&self) -> &'static str {
+        "Drupal CMS fingerprinting + CVE matching + module enumeration"
+    }
 
-    async fn run(&self, inputs: &BTreeMap<String, serde_json::Value>, _ctx: &NativeCtx) -> Result<Vec<Finding>, String> {
+    async fn run(
+        &self,
+        inputs: &BTreeMap<String, serde_json::Value>,
+        _ctx: &NativeCtx,
+    ) -> Result<Vec<Finding>, String> {
         let url = get_str(inputs, "target")?;
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
             .danger_accept_invalid_certs(true)
-            .build().map_err(|e| format!("build client: {e}"))?;
-        let resp = client.get(url).send().await.map_err(|e| format!("fetch {url}: {e}"))?;
+            .build()
+            .map_err(|e| format!("build client: {e}"))?;
+        let resp = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("fetch {url}: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!("target returned {}", resp.status()));
         }
         let html = resp.text().await.unwrap_or_default();
         let mut findings = Vec::new();
 
-        let is_drupal = html.contains("Drupal") || html.contains("/sites/all/") || html.contains("/core/modules/");
+        let is_drupal = html.contains("Drupal")
+            || html.contains("/sites/all/")
+            || html.contains("/core/modules/");
         if !is_drupal {
             findings.push(Finding {
                 title: "Drupal not detected".into(),
@@ -43,7 +78,9 @@ impl NativeScanner for DrupalScanner {
                 severity: Severity::Info,
                 kind: FindingKind::Observation,
                 description: format!("No Drupal fingerprints found at {url}."),
-                remediation: "If this site runs Drupal, ensure the Drupal fingerprints are not stripped.".into(),
+                remediation:
+                    "If this site runs Drupal, ensure the Drupal fingerprints are not stripped."
+                        .into(),
                 proof: format!("Searched for 'Drupal', '/sites/all/', '/core/modules/' in {url}"),
                 url: Some(url.into()),
                 metadata: json!({"detected": false}),
@@ -71,10 +108,15 @@ impl NativeScanner for DrupalScanner {
         if let Some(v) = &version {
             for (cve, title, cvss, range, cwe) in DRUPAL_CVES {
                 if cve_matches(v, range) {
-                    let severity = if *cvss >= 9.0 { Severity::Critical }
-                        else if *cvss >= 7.0 { Severity::High }
-                        else if *cvss >= 4.0 { Severity::Medium }
-                        else { Severity::Low };
+                    let severity = if *cvss >= 9.0 {
+                        Severity::Critical
+                    } else if *cvss >= 7.0 {
+                        Severity::High
+                    } else if *cvss >= 4.0 {
+                        Severity::Medium
+                    } else {
+                        Severity::Low
+                    };
                     findings.push(Finding {
                         title: format!("{cve}: {title}"),
                         category: "Drupal CVE".into(),
@@ -144,17 +186,23 @@ fn extract_version(html: &str) -> Option<String> {
         return Some(c.get(1)?.as_str().to_string());
     }
     let re2 = regex::Regex::new(r#"Drupal\s+(\d+\.\d+\.\d+)"#).ok()?;
-    re2.captures(html).map(|c| c.get(1).unwrap().as_str().to_string())
+    re2.captures(html)
+        .map(|c| c.get(1).unwrap().as_str().to_string())
 }
 
 fn extract_modules(html: &str) -> Option<Vec<String>> {
     let re = regex::Regex::new(r"/(?:sites/all/modules|core/modules)/([a-zA-Z0-9_]+)/").ok()?;
-    let mut mods: Vec<String> = re.captures_iter(html)
+    let mut mods: Vec<String> = re
+        .captures_iter(html)
         .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
         .collect();
     mods.sort();
     mods.dedup();
-    if mods.is_empty() { None } else { Some(mods) }
+    if mods.is_empty() {
+        None
+    } else {
+        Some(mods)
+    }
 }
 
 fn cve_matches(version: &str, range: &str) -> bool {
@@ -165,17 +213,29 @@ fn cve_matches(version: &str, range: &str) -> bool {
     for part in range.split('/') {
         let part = part.trim();
         let bounds: Vec<&str> = part.split('-').collect();
-        if bounds.len() != 2 { continue; }
-        let lo = match parse_version(bounds[0].trim()) { Some(v) => v, None => continue };
-        let hi = match parse_version(bounds[1].trim()) { Some(v) => v, None => continue };
-        if v >= lo && v <= hi { return true; }
+        if bounds.len() != 2 {
+            continue;
+        }
+        let lo = match parse_version(bounds[0].trim()) {
+            Some(v) => v,
+            None => continue,
+        };
+        let hi = match parse_version(bounds[1].trim()) {
+            Some(v) => v,
+            None => continue,
+        };
+        if v >= lo && v <= hi {
+            return true;
+        }
     }
     false
 }
 
 fn parse_version(s: &str) -> Option<(u32, u32, u32)> {
     let parts: Vec<&str> = s.split('.').collect();
-    if parts.len() < 2 { return None; }
+    if parts.len() < 2 {
+        return None;
+    }
     let major = parts[0].parse().ok()?;
     let minor = parts[1].parse().ok()?;
     let patch = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);

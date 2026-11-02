@@ -5,9 +5,9 @@
 //! canonical `asset_key` so repeated scans refresh the same row instead of
 //! creating duplicates.
 
-use crate::{DbError, DbResult};
 use crate::models::AttackSurfaceAssetRow;
 use crate::new_id;
+use crate::{DbError, DbResult};
 use sqlx::SqlitePool;
 
 /// Canonical key for an asset. Deduplication happens on this string.
@@ -95,7 +95,8 @@ pub async fn upsert_asset(
     )
     .bind(&asset_key)
     .fetch_one(db)
-    .await.map_err(Into::into)
+    .await
+    .map_err(Into::into)
 }
 
 /// List assets, optionally filtered by workspace and a free-text `q` (matches
@@ -143,11 +144,13 @@ pub async fn list(
 
 pub async fn count(db: &SqlitePool, workspace_id: Option<&str>) -> DbResult<i64> {
     match workspace_id {
-        Some(ws) => sqlx::query_scalar("SELECT COUNT(*) FROM attack_surface_assets WHERE workspace_id = ?")
-            .bind(ws)
-            .fetch_one(db)
-            .await
-            .map_err(Into::into),
+        Some(ws) => {
+            sqlx::query_scalar("SELECT COUNT(*) FROM attack_surface_assets WHERE workspace_id = ?")
+                .bind(ws)
+                .fetch_one(db)
+                .await
+                .map_err(Into::into)
+        }
         None => sqlx::query_scalar("SELECT COUNT(*) FROM attack_surface_assets")
             .fetch_one(db)
             .await

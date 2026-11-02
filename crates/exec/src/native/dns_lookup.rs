@@ -36,8 +36,8 @@ impl NativeScanner for DnsLookupScanner {
     ) -> Result<Vec<Finding>, String> {
         let domain = get_str(inputs, "target")?.trim().to_ascii_lowercase();
         let type_str = super::get_str_or(inputs, "record_type", "A");
-        let rt = rtype::parse(type_str)
-            .ok_or_else(|| format!("unknown record type `{type_str}`"))?;
+        let rt =
+            rtype::parse(type_str).ok_or_else(|| format!("unknown record type `{type_str}`"))?;
         if !dns::valid_name(&domain) {
             return Err(format!("invalid domain name `{domain}`"));
         }
@@ -45,9 +45,7 @@ impl NativeScanner for DnsLookupScanner {
 
         let server = dns::system_server()
             .ok_or_else(|| "no DNS server available (resolv.conf empty?)".to_string())?;
-        let records = dns::query(server, &domain, rt)
-            .await
-            .map_err(dns_err_msg)?;
+        let records = dns::query(server, &domain, rt).await.map_err(dns_err_msg)?;
 
         Ok(records_to_findings(&domain, rt, &records))
     }
@@ -110,8 +108,10 @@ fn assess(rt: u16, data: &str) -> (Severity, Option<&'static str>) {
             if data.contains("\"\"") || data.contains("\";\"") {
                 (
                     Severity::Info,
-                    Some(" — a semicolon/empty value blocks certificate issuance, which is \
-                          intentional for domains that should never get TLS certs."),
+                    Some(
+                        " — a semicolon/empty value blocks certificate issuance, which is \
+                          intentional for domains that should never get TLS certs.",
+                    ),
                 )
             } else {
                 (Severity::Info, None)
@@ -119,13 +119,17 @@ fn assess(rt: u16, data: &str) -> (Severity, Option<&'static str>) {
         }
         rtype::TXT if data.contains("v=spf1") => (Severity::Info, Some(" (SPF policy)")),
         rtype::TXT if data.contains("v=DMARC1") => (Severity::Info, Some(" (DMARC policy)")),
-        rtype::TXT if data.contains("atlassian") || data.contains("site-verification")
-            || data.contains("domain-verification") =>
+        rtype::TXT
+            if data.contains("atlassian")
+                || data.contains("site-verification")
+                || data.contains("domain-verification") =>
         {
             (
                 Severity::Low,
-                Some(" — verification/token TXT entries can reveal which third-party \
-                      services an organisation uses"),
+                Some(
+                    " — verification/token TXT entries can reveal which third-party \
+                      services an organisation uses",
+                ),
             )
         }
         rtype::MX => (Severity::Info, None),
@@ -136,12 +140,18 @@ fn assess(rt: u16, data: &str) -> (Severity, Option<&'static str>) {
 
 fn remediation_for(rt: u16) -> &'static str {
     match rt {
-        rtype::CAA => "Use CAA records to restrict which CAs may issue certificates for \
-                       this domain.",
-        rtype::TXT => "Review TXT entries periodically — stale verification tokens should \
-                       be removed.",
-        rtype::MX => "Ensure MX targets are reachable and have SPF/DMARC aligned with the \
-                      sending domain.",
+        rtype::CAA => {
+            "Use CAA records to restrict which CAs may issue certificates for \
+                       this domain."
+        }
+        rtype::TXT => {
+            "Review TXT entries periodically — stale verification tokens should \
+                       be removed."
+        }
+        rtype::MX => {
+            "Ensure MX targets are reachable and have SPF/DMARC aligned with the \
+                      sending domain."
+        }
         _ => "Keep DNS records tidy — unused records expand the attack surface.",
     }
 }
