@@ -169,15 +169,13 @@ pub(super) fn spf_findings(domain: &str, spf: Option<&str>) -> Vec<Finding> {
         )],
         Some(rec) => {
             let mut out = Vec::new();
-            let qualifier = rec
-                .split_whitespace()
-                .rfind(|m| {
-                    m.eq_ignore_ascii_case("all")
-                        || m.eq_ignore_ascii_case("+all")
-                        || m.eq_ignore_ascii_case("?all")
-                        || m.eq_ignore_ascii_case("~all")
-                        || m.eq_ignore_ascii_case("-all")
-                });
+            let qualifier = rec.split_whitespace().rfind(|m| {
+                m.eq_ignore_ascii_case("all")
+                    || m.eq_ignore_ascii_case("+all")
+                    || m.eq_ignore_ascii_case("?all")
+                    || m.eq_ignore_ascii_case("~all")
+                    || m.eq_ignore_ascii_case("-all")
+            });
             match qualifier {
                 Some(q) if q.eq_ignore_ascii_case("+all") => out.push(finding(
                     Severity::High,
