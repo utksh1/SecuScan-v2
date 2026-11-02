@@ -189,16 +189,13 @@ fn inputs_for(plugin_id: &str, target: &str, preset: Option<&str>) -> BTreeMap<S
     m.insert("target".to_string(), Value::String(target.to_string()));
     // Suite-level hints for plugins that accept them.
     if preset.is_none() {
-        match plugin_id {
-            "nmap" => {
-                // v4.2.0: the equivalent of the "deep" profile -- top 1000
-                // ports + service detection. (The old `ports: "top-1000"`
-                // string failed the ports field pattern, so nmap was
-                // silently skipped by the full suite.)
-                m.insert("top_ports".to_string(), json!(1000));
-                m.insert("service_detection".to_string(), json!(true));
-            }
-            _ => {}
+        if plugin_id == "nmap" {
+            // v4.2.0: the equivalent of the "deep" profile -- top 1000
+            // ports + service detection. (The old `ports: "top-1000"`
+            // string failed the ports field pattern, so nmap was
+            // silently skipped by the full suite.)
+            m.insert("top_ports".to_string(), json!(1000));
+            m.insert("service_detection".to_string(), json!(true));
         }
     }
     m
