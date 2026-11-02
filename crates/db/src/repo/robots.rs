@@ -7,7 +7,7 @@
 
 use crate::models::{RobotRow, RobotRunRow};
 use crate::new_id;
-use crate::{DbError, DbResult};
+use crate::DbResult;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ pub async fn create(
     .bind(&now)
     .execute(db)
     .await?;
-    get(db, &id).await.map_err(Into::into)
+    get(db, &id).await
 }
 
 pub async fn list(db: &SqlitePool) -> DbResult<Vec<RobotRow>> {
@@ -112,7 +112,7 @@ pub async fn create_run(
     .bind(&now)
     .execute(db)
     .await?;
-    get_run(db, &id).await.map_err(Into::into)
+    get_run(db, &id).await
 }
 
 pub async fn get_run(db: &SqlitePool, id: &str) -> DbResult<RobotRunRow> {
