@@ -3,7 +3,9 @@
 //! approve the exact scanner user and request through the authenticated API.
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
-use crate::routes::tasks::{admit_request, task_to_json, validate_and_create_task, Admitted, StartTaskRequest};
+use crate::routes::tasks::{
+    admit_request, task_to_json, validate_and_create_task, Admitted, StartTaskRequest,
+};
 use crate::state::SharedState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
