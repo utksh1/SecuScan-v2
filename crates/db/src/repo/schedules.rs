@@ -103,7 +103,14 @@ pub async fn list(pool: &SqlitePool, f: &ScheduleListFilters) -> DbResult<Vec<Sc
     let p_off = format!("?{n}");
     let sql = format!(
         "SELECT * FROM schedules \
-         WHERE (?1 IS NULL OR user_id = ?1) \
+         WHERE (?1 IS NULL OR (
+           user_id = ?1 AND (workspace_id IS NULL OR EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = workspace_id
+             AND (w.access_mode = 'shared' OR w.created_by = ?1
+               OR EXISTS (SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+           ))
+         )) \
          {ws_clause} \
          ORDER BY created_at DESC LIMIT {p_lim} OFFSET {p_off}"
     );
@@ -120,7 +127,14 @@ pub async fn count(pool: &SqlitePool, f: &ScheduleListFilters) -> DbResult<i64> 
     let (ws_clause, ws_bind) = f.workspace.clause("workspace_id", &mut n);
     let sql = format!(
         "SELECT COUNT(*) FROM schedules \
-         WHERE (?1 IS NULL OR user_id = ?1) \
+         WHERE (?1 IS NULL OR (
+           user_id = ?1 AND (workspace_id IS NULL OR EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = workspace_id
+             AND (w.access_mode = 'shared' OR w.created_by = ?1
+               OR EXISTS (SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+           ))
+         )) \
          {ws_clause}"
     );
     let mut q = sqlx::query_scalar::<_, i64>(&sql).bind(&f.user_id);
