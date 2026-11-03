@@ -2,6 +2,7 @@
 //! asset inventory.
 
 use crate::auth::extractor::CurrentUser;
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::error::ApiResult;
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
@@ -44,12 +45,16 @@ fn asset_to_json(a: &secuscan_db::models::AttackSurfaceAssetRow) -> Value {
 
 async fn list(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let limit = q.limit.unwrap_or(200);
-    let rows = secuscan_db::repo::attack_surface::list(
+    let rows = secuscan_db::repo::attack_surface::list_visible(
         &state.db,
+        if user.is_admin() { None } else { Some(user.0.id.as_str()) },
         q.workspace_id.as_deref(),
         q.q.as_deref(),
         limit,
@@ -62,15 +67,20 @@ async fn list(
 
 async fn summary(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    let total =
-        secuscan_db::repo::attack_surface::count(&state.db, q.workspace_id.as_deref()).await?;
-    // Get top technologies by counting occurrences in metadata.technologies
-    let rows =
-        secuscan_db::repo::attack_surface::list(&state.db, q.workspace_id.as_deref(), None, 500)
-            .await?;
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
+    let viewer = if user.is_admin() { None } else { Some(user.0.id.as_str()) };
+    let total = secuscan_db::repo::attack_surface::count_visible(
+        &state.db, viewer, q.workspace_id.as_deref()
+    ).await?;
+    // Bound aggregation sample to 500 authorized assets only.
+    let rows = secuscan_db::repo::attack_surface::list_visible(
+        &state.db, viewer, q.workspace_id.as_deref(), None, 500
+    ).await?;
     let mut tech_counts: std::collections::BTreeMap<String, usize> = Default::default();
     let mut service_counts: std::collections::BTreeMap<String, usize> = Default::default();
     let mut risk_counts: std::collections::BTreeMap<String, usize> = Default::default();
@@ -124,6 +134,17 @@ async fn delete_one(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let row: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT workspace_id FROM attack_surface_assets WHERE id = ?"
+    ).bind(&id).fetch_optional(&state.db).await
+      .map_err(|e| crate::error::ApiError::Internal(e.to_string()))?;
+    let (workspace_id,) = row.ok_or_else(|| crate::error::ApiError::NotFound("not found".into()))?;
+    if let Some(ws) = workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    } else if !user.is_admin() {
+        // The legacy unscoped asset table does not store an owner ID.
+        return Err(crate::error::ApiError::NotFound("not found".into()));
+    }
     secuscan_db::repo::attack_surface::delete(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
