@@ -3199,11 +3199,8 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
     // Plugin version, engine and safety metadata are bound to the approval.
     let manifest_path = s._plugins_dir.path().join("port-scanner.toml");
     let original_manifest = std::fs::read_to_string(&manifest_path).unwrap();
-    let changed_manifest = original_manifest.replacen(
-        "version = \"1.1.0\"",
-        "version = \"9.9.9\"",
-        1,
-    );
+    let changed_manifest =
+        original_manifest.replacen("version = \"1.1.0\"", "version = \"9.9.9\"", 1);
     assert_ne!(original_manifest, changed_manifest);
     std::fs::write(&manifest_path, changed_manifest).unwrap();
     *s.state.registry.write().await = PluginRegistry::load_dir(s._plugins_dir.path());
