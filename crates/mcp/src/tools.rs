@@ -470,11 +470,7 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
                 .get("target")
                 .and_then(Value::as_str)
                 .ok_or("missing target")?;
-            let body = approved_scan_payload(
-                &args,
-                "people-hunter",
-                json!({ "target": target }),
-            )?;
+            let body = approved_scan_payload(&args, "people-hunter", json!({ "target": target }))?;
             let v = client
                 .post("/api/v1/mcp/scans", body)
                 .await
@@ -517,11 +513,18 @@ mod tests {
     #[test]
     fn no_consent_or_approval_cannot_build_scan_request() {
         let request = json!({ "target": "127.0.0.1" });
-        assert!(approved_scan_payload(&request, "port-scanner", json!({"target":"127.0.0.1"})).is_err());
+        assert!(
+            approved_scan_payload(&request, "port-scanner", json!({"target":"127.0.0.1"})).is_err()
+        );
         let no_approval = json!({"consent_granted":true});
-        assert!(approved_scan_payload(&no_approval, "port-scanner", json!({"target":"127.0.0.1"})).is_err());
+        assert!(
+            approved_scan_payload(&no_approval, "port-scanner", json!({"target":"127.0.0.1"}))
+                .is_err()
+        );
         let refused = json!({"consent_granted":false,"approval_token":"mcpap_test"});
-        assert!(approved_scan_payload(&refused, "port-scanner", json!({"target":"127.0.0.1"})).is_err());
+        assert!(
+            approved_scan_payload(&refused, "port-scanner", json!({"target":"127.0.0.1"})).is_err()
+        );
     }
 
     #[test]
@@ -532,7 +535,8 @@ mod tests {
             "workspace_id": "workspace-1",
             "preset": "deep",
         });
-        let request = approved_scan_payload(&args, "port-scanner", json!({"target": "127.0.0.1"})).unwrap();
+        let request =
+            approved_scan_payload(&args, "port-scanner", json!({"target": "127.0.0.1"})).unwrap();
         assert_eq!(request["approval_token"], "mcpap_test");
         assert_eq!(request["scan"]["plugin_id"], "port-scanner");
         assert_eq!(request["scan"]["workspace_id"], "workspace-1");

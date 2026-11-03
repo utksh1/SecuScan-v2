@@ -10,8 +10,8 @@ use crate::state::SharedState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
-use secuscan_db::{generate_token, new_id, now, sha256_hex};
 use secuscan_db::repo;
+use secuscan_db::{generate_token, new_id, now, sha256_hex};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -91,9 +91,13 @@ async fn approve(
     let scanner = CurrentUser(scanner);
     // Evaluate against the intended scanner identity, not the approver.
     let admitted = admit_request(&state, &scanner, &req.scan).await?;
-    let target = admitted.target.as_deref().filter(|s| !s.trim().is_empty()).ok_or_else(|| {
-        ApiError::BadRequest("MCP approvals require a concrete scan target".into())
-    })?;
+    let target = admitted
+        .target
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            ApiError::BadRequest("MCP approvals require a concrete scan target".into())
+        })?;
     if let Some(profile_id) = req.scan.auth_profile_id.as_deref() {
         let profile = repo::auth_profiles::get(&state.db, profile_id).await?;
         crate::access::require_owner(&scanner, &profile.created_by)?;
@@ -124,15 +128,18 @@ async fn approve(
     .map_err(|e| ApiError::Internal(format!("failed to store approval: {e}")))?;
 
     // Raw token is returned only once. Never include it in audit logs.
-    Ok((StatusCode::CREATED, Json(json!({
-        "approval_id": approval_id,
-        "approval_token": token,
-        "expires_at_epoch": expires_at_epoch,
-        "issued_to_user_id": scanner.0.id,
-        "plugin_id": req.scan.plugin_id,
-        "target": target,
-        "single_use": true
-    }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "approval_id": approval_id,
+            "approval_token": token,
+            "expires_at_epoch": expires_at_epoch,
+            "issued_to_user_id": scanner.0.id,
+            "plugin_id": req.scan.plugin_id,
+            "target": target,
+            "single_use": true
+        })),
+    ))
 }
 
 async fn start(
@@ -147,7 +154,9 @@ async fn start(
         ));
     }
     if !req.approval_token.starts_with("mcpap_") || req.approval_token.len() != 70 {
-        return Err(ApiError::Forbidden("missing or invalid MCP approval token".into()));
+        return Err(ApiError::Forbidden(
+            "missing or invalid MCP approval token".into(),
+        ));
     }
 
     // Re-run the full normal admission policy at consumption time: admin may
@@ -179,13 +188,12 @@ async fn start(
     let (task, manifest, inputs) =
         validate_and_create_task(&state, &user, &req.scan, None, None).await?;
     // Persist audit linkage before starting the actual scan.
-    let approval_id: String = sqlx::query_scalar(
-        "SELECT id FROM mcp_scan_approvals WHERE token_hash = ?1",
-    )
-    .bind(&token_hash)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(format!("failed to fetch audit link: {e}")))?;
+    let approval_id: String =
+        sqlx::query_scalar("SELECT id FROM mcp_scan_approvals WHERE token_hash = ?1")
+            .bind(&token_hash)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("failed to fetch audit link: {e}")))?;
     let mut options: Value = serde_json::from_str(&task.options_json).unwrap_or(json!({}));
     options["origin"] = json!("mcp");
     options["mcp_approval_id"] = json!(approval_id);
@@ -195,14 +203,12 @@ async fn start(
         .execute(&state.db)
         .await
         .map_err(|e| ApiError::Internal(format!("failed to record task audit: {e}")))?;
-    sqlx::query(
-        "UPDATE mcp_scan_approvals SET task_id = ?1 WHERE token_hash = ?2",
-    )
-    .bind(&task.id)
-    .bind(&token_hash)
-    .execute(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(format!("failed to link approval to task: {e}")))?;
+    sqlx::query("UPDATE mcp_scan_approvals SET task_id = ?1 WHERE token_hash = ?2")
+        .bind(&task.id)
+        .bind(&token_hash)
+        .execute(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(format!("failed to link approval to task: {e}")))?;
     state.tasks.spawn(task.clone(), manifest, inputs).await;
     let mut result = task_to_json(&task, false);
     result["options"] = options;

@@ -3048,11 +3048,18 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
     let (c, admin_jwt) = login(&s).await;
 
     let scanner = secuscan_db::repo::users::create(
-        &s.state.db, "mcp-scanner@test.local", "MCP scanner", "unused-test-hash", "scanner",
-    ).await.unwrap();
-    let key = secuscan_db::repo::api_keys::create(
-        &s.state.db, &scanner.id, "dedicated MCP agent",
-    ).await.unwrap().raw;
+        &s.state.db,
+        "mcp-scanner@test.local",
+        "MCP scanner",
+        "unused-test-hash",
+        "scanner",
+    )
+    .await
+    .unwrap();
+    let key = secuscan_db::repo::api_keys::create(&s.state.db, &scanner.id, "dedicated MCP agent")
+        .await
+        .unwrap()
+        .raw;
 
     let scan = serde_json::json!({
         "plugin_id": "port-scanner",
@@ -3063,30 +3070,47 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
     let approve_url = format!("{}/mcp/scan-approvals", s.base);
 
     // A scanner cannot issue its own approval. Neither can an anonymous agent.
-    let denied = c.post(&approve_url).header("x-api-key", &key)
+    let denied = c
+        .post(&approve_url)
+        .header("x-api-key", &key)
         .json(&serde_json::json!({
             "issued_to_user_id": scanner.id,
             "scan": scan,
         }))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert_eq!(denied.status(), 403);
 
     // No caller-supplied consent, or no one-time approval, means no MCP scan.
-    let denied = c.post(&start_url).header("x-api-key", &key)
-        .json(&serde_json::json!({"approval_token":"mcpap_invalid","scan":{
-            "plugin_id":"port-scanner",
-            "inputs":{"target":"127.0.0.1","ports":"1"},
-            "consent_granted":false
-        }})).send().await.unwrap();
+    let denied = c
+        .post(&start_url)
+        .header("x-api-key", &key)
+        .json(
+            &serde_json::json!({"approval_token":"mcpap_invalid","scan":{
+                "plugin_id":"port-scanner",
+                "inputs":{"target":"127.0.0.1","ports":"1"},
+                "consent_granted":false
+            }}),
+        )
+        .send()
+        .await
+        .unwrap();
     assert_eq!(denied.status(), 403);
-    let denied = c.post(&start_url).header("x-api-key", &key)
+    let denied = c
+        .post(&start_url)
+        .header("x-api-key", &key)
         .json(&serde_json::json!({"scan":scan}))
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     assert!(denied.status().is_client_error());
 
     // Reject targets outside the plugin's authorized lab network *before*
     // issuing any approval token.
-    let denied = c.post(&approve_url).bearer_auth(&admin_jwt)
+    let denied = c
+        .post(&approve_url)
+        .bearer_auth(&admin_jwt)
         .json(&serde_json::json!({
             "issued_to_user_id": scanner.id,
             "scan": {
@@ -3094,14 +3118,22 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
                 "inputs":{"target":"203.0.113.50","ports":"1"},
                 "consent_granted":true
             }
-        })).send().await.unwrap();
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(denied.status(), 403);
 
-    let response = c.post(&approve_url).bearer_auth(&admin_jwt)
+    let response = c
+        .post(&approve_url)
+        .bearer_auth(&admin_jwt)
         .json(&serde_json::json!({
             "issued_to_user_id": scanner.id,
             "scan": scan
-        })).send().await.unwrap();
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 201);
     let approved: serde_json::Value = response.json().await.unwrap();
     let opaque_token = approved["approval_token"].as_str().unwrap();
@@ -3111,7 +3143,10 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
     // Never persist the plaintext approval token.
     let (stored_hash,): (String,) =
         sqlx::query_as("SELECT token_hash FROM mcp_scan_approvals WHERE id = ?")
-            .bind(approval_id).fetch_one(&s.state.db).await.unwrap();
+            .bind(approval_id)
+            .fetch_one(&s.state.db)
+            .await
+            .unwrap();
     assert_eq!(stored_hash, secuscan_db::sha256_hex(opaque_token));
     assert_ne!(stored_hash, opaque_token);
 
@@ -3122,10 +3157,17 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
 
     // Approval binds both scanner identity and every input. Rejection does
     // not consume it, allowing the exact intended request to proceed.
-    let wrong_actor = c.post(&start_url).bearer_auth(&admin_jwt)
-        .json(&good).send().await.unwrap();
+    let wrong_actor = c
+        .post(&start_url)
+        .bearer_auth(&admin_jwt)
+        .json(&good)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(wrong_actor.status(), 403);
-    let changed_mode = c.post(&start_url).header("x-api-key", &key)
+    let changed_mode = c
+        .post(&start_url)
+        .header("x-api-key", &key)
         .json(&serde_json::json!({
             "approval_token": opaque_token,
             "scan": {
@@ -3133,9 +3175,14 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
                 "inputs":{"target":"127.0.0.1","ports":"2"},
                 "consent_granted":true
             }
-        })).send().await.unwrap();
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(changed_mode.status(), 403);
-    let changed_target = c.post(&start_url).header("x-api-key", &key)
+    let changed_target = c
+        .post(&start_url)
+        .header("x-api-key", &key)
         .json(&serde_json::json!({
             "approval_token": opaque_token,
             "scan": {
@@ -3143,43 +3190,70 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
                 "inputs":{"target":"127.0.0.2","ports":"1"},
                 "consent_granted":true
             }
-        })).send().await.unwrap();
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(changed_target.status(), 403);
 
-    let created = c.post(&start_url).header("x-api-key", &key)
-        .json(&good).send().await.unwrap();
+    let created = c
+        .post(&start_url)
+        .header("x-api-key", &key)
+        .json(&good)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(created.status(), 201);
     let task: serde_json::Value = created.json().await.unwrap();
     assert_eq!(task["options"]["origin"], "mcp");
     assert_eq!(task["options"]["mcp_approval_id"], approval_id);
 
     let (consumed_at, task_id): (Option<String>, Option<String>) =
-        sqlx::query_as(
-            "SELECT consumed_at, task_id FROM mcp_scan_approvals WHERE id = ?"
-        ).bind(approval_id).fetch_one(&s.state.db).await.unwrap();
+        sqlx::query_as("SELECT consumed_at, task_id FROM mcp_scan_approvals WHERE id = ?")
+            .bind(approval_id)
+            .fetch_one(&s.state.db)
+            .await
+            .unwrap();
     assert!(consumed_at.is_some());
     assert_eq!(task_id.as_deref(), task["id"].as_str());
 
     // Exactly-once/replay protection, including attempted retry of a scan.
-    let replay = c.post(&start_url).header("x-api-key", &key)
-        .json(&good).send().await.unwrap();
+    let replay = c
+        .post(&start_url)
+        .header("x-api-key", &key)
+        .json(&good)
+        .send()
+        .await
+        .unwrap();
     assert_eq!(replay.status(), 403);
 
     // Expired unused approvals never execute.
-    let response = c.post(&approve_url).bearer_auth(&admin_jwt)
+    let response = c
+        .post(&approve_url)
+        .bearer_auth(&admin_jwt)
         .json(&serde_json::json!({
             "issued_to_user_id": scanner.id,
             "scan": scan,
-        })).send().await.unwrap();
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(response.status(), 201);
     let second: serde_json::Value = response.json().await.unwrap();
     sqlx::query("UPDATE mcp_scan_approvals SET expires_at_epoch = 1 WHERE id = ?")
         .bind(second["approval_id"].as_str().unwrap())
-        .execute(&s.state.db).await.unwrap();
-    let expired = c.post(&start_url).header("x-api-key", &key)
+        .execute(&s.state.db)
+        .await
+        .unwrap();
+    let expired = c
+        .post(&start_url)
+        .header("x-api-key", &key)
         .json(&serde_json::json!({
             "approval_token": second["approval_token"],
             "scan": scan
-        })).send().await.unwrap();
+        }))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(expired.status(), 403);
 }
