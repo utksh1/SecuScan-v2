@@ -11,6 +11,8 @@ pub struct WorkspaceRow {
     pub created_by: String,
     pub created_at: String,
     pub updated_at: Option<String>,
+    /// Existing workspaces are 'shared'; new workspaces are 'private'.
+    pub access_mode: String,
     /// v3.1.1 — VPN profile scans in this workspace must route through.
     pub vpn_profile_id: Option<String>,
 }
