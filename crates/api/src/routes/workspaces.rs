@@ -165,7 +165,9 @@ async fn create(
     user.require_scanner()?;
     let mode = req.access_mode.as_deref().unwrap_or("private");
     if !["shared", "private"].contains(&mode) {
-        return Err(ApiError::BadRequest("access_mode must be shared or private".into()));
+        return Err(ApiError::BadRequest(
+            "access_mode must be shared or private".into(),
+        ));
     }
     if mode == "shared" {
         user.require_admin()?;
@@ -188,7 +190,9 @@ async fn create(
     .await?;
     if mode == "shared" {
         sqlx::query("UPDATE workspaces SET access_mode = 'shared' WHERE id = ?")
-            .bind(&row.id).execute(&state.db).await
+            .bind(&row.id)
+            .execute(&state.db)
+            .await
             .map_err(|e| ApiError::Internal(format!("workspace mode: {e}")))?;
     }
     let row = repo::workspaces::get_workspace(&state.db, &row.id).await?;
@@ -325,7 +329,13 @@ async fn update_target(
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
     let target = repo::workspaces::get_target(&state.db, &id).await?;
-    require_workspace(&state, &user, &target.workspace_id, WorkspacePermission::Write).await?;
+    require_workspace(
+        &state,
+        &user,
+        &target.workspace_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let name = match req.name {
         Some(raw) => Some(validate_target_name(&raw)?),
         None => None,
@@ -354,7 +364,13 @@ async fn delete_target(
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
     let target = repo::workspaces::get_target(&state.db, &id).await?;
-    require_workspace(&state, &user, &target.workspace_id, WorkspacePermission::Write).await?;
+    require_workspace(
+        &state,
+        &user,
+        &target.workspace_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     repo::workspaces::delete_target(&state.db, &id)
         .await?
         .then_some(())

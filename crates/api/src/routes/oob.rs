@@ -5,8 +5,8 @@
 //!     the secret can hit it). Captures the full request as JSON and stores it.
 //!   * `/api/v1/oob-handlers` — CRUD for handlers (auth required).
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_workspace, workspace_visible, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::body::Bytes;
@@ -83,9 +83,13 @@ async fn list(
     let rows = secuscan_db::repo::oob::list_handlers(&state.db, q.workspace_id.as_deref()).await?;
     let mut items = Vec::new();
     for h in &rows {
-        if !crate::access::is_owner_or_admin(&user, &h.user_id) { continue; }
+        if !crate::access::is_owner_or_admin(&user, &h.user_id) {
+            continue;
+        }
         if let Some(ws) = h.workspace_id.as_deref() {
-            if !workspace_visible(&state, &user, ws).await? { continue; }
+            if !workspace_visible(&state, &user, ws).await? {
+                continue;
+            }
         }
         items.push(handler_to_json(h, false));
     }

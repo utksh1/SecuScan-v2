@@ -5,10 +5,10 @@
 //! scheduler; `admit_request` (validation without persistence) is shared
 //! with schedule creation.
 
+use crate::access::{require_resource, require_workspace, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::workspaces::parse_workspace_scope;
-use crate::access::{require_resource, require_workspace, WorkspacePermission};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -420,7 +420,14 @@ async fn delete(
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
     let t = load_task_for_user(&state, &user, &id).await?;
-    require_resource(&state, &user, t.workspace_id.as_deref(), &t.user_id, WorkspacePermission::Write).await?;
+    require_resource(
+        &state,
+        &user,
+        t.workspace_id.as_deref(),
+        &t.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     if !t.status().is_terminal() {
         // Signal cancellation so a queued task does not still run after its
         // row is gone (the runner's final status write is a harmless no-op
@@ -445,7 +452,14 @@ async fn cancel(
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
     let t = load_task_for_user(&state, &user, &id).await?;
-    require_resource(&state, &user, t.workspace_id.as_deref(), &t.user_id, WorkspacePermission::Write).await?;
+    require_resource(
+        &state,
+        &user,
+        t.workspace_id.as_deref(),
+        &t.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     match t.status() {
         s if s.is_terminal() => {
             return Ok(Json(json!({ "cancelled": false, "status": s.label() })));
@@ -471,7 +485,14 @@ async fn retry(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let original = load_task_for_user(&state, &user, &id).await?;
-    require_resource(&state, &user, original.workspace_id.as_deref(), &original.user_id, WorkspacePermission::Write).await?;
+    require_resource(
+        &state,
+        &user,
+        original.workspace_id.as_deref(),
+        &original.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let inputs: BTreeMap<String, Value> =
         serde_json::from_str(&original.inputs_json).unwrap_or_default();
     let options: Value = serde_json::from_str(&original.options_json).unwrap_or(json!({}));

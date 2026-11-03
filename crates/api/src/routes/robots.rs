@@ -1,7 +1,7 @@
 //! Pentest Robots HTTP routes — CRUD + run + built-in seeding.
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_workspace, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::robot_runtime::{self, RobotGraph, RobotNode};
 use crate::state::SharedState;
@@ -230,7 +230,9 @@ async fn run(
         let profile = repo::auth_profiles::get(&state.db, pid).await?;
         crate::access::require_owner(&user, &profile.created_by)?;
         if profile.workspace_id != req.workspace_id {
-            return Err(ApiError::NotFound("auth profile not in selected workspace".into()));
+            return Err(ApiError::NotFound(
+                "auth profile not in selected workspace".into(),
+            ));
         }
     }
     let targets_json = serde_json::to_string(&req.targets).unwrap_or_else(|_| "[]".into());

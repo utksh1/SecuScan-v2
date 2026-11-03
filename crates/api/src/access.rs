@@ -68,11 +68,7 @@ pub async fn require_workspace(
     let role = repo::collab::member_role(&state.db, workspace_id, &user.0.id).await?;
     match (permission, role.as_deref()) {
         (WorkspacePermission::Read, Some("owner" | "editor" | "viewer")) => Ok(()),
-        (WorkspacePermission::Write, Some("owner" | "editor"))
-            if user.0.role != "viewer" =>
-        {
-            Ok(())
-        }
+        (WorkspacePermission::Write, Some("owner" | "editor")) if user.0.role != "viewer" => Ok(()),
         _ => Err(hidden()),
     }
 }

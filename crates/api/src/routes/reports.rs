@@ -7,8 +7,8 @@
 //!   pipeline (waiting → in_progress → finished/failed) with artifact
 //!   downloads and optional signed webhooks.
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_resource, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::report_jobs::{
     job_to_json, spawn_job, MAX_ACTIVE_JOBS_PER_USER, RETAINED_FINISHED_JOBS,
@@ -118,7 +118,14 @@ async fn create_job(
     // A viewer of a private workspace may export synchronously, but only
     // an editor/scanner can create an asynchronous report job.
     let task = load_task_for_user(&state, &user, &id).await?;
-    require_resource(&state, &user, task.workspace_id.as_deref(), &task.user_id, WorkspacePermission::Write).await?;
+    require_resource(
+        &state,
+        &user,
+        task.workspace_id.as_deref(),
+        &task.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
 
     // Admission cap: bound how many jobs one user can have in flight.
     let active = repo::reports::count_active_for_user(&state.db, &user.0.id).await?;

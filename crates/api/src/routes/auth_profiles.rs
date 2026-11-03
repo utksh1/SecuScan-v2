@@ -1,8 +1,8 @@
 //! Authentication profiles — reusable credentials/cookies/headers for
 //! authenticated web scans.
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_workspace, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};

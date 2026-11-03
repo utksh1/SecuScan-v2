@@ -1,9 +1,9 @@
 //! Findings explorer + triage.
 
+use crate::access::{require_resource, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::workspaces::parse_workspace_scope;
-use crate::access::{require_resource, WorkspacePermission};
 use crate::state::SharedState;
 use axum::extract::{Path, RawQuery, State};
 use axum::Json;
@@ -206,9 +206,13 @@ pub async fn load_finding_for_user(
     let f = repo::findings::get(&state.db, id).await?;
     let task = repo::tasks::get(&state.db, &f.task_id).await?;
     require_resource(
-        state, user, task.workspace_id.as_deref(), &task.user_id,
-        WorkspacePermission::Read
-    ).await?;
+        state,
+        user,
+        task.workspace_id.as_deref(),
+        &task.user_id,
+        WorkspacePermission::Read,
+    )
+    .await?;
     Ok(f)
 }
 
@@ -233,7 +237,14 @@ async fn triage(
     })?;
     let finding = load_finding_for_user(&state, &user, &id).await?;
     let task = repo::tasks::get(&state.db, &finding.task_id).await?;
-    require_resource(&state, &user, task.workspace_id.as_deref(), &task.user_id, WorkspacePermission::Write).await?;
+    require_resource(
+        &state,
+        &user,
+        task.workspace_id.as_deref(),
+        &task.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let fingerprint =
         repo::finding_dedup::target_fingerprint(finding.url.as_deref(), task.target.as_deref());
 

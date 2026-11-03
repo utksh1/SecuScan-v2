@@ -167,7 +167,8 @@ pub async fn list_visible(
     q: Option<&str>,
     limit: u32,
 ) -> DbResult<Vec<AttackSurfaceAssetRow>> {
-    let pat = q.filter(|q| !q.trim().is_empty())
+    let pat = q
+        .filter(|q| !q.trim().is_empty())
         .map(|q| format!("%{}%", q.trim()))
         .unwrap_or_else(|| "%".to_string());
     sqlx::query_as::<_, AttackSurfaceAssetRow>(

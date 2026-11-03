@@ -1,7 +1,7 @@
 //! Workflows: ordered plugin chains, sequential execution, run history.
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_workspace, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::tasks::{validate_and_create_task, StartTaskRequest};
 use crate::state::SharedState;

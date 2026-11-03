@@ -1,7 +1,7 @@
 //! v3.1.0 routes: Sniper Auto-Exploiter + VPN profiles.
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_workspace, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, State};
@@ -117,7 +117,9 @@ async fn run_sniper(
     }
     let source_task = repo::tasks::get(&state.db, &finding.task_id).await?;
     if source_task.workspace_id != req.workspace_id {
-        return Err(ApiError::NotFound("finding not in selected workspace".into()));
+        return Err(ApiError::NotFound(
+            "finding not in selected workspace".into(),
+        ));
     }
     // The chain engine resolves the source task target when this URL is absent.
     let target = finding.url.clone();

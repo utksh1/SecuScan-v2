@@ -208,9 +208,12 @@ async fn attack_target(
     user.require_scanner()?;
     let target = repo::workspaces::get_target(&state.db, &id).await?;
     crate::access::require_workspace(
-        &state, &user, &target.workspace_id,
+        &state,
+        &user,
+        &target.workspace_id,
         crate::access::WorkspacePermission::Write,
-    ).await?;
+    )
+    .await?;
 
     let plugin_ids = pick_suite(&req.suite, &target.kind)?;
     // Pre-flight: every requested plugin must be enabled and (if it has

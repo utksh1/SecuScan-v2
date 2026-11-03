@@ -1,7 +1,7 @@
 //! Collaboration HTTP routes — workspace members + finding comments + mentions.
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_workspace, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
@@ -140,7 +140,14 @@ async fn add_comment(
     // Verify the finding is visible, not merely present in the database.
     let finding = crate::routes::findings::load_finding_for_user(&state, &user, &id).await?;
     let task = secuscan_db::repo::tasks::get(&state.db, &finding.task_id).await?;
-    crate::access::require_resource(&state, &user, task.workspace_id.as_deref(), &task.user_id, WorkspacePermission::Write).await?;
+    crate::access::require_resource(
+        &state,
+        &user,
+        task.workspace_id.as_deref(),
+        &task.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let row =
         secuscan_db::repo::collab::add_comment(&state.db, &id, &user.0.id, &req.body, "comment")
             .await?;
@@ -242,10 +249,12 @@ async fn mark_mention_read(
 ) -> ApiResult<StatusCode> {
     // The mention row ID is not an authorization credential. Only its
     // intended recipient (or an admin) may mark it read.
-    let owner: Option<(String,)> = sqlx::query_as(
-        "SELECT mentioned_user_id FROM mentions WHERE id = ?"
-    ).bind(&id).fetch_optional(&state.db).await
-      .map_err(|e| ApiError::Internal(format!("mention lookup: {e}")))?;
+    let owner: Option<(String,)> =
+        sqlx::query_as("SELECT mentioned_user_id FROM mentions WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mention lookup: {e}")))?;
     let (recipient,) = owner.ok_or_else(|| ApiError::NotFound("not found".into()))?;
     if !user.is_admin() && recipient != user.0.id {
         return Err(ApiError::NotFound("not found".into()));
