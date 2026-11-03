@@ -3276,3 +3276,206 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
         .unwrap();
     assert_eq!(expired.status(), 403);
 }
+
+
+#[tokio::test]
+async fn scoped_mcp_keys_are_denied_direct_rest_mutations_and_revoked() {
+    use reqwest::Method;
+
+    let s = spawn_app().await;
+    let (client, admin_jwt) = login(&s).await;
+    let scanner = secuscan_db::repo::users::create(
+        &s.state.db,
+        "restricted-mcp-scanner@test.local",
+        "Restricted MCP Scanner",
+        "disabled-password-hash",
+        "scanner",
+    )
+    .await
+    .unwrap();
+    let other = secuscan_db::repo::users::create(
+        &s.state.db,
+        "different-mcp-scanner@test.local",
+        "Different MCP Scanner",
+        "disabled-password-hash",
+        "scanner",
+    )
+    .await
+    .unwrap();
+
+    let legacy_admin_key = secuscan_db::repo::api_keys::create(
+        &s.state.db, &s.state.config.admin_email, "unused",
+    ).await;
+    // The existing API key factory still produces full-access keys for an
+    // authenticated user (validated below with the scanner identity).
+    assert!(legacy_admin_key.is_err()); // email is not a valid user id
+    let legacy = secuscan_db::repo::api_keys::create(
+        &s.state.db, &scanner.id, "legacy scanner",
+    )
+    .await
+    .unwrap();
+    assert_eq!(legacy.row.scope, "full");
+
+    let issue_url = format!("{}/admin/mcp-keys", s.base);
+    let payload = serde_json::json!({
+        "issued_to_user_id": scanner.id,
+        "name": "sandbox MCP agent"
+    });
+    // Full-access keys cannot issue restricted keys: issuance requires an
+    // administrator's interactive JWT.
+    let denied = client.post(&issue_url)
+        .header("x-api-key", &legacy.raw)
+        .json(&payload).send().await.unwrap();
+    assert_eq!(denied.status(), 403);
+
+    let issued = client.post(&issue_url)
+        .bearer_auth(&admin_jwt)
+        .json(&payload).send().await.unwrap();
+    assert_eq!(issued.status(), 201);
+    let key: serde_json::Value = issued.json().await.unwrap();
+    assert_eq!(key["scope"], "mcp_scan");
+    let restricted = key["key"].as_str().unwrap().to_string();
+    assert!(restricted.starts_with("scmcp_"));
+
+    // Admin inventory returns scoped metadata but never the cleartext key.
+    let list = client.get(&issue_url)
+        .bearer_auth(&admin_jwt).send().await.unwrap();
+    assert_eq!(list.status(), 200);
+    let body: serde_json::Value = list.json().await.unwrap();
+    assert!(!body.to_string().contains(&restricted));
+    assert!(body["items"].as_array().unwrap().iter().any(|v| {
+        v["id"] == key["id"] && v["scope"] == "mcp_scan"
+    }));
+
+    // A scoped key remains useful for the inspection endpoints needed by
+    // MCP. It cannot mint a new full key or modify a resource.
+    let read = client.get(format!("{}/plugins", s.base))
+        .header("x-api-key", &restricted).send().await.unwrap();
+    assert_eq!(read.status(), 200);
+
+    let mutations = [
+        (Method::POST, "/tasks"),
+        (Method::POST, "/tasks/fake/retry"),
+        (Method::DELETE, "/tasks/fake"),
+        (Method::POST, "/workflows"),
+        (Method::POST, "/workflows/fake/run"),
+        (Method::POST, "/schedules"),
+        (Method::POST, "/robots/fake/run"),
+        (Method::POST, "/sniper/run"),
+        (Method::POST, "/workspaces"),
+        (Method::POST, "/auth/api-keys"),
+        (Method::POST, "/mcp/scan-approvals"),
+        (Method::POST, "/admin/mcp-keys"),
+        (Method::POST, "/vpn-profiles/fake/test"),
+        (Method::PATCH, "/findings/fake"),
+        (Method::PUT, "/plugins/port-scanner/enabled"),
+        (Method::GET, "/admin/users"),
+    ];
+    for (method, path) in mutations {
+        let response = client.request(
+            method.clone(), format!("{}{}", s.base, path),
+        ).header("x-api-key", &restricted)
+        .json(&serde_json::json!({
+            "plugin_id":"port-scanner",
+            "inputs":{"target":"127.0.0.1","ports":"1"},
+            "consent_granted":true,
+        })).send().await.unwrap();
+        assert_eq!(response.status(), 403, "{method} {path}");
+    }
+
+    // A second Authorization header must not override the restricted key.
+    let mixed = client.post(format!("{}/tasks", s.base))
+        .bearer_auth(&admin_jwt)
+        .header("x-api-key", &restricted)
+        .json(&serde_json::json!({
+            "plugin_id":"port-scanner",
+            "inputs":{"target":"127.0.0.1","ports":"1"},
+            "consent_granted":true
+        }))
+        .send().await.unwrap();
+    assert_eq!(mixed.status(), 401);
+
+    // Reopening the persisted SQLite database and constructing a fresh API
+    // router must preserve scope enforcement (not an in-memory MCP flag).
+    let reopened_db = secuscan_db::open(&s.state.config.db_url).await.unwrap();
+    let mut restarted_state = (*s.state).clone();
+    restarted_state.db = reopened_db;
+    let restarted_app = secuscan_api::build_app(Arc::new(restarted_state));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let restart_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, restarted_app).await.unwrap();
+    });
+    let restarted_base = format!("http://{restart_addr}/api/v1");
+    let restart_denied = client.post(format!("{restarted_base}/tasks"))
+        .header("x-api-key", &restricted)
+        .json(&serde_json::json!({
+            "plugin_id":"port-scanner",
+            "inputs":{"target":"127.0.0.1","ports":"1"},
+            "consent_granted":true
+        }))
+        .send().await.unwrap();
+    assert_eq!(restart_denied.status(), 403);
+    let restart_read = client.get(format!("{restarted_base}/plugins"))
+        .header("x-api-key", &restricted).send().await.unwrap();
+    assert_eq!(restart_read.status(), 200);
+
+    // A valid out-of-band admin approval still authorizes exactly one scan.
+    let scan = serde_json::json!({
+        "plugin_id":"port-scanner",
+        "inputs":{"target":"127.0.0.1","ports":"1"},
+        "consent_granted":true
+    });
+    let approval_url = format!("{}/mcp/scan-approvals", s.base);
+    let approval = client.post(&approval_url)
+        .bearer_auth(&admin_jwt)
+        .json(&serde_json::json!({
+            "issued_to_user_id": scanner.id,
+            "scan": scan,
+        })).send().await.unwrap();
+    assert_eq!(approval.status(), 201);
+    let issued_approval: serde_json::Value = approval.json().await.unwrap();
+
+    let other_key_response = client.post(&issue_url)
+        .bearer_auth(&admin_jwt)
+        .json(&serde_json::json!({
+            "issued_to_user_id": other.id,
+            "name":"other scanner"
+        })).send().await.unwrap();
+    assert_eq!(other_key_response.status(), 201);
+    let other_key: serde_json::Value = other_key_response.json().await.unwrap();
+    let approved_body = serde_json::json!({
+        "approval_token": issued_approval["approval_token"],
+        "scan": scan,
+    });
+    let wrong_identity = client.post(format!("{restarted_base}/mcp/scans"))
+        .header("x-api-key", other_key["key"].as_str().unwrap())
+        .json(&approved_body).send().await.unwrap();
+    assert_eq!(wrong_identity.status(), 403);
+
+    let approved = client.post(format!("{restarted_base}/mcp/scans"))
+        .header("x-api-key", &restricted)
+        .json(&approved_body).send().await.unwrap();
+    assert_eq!(approved.status(), 201);
+    let task: serde_json::Value = approved.json().await.unwrap();
+    assert_eq!(task["options"]["origin"], "mcp");
+    let replay = client.post(format!("{restarted_base}/mcp/scans"))
+        .header("x-api-key", &restricted)
+        .json(&approved_body).send().await.unwrap();
+    assert_eq!(replay.status(), 403);
+
+    // Existing unscoped keys still work through the ordinary task API.
+    let legacy_start = client.post(format!("{}/tasks", s.base))
+        .header("x-api-key", &legacy.raw)
+        .json(&scan).send().await.unwrap();
+    assert_eq!(legacy_start.status(), 201);
+
+    // Revocation is effective immediately against the shared persisted DB.
+    let revoked = client.delete(format!(
+        "{}/admin/mcp-keys/{}", s.base, key["id"].as_str().unwrap()
+    )).bearer_auth(&admin_jwt).send().await.unwrap();
+    assert_eq!(revoked.status(), 204);
+    let denied_after_revoke = client.get(format!("{restarted_base}/plugins"))
+        .header("x-api-key", &restricted).send().await.unwrap();
+    assert_eq!(denied_after_revoke.status(), 401);
+}
