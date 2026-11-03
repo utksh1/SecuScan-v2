@@ -3,6 +3,7 @@
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::workspaces::parse_workspace_scope;
+use crate::access::{require_resource, WorkspacePermission};
 use crate::state::SharedState;
 use axum::extract::{Path, RawQuery, State};
 use axum::Json;
@@ -119,7 +120,7 @@ async fn list(
 ) -> ApiResult<Json<Value>> {
     let q = ListQuery::parse(raw.as_deref());
     validate_enums(&q)?;
-    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
+    let workspace = parse_workspace_scope(&state, &user, q.workspace_id.as_deref()).await?;
     // Access control: non-admins are scoped to their own tasks via the join.
     let filters = repo::findings::FindingFilters {
         task_id: q.task_id,
@@ -204,9 +205,10 @@ pub async fn load_finding_for_user(
 ) -> ApiResult<FindingRow> {
     let f = repo::findings::get(&state.db, id).await?;
     let task = repo::tasks::get(&state.db, &f.task_id).await?;
-    if !user.is_admin() && task.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("finding {id}")));
-    }
+    require_resource(
+        state, user, task.workspace_id.as_deref(), &task.user_id,
+        WorkspacePermission::Read
+    ).await?;
     Ok(f)
 }
 
@@ -231,6 +233,7 @@ async fn triage(
     })?;
     let finding = load_finding_for_user(&state, &user, &id).await?;
     let task = repo::tasks::get(&state.db, &finding.task_id).await?;
+    require_resource(&state, &user, task.workspace_id.as_deref(), &task.user_id, WorkspacePermission::Write).await?;
     let fingerprint =
         repo::finding_dedup::target_fingerprint(finding.url.as_deref(), task.target.as_deref());
 
