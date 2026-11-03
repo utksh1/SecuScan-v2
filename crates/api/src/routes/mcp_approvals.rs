@@ -43,6 +43,12 @@ fn request_hash(req: &StartTaskRequest, admitted: &Admitted) -> String {
     // Keys are stable (BTreeMap), so map insertion order does not change the hash.
     let document = json!({
         "plugin_id": req.plugin_id,
+        "plugin_version": admitted.manifest.plugin.version,
+        "engine": format!("{:?}", admitted.manifest.engine),
+        "safety_level": admitted.manifest.safety.level.label(),
+        "capabilities": admitted.manifest.safety.capabilities,
+        "requires_consent": admitted.manifest.safety.requires_consent,
+        "allowed_targets": admitted.manifest.safety.allowed_targets,
         "inputs": admitted.normalized,
         "target": admitted.target,
         "preset": req.preset,
