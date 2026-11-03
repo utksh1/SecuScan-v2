@@ -236,6 +236,7 @@ async fn diff(
                 task.target.as_deref(),
                 &task.created_at,
                 &task.id,
+                task.workspace_id.as_deref(),
             )
             .await?
             .ok_or_else(|| {
@@ -248,6 +249,9 @@ async fn diff(
             })?
         }
     };
+    // The baseline can become inaccessible if membership was revoked
+    // between candidate selection and loading the evidence. Re-check now.
+    let baseline = load_task_for_user(&state, &user, &baseline.id).await?;
 
     let current_findings = repo::findings::list_all_for_task(&state.db, &task.id).await?;
     let previous_findings = repo::findings::list_all_for_task(&state.db, &baseline.id).await?;
