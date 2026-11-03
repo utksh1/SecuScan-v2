@@ -9,6 +9,7 @@ use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::tasks::{admit_request, task_to_json, StartTaskRequest};
 use crate::routes::workspaces::parse_workspace_scope;
+use crate::access::{require_resource, require_workspace, WorkspacePermission};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -139,7 +140,7 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
+    let workspace = parse_workspace_scope(&state, &user, q.workspace_id.as_deref()).await?;
     let filters = repo::schedules::ScheduleListFilters {
         user_id: if user.is_admin() {
             None
@@ -168,8 +169,11 @@ async fn load_schedule_for_user(
     id: &str,
 ) -> ApiResult<ScheduleRow> {
     let s = repo::schedules::get(&state.db, id).await?;
-    if !user.is_admin() && s.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("schedule {id}")));
+    // Schedules remain owned by their creator, even inside a private
+    // workspace; membership can additionally be revoked at any time.
+    crate::access::require_owner(user, &s.user_id)?;
+    if let Some(ws) = s.workspace_id.as_deref() {
+        require_workspace(state, user, ws, WorkspacePermission::Read).await?;
     }
     Ok(s)
 }
@@ -233,7 +237,7 @@ async fn update(
         None => existing.workspace_id.clone(),
         Some(None) => None, // explicit null -> Personal
         Some(Some(ref ws)) => {
-            repo::workspaces::get_workspace(&state.db, ws).await?;
+            require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
             Some(ws.clone())
         }
     };
