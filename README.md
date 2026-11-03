@@ -69,11 +69,13 @@ flowchart LR
 ```bash
 # backend (Rust 1.75+)
 cargo build --workspace
-./target/debug/secuscan-server          # API + UI on http://127.0.0.1:8080
+SECUSCAN_ENV=development SECUSCAN_ADDR=127.0.0.1:8080 \
+  ./target/debug/secuscan-server   # local-only dev; ephemeral JWT key
 
 # first run prints a generated admin password in the log — or set your own:
+SECUSCAN_ENV=development SECUSCAN_ADDR=127.0.0.1:8080 \
 SECUSCAN_ADMIN_EMAIL=you@example.com \
-SECUSCAN_ADMIN_PASSWORD=change-me-now \
+SECUSCAN_ADMIN_PASSWORD='choose-a-strong-password' \
 ./target/debug/secuscan-server
 ```
 
@@ -84,8 +86,16 @@ cd frontend && npm ci && npm run dev    # http://127.0.0.1:5173 (proxies /api)
 
 ### Docker
 
+Production requires a persistent, securely generated JWT signing key; Docker
+Compose refuses to boot without it. See [the deployment guide](docs/DEPLOYMENT.md).
+
 ```bash
-docker compose -f docker/docker-compose.yml up --build
+# One-time setup. Preserve .env on subsequent restarts.
+umask 077
+if [ ! -e .env ]; then
+  printf 'SECUSCAN_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+fi
+docker compose --env-file .env -f docker/docker-compose.yml up --build
 # open http://127.0.0.1:8080
 ```
 

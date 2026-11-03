@@ -15,7 +15,13 @@ async fn main() {
         )
         .init();
 
-    let config = Arc::new(Config::from_env());
+    let config = match Config::from_env() {
+        Ok(config) => Arc::new(config),
+        Err(error) => {
+            tracing::error!("configuration error: {error}");
+            std::process::exit(1);
+        }
+    };
 
     // Ensure the data dir exists before opening the DB.
     let db_path = config

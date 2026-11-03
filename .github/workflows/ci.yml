@@ -122,6 +122,32 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build -f docker/Dockerfile -t secuscan-v2:ci .
+      - name: Reject missing and weak JWT secrets
+        run: |
+          set -euo pipefail
+          # Compose must fail before starting containers with a missing key.
+          if env -u SECUSCAN_JWT_SECRET docker compose -f docker/docker-compose.yml config --quiet > /tmp/secuscan-compose-no-key.log 2>&1; then
+            echo 'SECURITY FAILURE: Compose accepted a missing JWT secret'
+            exit 1
+          fi
+          # The server must also reject absent or public placeholder keys.
+          if timeout 15s docker run --rm secuscan-v2:ci > /tmp/secuscan-no-key.log 2>&1; then
+            echo 'SECURITY FAILURE: server started without a JWT secret'
+            exit 1
+          fi
+          grep -q 'SECUSCAN_JWT_SECRET is required in production' /tmp/secuscan-no-key.log
+          if timeout 15s docker run --rm -e SECUSCAN_JWT_SECRET=change-me-openssl-rand-hex-32 secuscan-v2:ci > /tmp/secuscan-weak-key.log 2>&1; then
+            echo 'SECURITY FAILURE: server accepted the public placeholder JWT key'
+            exit 1
+          fi
+          grep -q 'SECUSCAN_JWT_SECRET must be a persistent' /tmp/secuscan-weak-key.log
+          # Full-length, visibly patterned hex also must not be accepted.
+          patterned_secret='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          if timeout 15s docker run --rm -e SECUSCAN_JWT_SECRET="$patterned_secret" secuscan-v2:ci > /tmp/secuscan-patterned-key.log 2>&1; then
+            echo 'SECURITY FAILURE: server accepted a repeated 64-character JWT key'
+            exit 1
+          fi
+          grep -q 'repeated, or sequential keys are rejected' /tmp/secuscan-patterned-key.log
       - name: Smoke health + login + SPA
         run: |
           set -euo pipefail
@@ -131,6 +157,7 @@ jobs:
             -p 127.0.0.1:18080:8080 \
             -v /tmp/secuscan-ci-data:/app/data \
             -e SECUSCAN_ADDR=0.0.0.0:8080 \
+            -e SECUSCAN_ENV=production \
             -e SECUSCAN_ADMIN_EMAIL=admin@secuscan.local \
             -e SECUSCAN_ADMIN_PASSWORD=CiSmokePass1 \
             -e SECUSCAN_JWT_SECRET="$jwt_secret" \
@@ -147,7 +174,25 @@ jobs:
           test "$ok" = 1
           curl -fsS http://127.0.0.1:18080/api/v1/health | grep -q '"version"'
           curl -fsS http://127.0.0.1:18080/ | grep -q '<title>SecuScan</title>'
-          curl -fsS -X POST http://127.0.0.1:18080/api/v1/auth/login \
+          login_json="$(curl -fsS -X POST http://127.0.0.1:18080/api/v1/auth/login \
             -H 'content-type: application/json' \
-            -d '{"email":"admin@secuscan.local","password":"CiSmokePass1"}' \
-            | grep -q '"access_token"'
+            -d '{"email":"admin@secuscan.local","password":"CiSmokePass1"}')"
+          token="$(printf '%s' "$login_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')"
+          test -n "$token"
+          curl -fsS -H "Authorization: Bearer $token" \
+            http://127.0.0.1:18080/api/v1/auth/me | grep -q 'admin@secuscan.local'
+
+          # Restart the same container with the same environment and persistent
+          # SQLite volume. An access token issued before restart must remain valid.
+          docker restart secuscan-ci >/dev/null
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:18080/api/v1/health | grep -q '"status":"ok"'; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1
+          curl -fsS -H "Authorization: Bearer $token" \
+            http://127.0.0.1:18080/api/v1/auth/me | grep -q 'admin@secuscan.local'

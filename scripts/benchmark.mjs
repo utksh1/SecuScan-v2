@@ -22,6 +22,7 @@
  * Zero dependencies (Node >= 18 global fetch), mirroring verify.mjs.
  */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { unlinkSync, openSync, writeFileSync, mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -112,7 +113,8 @@ async function main() {
     ...process.env,
     PATH: [path.join(os.homedir(), ".local", "bin"), process.env.PATH].join(":"),
     SECUSCAN_DB_URL: `sqlite:///${DB}`,
-    SECUSCAN_JWT_SECRET: "bench-secret-32bytes-long-aaaaaaaaa",
+    SECUSCAN_ENV: "production",
+    SECUSCAN_JWT_SECRET: randomBytes(32).toString("hex"),
     SECUSCAN_ADDR: `127.0.0.1:${PORT}`,
     SECUSCAN_ADMIN_EMAIL: ADMIN.email,
     SECUSCAN_ADMIN_PASSWORD: ADMIN.password,
