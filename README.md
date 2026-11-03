@@ -168,6 +168,7 @@ the network policy engine and every audit-fix regression.
 - [`docs/API.md`](docs/API.md) — REST reference with curl examples
 - [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) — write your own plugin in one TOML file
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — configuration, Docker, reverse proxy
+- [`docs/MCP_CONSENT.md`](docs/MCP_CONSENT.md) — human-authorized one-use MCP scan approvals and safety limits
 - [`docs/REVIEW_LOG.md`](docs/REVIEW_LOG.md) — the six review cycles behind this release
 - [`SECURITY.md`](SECURITY.md) — security policy and responsible use
 
