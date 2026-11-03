@@ -9,6 +9,7 @@ pub mod collab;
 pub mod dashboard;
 pub mod diff;
 pub mod findings;
+pub mod mcp_approvals;
 pub mod notifications;
 pub mod oob;
 pub mod openapi;
@@ -34,6 +35,7 @@ pub fn api_router() -> axum::Router<SharedState> {
         .merge(auth::router())
         .merge(plugins::router())
         .merge(tasks::router())
+        .merge(mcp_approvals::router())
         .merge(sse::router())
         .merge(findings::router())
         .merge(reports::router())

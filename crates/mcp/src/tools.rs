@@ -9,7 +9,7 @@ use std::time::Duration;
 pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
     let tools = json!({ "tools": [
         tool("list_plugins", "List all available scanners and their availability status", json!({})),
-        tool("start_scan", "Submit a scan and poll until completion. Returns the task with findings_count.",
+        tool("start_scan", "Start a scan only with a separate administrator-issued, single-use scoped approval token; polls until completion.",
             json!({
                 "type": "object",
                 "properties": {
@@ -17,9 +17,13 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
                     "target": { "type": "string", "description": "Target IP/hostname/URL" },
                     "inputs": { "type": "object", "description": "Additional plugin inputs (key-value)" },
                     "workspace_id": { "type": "string" },
-                    "timeout_seconds": { "type": "integer", "default": 600 }
+                    "timeout_seconds": { "type": "integer", "default": 600 },
+                    "consent_granted": { "type": "boolean", "description": "Must be explicitly true" },
+                    "approval_token": { "type": "string", "description": "One-time approval from the SecuScan admin API, bound to this scanner user and exact scan inputs" },
+                    "preset": { "type": "string" },
+                    "auth_profile_id": { "type": "string" }
                 },
-                "required": ["plugin_id", "target"]
+                "required": ["plugin_id", "target", "consent_granted", "approval_token"]
             })),
         tool("list_tasks", "List recent tasks", json!({
             "type": "object",
@@ -69,15 +73,6 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
             "required": ["workspace_id", "name"]
         })),
         tool("list_robots", "List available Pentest Robots (DAG workflows)", json!({})),
-        tool("run_robot", "Execute a Pentest Robot", json!({
-            "type": "object",
-            "properties": {
-                "robot_id": { "type": "string" },
-                "targets": { "type": "array", "items": { "type": "string" } },
-                "workspace_id": { "type": "string" }
-            },
-            "required": ["robot_id", "targets"]
-        })),
         tool("get_robot_run", "Get the status of a robot run", json!({
             "type": "object",
             "properties": { "run_id": { "type": "string" } },
@@ -100,16 +95,6 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
             "required": ["task_id", "format"]
         })),
         tool("list_reports", "List recent report jobs", json!({})),
-        tool("run_sniper", "Run a Sniper exploit chain on a finding you own. Requires consent_granted.",
-            json!({
-                "type": "object",
-                "properties": {
-                    "finding_id": { "type": "string" },
-                    "workspace_id": { "type": "string" },
-                    "consent_granted": { "type": "boolean", "description": "Must be true" }
-                },
-                "required": ["finding_id", "consent_granted"]
-            })),
         tool("get_sniper_run", "Get a Sniper run by id", json!({
             "type": "object",
             "properties": { "id": { "type": "string" } },
@@ -121,13 +106,15 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
             "properties": { "id": { "type": "string" } },
             "required": ["id"]
         })),
-        tool("start_people_hunter", "Start a People Hunter OSINT scan", json!({
+        tool("start_people_hunter", "Start People Hunter only with a separate scoped one-use approval", json!({
             "type": "object",
             "properties": {
                 "target": { "type": "string" },
-                "workspace_id": { "type": "string" }
+                "workspace_id": { "type": "string" },
+                "consent_granted": { "type": "boolean" },
+                "approval_token": { "type": "string" }
             },
-            "required": ["target"]
+            "required": ["target", "consent_granted", "approval_token"]
         })),
     ]});
     JsonRpcResponse::ok(req.id, tools)
@@ -163,6 +150,33 @@ pub async fn call_tool(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcR
             }),
         ),
     }
+}
+
+/// Build the dedicated server-approved request. No MCP caller can set
+/// consent implicitly, and the opaque token is checked again by the API.
+fn approved_scan_payload(args: &Value, plugin_id: &str, inputs: Value) -> Result<Value, String> {
+    if args.get("consent_granted").and_then(Value::as_bool) != Some(true) {
+        return Err("explicit consent_granted=true is required for each MCP scan".into());
+    }
+    let approval = args
+        .get("approval_token")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or("an administrator-issued approval_token is required")?;
+    if !inputs.is_object() {
+        return Err("scan inputs must be an object".into());
+    }
+    let mut scan = json!({
+        "plugin_id": plugin_id,
+        "inputs": inputs,
+        "consent_granted": true,
+    });
+    for key in ["workspace_id", "preset", "auth_profile_id"] {
+        if let Some(value) = args.get(key) {
+            scan[key] = value.clone();
+        }
+    }
+    Ok(json!({ "approval_token": approval, "scan": scan }))
 }
 
 async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Result<String, String> {
@@ -209,16 +223,9 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
             if let Value::Object(ref mut m) = inputs {
                 m.insert("target".into(), Value::String(target.clone()));
             }
-            let mut body = json!({
-                "plugin_id": plugin_id,
-                "inputs": inputs,
-                "consent_granted": true,
-            });
-            if let Some(ws) = args.get("workspace_id").and_then(|v| v.as_str()) {
-                body["workspace_id"] = json!(ws);
-            }
+            let body = approved_scan_payload(&args, &plugin_id, inputs)?;
             let task = client
-                .post("/api/v1/tasks", body)
+                .post("/api/v1/mcp/scans", body)
                 .await
                 .map_err(|e| e.to_string())?;
             let task_id = task
@@ -381,26 +388,6 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
         }
-        "run_robot" => {
-            let robot_id = args
-                .get("robot_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing robot_id")?;
-            let targets = args
-                .get("targets")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .ok_or("missing targets")?;
-            let mut body = json!({ "targets": targets });
-            if let Some(ws) = args.get("workspace_id").and_then(|v| v.as_str()) {
-                body["workspace_id"] = json!(ws);
-            }
-            let v = client
-                .post(&format!("/api/v1/robots/{robot_id}/run"), body)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
         "get_robot_run" => {
             let run_id = args
                 .get("run_id")
@@ -449,25 +436,6 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
         }
-        "run_sniper" => {
-            let finding_id = args
-                .get("finding_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing finding_id")?;
-            let consent = args
-                .get("consent_granted")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            let mut body = json!({ "finding_id": finding_id, "consent_granted": consent });
-            if let Some(ws) = args.get("workspace_id").and_then(|v| v.as_str()) {
-                body["workspace_id"] = json!(ws);
-            }
-            let v = client
-                .post("/api/v1/sniper/run", body)
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
         "get_sniper_run" => {
             let id = args
                 .get("id")
@@ -500,22 +468,78 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
         "start_people_hunter" => {
             let target = args
                 .get("target")
-                .and_then(|v| v.as_str())
+                .and_then(Value::as_str)
                 .ok_or("missing target")?;
-            let mut body = json!({
-                "plugin_id": "people-hunter",
-                "inputs": { "target": target },
-                "consent_granted": true,
-            });
-            if let Some(ws) = args.get("workspace_id").and_then(|v| v.as_str()) {
-                body["workspace_id"] = json!(ws);
-            }
+            let body = approved_scan_payload(&args, "people-hunter", json!({ "target": target }))?;
             let v = client
-                .post("/api/v1/tasks", body)
+                .post("/api/v1/mcp/scans", body)
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
         }
         _ => Err(format!("unknown tool: {name}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::JsonRpcRequest;
+
+    fn catalogue() -> Value {
+        let req = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(1)),
+            method: "tools/list".into(),
+            params: None,
+        };
+        list_tools(req).result.unwrap()
+    }
+
+    #[test]
+    fn mcp_catalogue_requires_approval_and_excludes_unscoped_exploit_paths() {
+        let v = catalogue();
+        let items = v["tools"].as_array().unwrap();
+        for name in ["start_scan", "start_people_hunter"] {
+            let t = items.iter().find(|x| x["name"] == name).unwrap();
+            let required = t["inputSchema"]["required"].as_array().unwrap();
+            assert!(required.contains(&json!("approval_token")));
+            assert!(required.contains(&json!("consent_granted")));
+        }
+        assert!(!items.iter().any(|x| x["name"] == "run_sniper"));
+        assert!(!items.iter().any(|x| x["name"] == "run_robot"));
+    }
+
+    #[test]
+    fn no_consent_or_approval_cannot_build_scan_request() {
+        let request = json!({ "target": "127.0.0.1" });
+        assert!(
+            approved_scan_payload(&request, "port-scanner", json!({"target":"127.0.0.1"})).is_err()
+        );
+        let no_approval = json!({"consent_granted":true});
+        assert!(
+            approved_scan_payload(&no_approval, "port-scanner", json!({"target":"127.0.0.1"}))
+                .is_err()
+        );
+        let refused = json!({"consent_granted":false,"approval_token":"mcpap_test"});
+        assert!(
+            approved_scan_payload(&refused, "port-scanner", json!({"target":"127.0.0.1"})).is_err()
+        );
+    }
+
+    #[test]
+    fn approved_scan_preserves_exact_scope_and_preset() {
+        let args = json!({
+            "consent_granted": true,
+            "approval_token": "mcpap_test",
+            "workspace_id": "workspace-1",
+            "preset": "deep",
+        });
+        let request =
+            approved_scan_payload(&args, "port-scanner", json!({"target": "127.0.0.1"})).unwrap();
+        assert_eq!(request["approval_token"], "mcpap_test");
+        assert_eq!(request["scan"]["plugin_id"], "port-scanner");
+        assert_eq!(request["scan"]["workspace_id"], "workspace-1");
+        assert_eq!(request["scan"]["preset"], "deep");
     }
 }
