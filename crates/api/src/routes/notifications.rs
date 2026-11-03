@@ -169,6 +169,9 @@ async fn list_log(
 ) -> ApiResult<Json<Value>> {
     let rule = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &rule.created_by)?;
+    if let Some(ws) = rule.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let limit = q.limit.unwrap_or(100);
     let rows =
         secuscan_db::repo::notifications::list_delivery_log(&state.db, Some(&id), limit).await?;
