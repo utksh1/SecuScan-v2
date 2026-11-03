@@ -80,11 +80,14 @@ async fn list_sniper_runs(
 ) -> ApiResult<Json<Value>> {
     let rows =
         repo::sniper::list_runs(&state.db, q.finding_id.as_deref(), q.limit.unwrap_or(50)).await?;
-    let items: Vec<Value> = rows
-        .iter()
-        .filter(|r| crate::access::is_owner_or_admin(&user, &r.created_by))
-        .map(sniper_run_to_json)
-        .collect();
+    let mut items = Vec::new();
+    for row in &rows {
+        if !crate::access::is_owner_or_admin(&user, &row.created_by) { continue; }
+        if let Some(ws) = row.workspace_id.as_deref() {
+            if !crate::access::workspace_visible(&state, &user, ws).await? { continue; }
+        }
+        items.push(sniper_run_to_json(row));
+    }
     Ok(Json(json!({"items": items})))
 }
 
@@ -112,21 +115,28 @@ async fn run_sniper(
     }
     let finding =
         crate::routes::findings::load_finding_for_user(&state, &user, &req.finding_id).await?;
-    if let Some(ws) = &req.workspace_id {
+    let source_task = repo::tasks::get(&state.db, &finding.task_id).await?;
+    // A source finding's workspace cannot be substituted with another
+    // workspace ID to make the scanner run outside its permitted scope.
+    if let Some(requested) = req.workspace_id.as_deref() {
+        if source_task.workspace_id.as_deref() != Some(requested) {
+            return Err(ApiError::NotFound("not found".into()));
+        }
+    }
+    let effective_workspace = source_task.workspace_id.clone();
+    if let Some(ws) = effective_workspace.as_deref() {
         require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
-    let source_task = repo::tasks::get(&state.db, &finding.task_id).await?;
-    if source_task.workspace_id != req.workspace_id {
-        return Err(ApiError::NotFound(
-            "finding not in selected workspace".into(),
-        ));
-    }
+    crate::access::require_resource(
+        &state, &user, source_task.workspace_id.as_deref(),
+        &source_task.user_id, WorkspacePermission::Write,
+    ).await?;
     // The chain engine resolves the source task target when this URL is absent.
     let target = finding.url.clone();
     let run = repo::sniper::create_run(
         &state.db,
         &finding.id,
-        req.workspace_id.as_deref(),
+        effective_workspace.as_deref(),
         &finding.category,
         target.as_deref(),
         &user.0.id,
@@ -137,7 +147,7 @@ async fn run_sniper(
     let user2 = user.clone();
     let run_id = run.id.clone();
     let finding_id = finding.id.clone();
-    let ws_id = req.workspace_id.clone();
+    let ws_id = effective_workspace;
     tokio::spawn(async move {
         // Reload the finding inside the spawned task.
         let result = match repo::findings::get(&state2.db, &finding_id).await {
@@ -187,6 +197,9 @@ async fn get_sniper_run(
 ) -> ApiResult<Json<Value>> {
     let run = repo::sniper::get_run(&state.db, &id).await?;
     crate::access::require_owner(&user, &run.created_by)?;
+    if let Some(ws) = run.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     Ok(Json(sniper_run_to_json(&run)))
 }
 
