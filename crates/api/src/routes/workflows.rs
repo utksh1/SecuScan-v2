@@ -1,6 +1,7 @@
 //! Workflows: ordered plugin chains, sequential execution, run history.
 
 use crate::auth::extractor::CurrentUser;
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::error::{ApiError, ApiResult};
 use crate::routes::tasks::{validate_and_create_task, StartTaskRequest};
 use crate::state::SharedState;
@@ -212,7 +213,7 @@ async fn run(
     // Validate before creating the run so an unknown workspace is a clean 404.
     let workspace_id = match body.map(|Json(b)| b).unwrap_or_default().workspace_id {
         Some(ws) => {
-            repo::workspaces::get_workspace(&state.db, &ws).await?;
+            require_workspace(&state, &user, &ws, WorkspacePermission::Write).await?;
             Some(ws)
         }
         None => None,
