@@ -8,6 +8,7 @@
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::workspaces::parse_workspace_scope;
+use crate::access::{require_resource, require_workspace, WorkspacePermission};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -137,9 +138,9 @@ pub async fn admit_request(
         ));
     }
 
-    // 7) workspace (must exist when provided)
+    // 7) workspace admission: use the same membership check as all routes.
     if let Some(ws) = &req.workspace_id {
-        repo::workspaces::get_workspace(&state.db, ws).await?; // 404 when unknown
+        require_workspace(state, user, ws, WorkspacePermission::Write).await?;
     }
 
     // 8) target policy (global allow/deny + plugin allowed_targets)
@@ -361,7 +362,7 @@ async fn list(
             return Err(ApiError::BadRequest(format!("unknown status `{s}`")));
         }
     }
-    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
+    let workspace = parse_workspace_scope(&state, &user, q.workspace_id.as_deref()).await?;
     let filters = repo::tasks::TaskListFilters {
         user_id: if user.is_admin() {
             None
@@ -401,9 +402,14 @@ pub async fn load_task_for_user(
     id: &str,
 ) -> ApiResult<TaskRow> {
     let t = repo::tasks::get(&state.db, id).await?;
-    if !user.is_admin() && t.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("task {id}"))); // don't leak existence
-    }
+    require_resource(
+        state,
+        user,
+        t.workspace_id.as_deref(),
+        &t.user_id,
+        WorkspacePermission::Read,
+    )
+    .await?;
     Ok(t)
 }
 
@@ -413,6 +419,7 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     let t = load_task_for_user(&state, &user, &id).await?;
+    require_resource(&state, &user, t.workspace_id.as_deref(), &t.user_id, WorkspacePermission::Write).await?;
     if !t.status().is_terminal() {
         // Signal cancellation so a queued task does not still run after its
         // row is gone (the runner's final status write is a harmless no-op
@@ -436,6 +443,7 @@ async fn cancel(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let t = load_task_for_user(&state, &user, &id).await?;
+    require_resource(&state, &user, t.workspace_id.as_deref(), &t.user_id, WorkspacePermission::Write).await?;
     match t.status() {
         s if s.is_terminal() => {
             return Ok(Json(json!({ "cancelled": false, "status": s.label() })));
@@ -461,6 +469,7 @@ async fn retry(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let original = load_task_for_user(&state, &user, &id).await?;
+    require_resource(&state, &user, original.workspace_id.as_deref(), &original.user_id, WorkspacePermission::Write).await?;
     let inputs: BTreeMap<String, Value> =
         serde_json::from_str(&original.inputs_json).unwrap_or_default();
     let options: Value = serde_json::from_str(&original.options_json).unwrap_or(json!({}));
