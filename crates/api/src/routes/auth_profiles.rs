@@ -57,12 +57,22 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let rows = secuscan_db::repo::auth_profiles::list(&state.db, q.workspace_id.as_deref()).await?;
-    let items: Vec<Value> = rows
-        .iter()
-        .filter(|p| crate::access::is_owner_or_admin(&user, &p.created_by))
-        .map(profile_to_json)
-        .collect();
+    let mut items = Vec::new();
+    for p in &rows {
+        if !crate::access::is_owner_or_admin(&user, &p.created_by) {
+            continue;
+        }
+        if let Some(ws) = p.workspace_id.as_deref() {
+            if !crate::access::workspace_visible(&state, &user, ws).await? {
+                continue;
+            }
+        }
+        items.push(profile_to_json(p));
+    }
     Ok(Json(json!({ "items": items })))
 }
 
