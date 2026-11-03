@@ -61,27 +61,31 @@ pub async fn enforce(
 fn mcp_route_allowed(method: &Method, original_path: &str) -> bool {
     let path = original_path.strip_prefix("/api/v1").unwrap_or(original_path);
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
-    match (method, parts.as_slice()) {
-        (&Method::POST, ["mcp", "scans"]) => true,
-        (&Method::GET, ["health"])
-        | (&Method::GET, ["plugins"])
-        | (&Method::GET, ["tasks"])
-        | (&Method::GET, ["findings"])
-        | (&Method::GET, ["workspaces"])
-        | (&Method::GET, ["robots"])
-        | (&Method::GET, ["attack-surface"])
-        | (&Method::GET, ["reports"])
-        | (&Method::GET, ["vpn-profiles"]) => true,
-        (&Method::GET, ["plugins", _])
-        | (&Method::GET, ["findings", _])
-        | (&Method::GET, ["tasks", _])
-        | (&Method::GET, ["sniper", "runs", _])
-        | (&Method::GET, ["robots", "runs", _]) => true,
-        (&Method::GET, ["plugins", _, "schema"])
-        | (&Method::GET, ["tasks", _, "findings"])
-        | (&Method::GET, ["workspaces", _, "targets"]) => true,
-        _ => false,
+    if method == Method::POST {
+        return parts.as_slice() == ["mcp", "scans"];
     }
+    if method != Method::GET {
+        return false;
+    }
+    matches!(parts.as_slice(),
+        (["health"])
+        | (["plugins"])
+        | (["tasks"])
+        | (["findings"])
+        | (["workspaces"])
+        | (["robots"])
+        | (["attack-surface"])
+        | (["reports"])
+        | (["vpn-profiles"]) => true,
+        (["plugins", _])
+        | (["findings", _])
+        | (["tasks", _])
+        | (["sniper", "runs", _])
+        | (["robots", "runs", _]) => true,
+        (["plugins", _, "schema"])
+        | (["tasks", _, "findings"])
+        | (["workspaces", _, "targets"]) => true,
+    )
 }
 
 #[cfg(test)]
