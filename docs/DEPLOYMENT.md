@@ -6,7 +6,8 @@
 |---|---|---|
 | `SECUSCAN_ADDR` | `0.0.0.0:8080` | Listen address. Use `127.0.0.1:8080` for local-only. |
 | `SECUSCAN_DB_URL` | `sqlite://./data/secuscan.db?mode=rwc` | SQLite URL; the directory is created. |
-| `SECUSCAN_JWT_SECRET` | *ephemeral* | **Set in production** or sessions die on every restart. |
+| `SECUSCAN_ENV` | `production` | Fail-closed startup. Set `development` explicitly for loopback-only ephemeral-secret development. |
+| `SECUSCAN_JWT_SECRET` | **Required** | A persistent, randomly generated 64-character hex key (32 bytes). Missing/weak values abort startup in production. |
 | `SECUSCAN_PLUGINS_DIR` | `./plugins` | Plugin manifest directory. |
 | `SECUSCAN_FRONTEND_DIR` | `./frontend/dist` | Built SPA served by the API. |
 | `SECUSCAN_DATA_DIR` | `./data` | Default data root. |
@@ -21,26 +22,77 @@
 | `SECUSCAN_SCHEDULE_TICK_SECS` | `30` | Scheduler wake-up interval for recurring scans (seconds). |
 | `RUST_LOG` | `secuscan=info,tower_http=warn` | Logging. |
 
+## JWT signing key: mandatory for deployments
+
+SecuScan starts in `SECUSCAN_ENV=production` unless `development` is
+explicitly selected. **Production does not generate fallback JWT secrets.**
+The configured key must be 64 hexadecimal characters representing 32 bytes.
+The validator also rejects obviously repeated/low-diversity keys. These format
+checks cannot prove entropy: always generate keys with a cryptographic tool.
+
+Generate and persist a key **once**, in an ignored, permission-restricted
+environment file at the repository root:
+
+```bash
+umask 077
+# Only initialize this file if it does not exist. Reuse it on every restart.
+if [ ! -e .env ]; then
+  printf 'SECUSCAN_JWT_SECRET=%s\n' "$(openssl rand -hex 32)" > .env
+fi
+chmod 600 .env
+```
+
+If `.env` already exists, ensure its `SECUSCAN_JWT_SECRET` entry is present,
+nonempty, and matches the requirement. Do not paste real keys into issue comments
+or GitHub Actions logs, and do not commit `.env` (`.gitignore` excludes it).
+Use your deployment secret manager rather than a file when possible, but provide
+the **same key** to each server replica and after every restart.
+
+Changing this signing key invalidates previously issued access JWTs. Rotating the
+signing key alone does *not* necessarily revoke independently stored refresh
+tokens; follow the authentication incident-response procedures when a key may
+have been exposed. The former Compose placeholder
+`change-me-openssl-rand-hex-32` is public and must **never** be used.
+
 ## Build & run (from source)
 
 ```bash
 cargo build --release
 cd frontend && npm ci && npm run build && cd ..
-SECUSCAN_JWT_SECRET=$(openssl rand -hex 32) \
-SECUSCAN_ADMIN_PASSWORD=change-me \
-./target/release/secuscan-server
+set -a
+. ./.env
+set +a
+SECUSCAN_ENV=production SECUSCAN_ADMIN_PASSWORD='choose-a-strong-admin-password' \
+  ./target/release/secuscan-server
 ```
 
-The single binary serves the API at `/api/v1` and the SPA at `/`.
+The server serves the API at `/api/v1` and SPA at `/`. If the JWT key is
+missing or malformed, startup logs a configuration error and exits with status 1
+before creating the database or listening for traffic.
 
-## Docker
+For **local development only** you may intentionally use an ephemeral key:
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build -d
+SECUSCAN_ENV=development SECUSCAN_ADDR=127.0.0.1:8080 \
+  ./target/debug/secuscan-server
 ```
 
-The image is a multi-stage build (node → cargo → slim runtime), stores the database in a
-volume, and runs as a non-root user. Ports are bound to `127.0.0.1` by default.
+This dev fallback is rejected on non-loopback bindings. Sessions do not survive
+restarts in this mode. A configured JWT key is validated in both environments.
+
+## Docker Compose
+
+```bash
+# Initialize .env once using the snippet above.
+docker compose --env-file .env -f docker/docker-compose.yml config --quiet
+docker compose --env-file .env -f docker/docker-compose.yml up --build -d
+```
+
+Compose requires a nonempty `SECUSCAN_JWT_SECRET` **during interpolation**;
+it will refuse to start without one. The application additionally rejects
+bad/weak keys on startup. Keep `.env` persistent when upgrading or restarting.
+The image is multi-stage (Node → Cargo → slim runtime), stores SQLite in a
+volume, and runs as a non-root user with ports bound to `127.0.0.1` by default.
 
 ## Reverse proxy (HTTPS)
 
