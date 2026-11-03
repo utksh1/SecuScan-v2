@@ -91,7 +91,8 @@ impl SecuScanClient {
             self.ensure_authed().await?;
             let mut req = self.http.request(method.clone(), self.url(path));
             if let Some(k) = &self.api_key {
-                req = req.bearer_auth(k);
+                // API keys are authenticated with X-API-Key, not JWT Bearer.
+                req = req.header("x-api-key", k);
             } else if let Some(t) = self.token.read().unwrap().clone() {
                 req = req.bearer_auth(t);
             }
