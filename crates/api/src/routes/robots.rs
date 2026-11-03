@@ -1,6 +1,7 @@
 //! Pentest Robots HTTP routes — CRUD + run + built-in seeding.
 
 use crate::auth::extractor::CurrentUser;
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::error::{ApiError, ApiResult};
 use crate::robot_runtime::{self, RobotGraph, RobotNode};
 use crate::state::SharedState;
@@ -223,10 +224,14 @@ async fn run(
         ));
     }
     if let Some(ws) = &req.workspace_id {
-        repo::workspaces::get_workspace(&state.db, ws).await?;
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     if let Some(pid) = &req.auth_profile_id {
-        repo::auth_profiles::get(&state.db, pid).await?;
+        let profile = repo::auth_profiles::get(&state.db, pid).await?;
+        crate::access::require_owner(&user, &profile.created_by)?;
+        if profile.workspace_id != req.workspace_id {
+            return Err(ApiError::NotFound("auth profile not in selected workspace".into()));
+        }
     }
     let targets_json = serde_json::to_string(&req.targets).unwrap_or_else(|_| "[]".into());
     let run_row = repo::robots::create_run(
@@ -283,6 +288,11 @@ async fn get_run(
     Path(run_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let run = repo::robots::get_run(&state.db, &run_id).await?;
+    if let Some(ws) = run.workspace_id.as_deref() {
+        require_workspace(&state, &_user, ws, WorkspacePermission::Read).await?;
+    } else {
+        crate::access::require_owner(&_user, &run.created_by)?;
+    }
     Ok(Json(run_to_json(&run)))
 }
 
@@ -292,6 +302,11 @@ async fn cancel_run(
     Path(run_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let run = repo::robots::get_run(&state.db, &run_id).await?;
+    if let Some(ws) = run.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    } else {
+        crate::access::require_owner(&user, &run.created_by)?;
+    }
     let robot = repo::robots::get(&state.db, &run.robot_id).await?;
     if !user.is_admin() && robot.created_by != user.0.id {
         return Err(ApiError::Forbidden(
