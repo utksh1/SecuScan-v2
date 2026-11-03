@@ -154,7 +154,7 @@ pub async fn call_tool(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcR
 
 /// Build the dedicated server-approved request. No MCP caller can set
 /// consent implicitly, and the opaque token is checked again by the API.
-fn approved_scan_payload(args: &Value, plugin_id: &str, mut inputs: Value) -> Result<Value, String> {
+fn approved_scan_payload(args: &Value, plugin_id: &str, inputs: Value) -> Result<Value, String> {
     if args.get("consent_granted").and_then(Value::as_bool) != Some(true) {
         return Err("explicit consent_granted=true is required for each MCP scan".into());
     }
