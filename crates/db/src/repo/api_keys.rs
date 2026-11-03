@@ -109,7 +109,6 @@ pub async fn revoke(pool: &SqlitePool, id: &str, user_id: &str) -> DbResult<bool
     Ok(res.rows_affected() > 0)
 }
 
-    
 /// Admin-only inventory of scoped keys (returns metadata, never plaintext).
 pub async fn list_mcp_scoped(pool: &SqlitePool) -> DbResult<Vec<ApiKeyRow>> {
     sqlx::query_as::<_, ApiKeyRow>(

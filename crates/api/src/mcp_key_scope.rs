@@ -59,7 +59,9 @@ pub async fn enforce(
 /// Axum may strip /api/v1 when nesting routers; accept both forms. Queries
 /// are excluded by uri().path() and therefore cannot affect permission.
 fn mcp_route_allowed(method: &Method, original_path: &str) -> bool {
-    let path = original_path.strip_prefix("/api/v1").unwrap_or(original_path);
+    let path = original_path
+        .strip_prefix("/api/v1")
+        .unwrap_or(original_path);
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     if method == Method::POST {
         return parts.as_slice() == ["mcp", "scans"];

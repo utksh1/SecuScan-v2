@@ -259,7 +259,6 @@ async fn refresh_plugins(
     })))
 }
 
-
 // ---- Dedicated MCP scanner credentials ------------------------------------
 
 #[derive(Deserialize)]
@@ -310,13 +309,8 @@ async fn create_mcp_key(
             "MCP-scoped credentials require a scanner-role account".into(),
         ));
     }
-    let created = repo::api_keys::create_mcp_scoped(
-        &state.db,
-        &scanner.id,
-        &req.name,
-        &admin.0.id,
-    )
-    .await?;
+    let created =
+        repo::api_keys::create_mcp_scoped(&state.db, &scanner.id, &req.name, &admin.0.id).await?;
 
     // The raw key is shown only once; its digest alone is persisted.
     Ok((
@@ -366,6 +360,8 @@ async fn revoke_mcp_key(
     if repo::api_keys::revoke_mcp_scoped(&state.db, &id).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
-        Err(ApiError::NotFound(format!("active MCP credential {id} not found")))
+        Err(ApiError::NotFound(format!(
+            "active MCP credential {id} not found"
+        )))
     }
 }
