@@ -75,10 +75,26 @@ fn validate_jwt_secret(secret: &str) -> Result<(), String> {
     }
 
     let decoded = hex::decode(secret).map_err(|_| invalid.to_string())?;
-    let distinct: std::collections::HashSet<u8> = decoded.into_iter().collect();
-    if distinct.len() < 8 {
+    let distinct: std::collections::HashSet<u8> = decoded.iter().copied().collect();
+    // Reject conspicuous patterns that a simple distinct-byte count misses,
+    // e.g. 0123456789abcdef repeated or byte sequences 00..1f.
+    // No content-only check can prove a secret came from a CSPRNG.
+    let periodic = (1..=decoded.len() / 2).any(|period| {
+        decoded.len() % period == 0
+            && decoded
+                .iter()
+                .enumerate()
+                .all(|(index, byte)| *byte == decoded[index % period])
+    });
+    let ascending = decoded
+        .windows(2)
+        .all(|pair| pair[0].wrapping_add(1) == pair[1]);
+    let descending = decoded
+        .windows(2)
+        .all(|pair| pair[0].wrapping_sub(1) == pair[1]);
+    if distinct.len() < 8 || periodic || ascending || descending {
         return Err(format!(
-            "{invalid}; repeated or low-diversity keys are rejected"
+            "{invalid}; low-diversity, repeated, or sequential keys are rejected"
         ));
     }
     Ok(())
@@ -192,8 +208,12 @@ mod tests {
     }
 
     fn example_valid_key() -> String {
-        // Fixed test bytes, not suitable for deployments.
-        hex::encode((0_u8..32).collect::<Vec<_>>())
+        // A public, deterministic unit-test fixture; NEVER use as a real key.
+        // Its digest looks irregular but has no secrecy or operational entropy.
+        use sha2::Digest;
+        hex::encode(sha2::Sha256::digest(
+            b"public SecuScan unit-test fixture; not a production signing key",
+        ))
     }
 
     #[test]
@@ -212,6 +232,9 @@ mod tests {
             "dev-jwt-secret".to_string(),
             "a".repeat(64),
             "00".repeat(32),
+            "0123456789abcdef".repeat(4),
+            hex::encode((0_u8..32).collect::<Vec<_>>()),
+            hex::encode((0_u8..32).rev().collect::<Vec<_>>()),
         ] {
             assert!(validate_jwt_secret(&value).is_err());
         }
