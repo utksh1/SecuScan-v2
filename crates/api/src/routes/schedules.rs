@@ -224,6 +224,9 @@ async fn update(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let existing = load_schedule_for_user(&state, &user, &id).await?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
 
     let name = req.name.clone().unwrap_or_else(|| existing.name.clone());
     validate_name(&name)?;
@@ -312,8 +315,11 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
-    // Ownership check before delete (404 for strangers, no row leak).
-    load_schedule_for_user(&state, &user, &id).await?;
+    // Ownership and workspace edit permission are both required.
+    let row = load_schedule_for_user(&state, &user, &id).await?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     repo::schedules::delete(&state.db, &id).await?;
     // Tasks keep running to completion; their schedule_id nulls out and the
     // history stays queryable by task id.
