@@ -210,12 +210,12 @@ mod tests {
     #[test]
     fn rejects_known_placeholder_short_and_low_diversity_secrets() {
         for value in [
-            "change-me-openssl-rand-hex-32",
-            "dev-jwt-secret",
-            "a".repeat(64).as_str(),
-            "00".repeat(32).as_str(),
+            "change-me-openssl-rand-hex-32".to_string(),
+            "dev-jwt-secret".to_string(),
+            "a".repeat(64),
+            "00".repeat(32),
         ] {
-            assert!(validate_jwt_secret(value).is_err());
+            assert!(validate_jwt_secret(&value).is_err());
         }
     }
 
