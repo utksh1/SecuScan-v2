@@ -22,6 +22,7 @@
  * Exit code 0 = all checks passed.
  */
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { unlinkSync, openSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -76,7 +77,8 @@ function bootServer() {
     // shell without them on PATH.
     PATH: [path.join(os.homedir(), ".local", "bin"), process.env.PATH].join(":"),
     SECUSCAN_DB_URL: `sqlite:///${DB}`,
-    SECUSCAN_JWT_SECRET: "e2e-verify-secret-32bytes-long-aaaa",
+    SECUSCAN_ENV: "production",
+    SECUSCAN_JWT_SECRET: randomBytes(32).toString("hex"),
     SECUSCAN_ADDR: `127.0.0.1:${PORT}`,
     SECUSCAN_ADMIN_EMAIL: ADMIN.email,
     SECUSCAN_ADMIN_PASSWORD: ADMIN.password,
