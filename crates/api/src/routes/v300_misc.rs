@@ -238,11 +238,19 @@ async fn list_wordlists(
     _user: CurrentUser,
     Query(q): Query<WsQuery>,
 ) -> ApiResult<Json<Value>> {
-    let rows =
-        secuscan_db::repo::v300_misc::list_wordlists(&state.db, q.workspace_id.as_deref()).await?;
-    Ok(Json(
-        json!({"items": rows.iter().map(wordlist_to_json).collect::<Vec<_>>()}),
-    ))
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &_user, ws, WorkspacePermission::Read).await?;
+    }
+    let rows = secuscan_db::repo::v300_misc::list_wordlists(&state.db, q.workspace_id.as_deref()).await?;
+    let mut items = Vec::new();
+    for row in &rows {
+        if row.source != "builtin" && !crate::access::is_owner_or_admin(&_user, &row.created_by) { continue; }
+        if let Some(ws) = row.workspace_id.as_deref() {
+            if !workspace_visible(&state, &_user, ws).await? { continue; }
+        }
+        items.push(wordlist_to_json(row));
+    }
+    Ok(Json(json!({"items": items})))
 }
 
 async fn upload_wordlist(
@@ -289,6 +297,9 @@ async fn upload_wordlist(
             _ => {}
         }
     }
+    if let Some(ws) = workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     let name = name.ok_or_else(|| ApiError::BadRequest("missing name".into()))?;
     let content = content.ok_or_else(|| ApiError::BadRequest("missing file".into()))?;
     let word_count = content.iter().filter(|b| **b == b'\n').count() as i64 + 1;
@@ -323,6 +334,9 @@ async fn get_wordlist(
     if row.source != "builtin" {
         crate::access::require_owner(&user, &row.created_by)?;
     }
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     Ok(Json(wordlist_to_json(&row)))
 }
 
@@ -339,6 +353,9 @@ async fn delete_wordlist(
         ));
     }
     crate::access::require_owner(&user, &row.created_by)?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     // Remove file.
     let _ = std::fs::remove_file(&row.file_path);
     secuscan_db::repo::v300_misc::delete_wordlist(&state.db, &id).await?;
@@ -362,6 +379,9 @@ async fn get_wordlist_contents(
     let row = secuscan_db::repo::v300_misc::get_wordlist(&state.db, &id).await?;
     if row.source != "builtin" {
         crate::access::require_owner(&user, &row.created_by)?;
+    }
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
     }
     let limit = q.limit.unwrap_or(1000) as usize;
     let offset = q.offset.unwrap_or(0) as usize;
@@ -397,15 +417,20 @@ async fn list_templates(
     _user: CurrentUser,
     Query(q): Query<TemplateQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &_user, ws, WorkspacePermission::Read).await?;
+    }
     let rows = secuscan_db::repo::v300_misc::list_templates(
-        &state.db,
-        q.workspace_id.as_deref(),
-        q.category.as_deref(),
-    )
-    .await?;
-    Ok(Json(
-        json!({"items": rows.iter().map(template_to_json).collect::<Vec<_>>()}),
-    ))
+        &state.db, q.workspace_id.as_deref(), q.category.as_deref(),
+    ).await?;
+    let mut items = Vec::new();
+    for row in &rows {
+        if let Some(ws) = row.workspace_id.as_deref() {
+            if !workspace_visible(&state, &_user, ws).await? { continue; }
+        }
+        items.push(template_to_json(row));
+    }
+    Ok(Json(json!({"items": items})))
 }
 
 #[derive(Deserialize)]
@@ -433,6 +458,9 @@ async fn create_template(
     user.require_scanner()?;
     if !["critical", "high", "medium", "low", "info"].contains(&req.severity.as_str()) {
         return Err(ApiError::BadRequest("invalid severity".into()));
+    }
+    if let Some(ws) = req.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     let scope = if req.workspace_id.is_some() {
         "workspace"
@@ -462,6 +490,16 @@ async fn delete_template(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT workspace_id, created_by FROM finding_templates WHERE id = ?"
+    ).bind(&id).fetch_optional(&state.db).await
+     .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let (workspace, creator) = row.ok_or_else(|| ApiError::NotFound("not found".into()))?;
+    if let Some(ws) = workspace.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    } else if !user.is_admin() {
+        crate::access::require_owner(&user, creator.as_deref().unwrap_or(""))?;
+    }
     secuscan_db::repo::v300_misc::delete_template(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
