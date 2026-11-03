@@ -1,0 +1,38 @@
+# Temporary, one-use Rustfmt runner for Issue #19.
+name: pr20-rustfmt-once
+on:
+  push:
+    branches:
+      - security/issue-19-mcp-key-scopes
+    paths:
+      - .github/workflows/pr20-rustfmt-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.repository == 'utksh1/SecuScan-v2' && github.ref == 'refs/heads/security/issue-19-mcp-key-scopes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          ref: security/issue-19-mcp-key-scopes
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format scoped-auth sources and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all --check
+          if ! git diff --quiet -- crates; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- crates
+            git commit -m "style(auth): rustfmt MCP scoped-key implementation and tests"
+            git push origin HEAD:security/issue-19-mcp-key-scopes
+          fi
