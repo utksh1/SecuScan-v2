@@ -284,6 +284,7 @@ async fn create_api_key(
             "id": created.row.id,
             "name": created.row.name,
             "prefix": created.row.prefix,
+            "scope": created.row.scope,
             "created_at": created.row.created_at,
             // shown exactly once:
             "key": created.raw,
@@ -303,6 +304,8 @@ async fn list_api_keys(
                 "id": k.id,
                 "name": k.name,
                 "prefix": k.prefix,
+                "scope": k.scope,
+                "issued_by": k.issued_by,
                 "created_at": k.created_at,
                 "last_used_at": k.last_used_at,
                 "revoked_at": k.revoked_at,
