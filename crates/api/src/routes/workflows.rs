@@ -134,9 +134,15 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let row = repo::workflows::get(&state.db, &id).await?;
     let runs = repo::workflows::list_runs(&state.db, &id).await?;
+    let mut visible_runs = Vec::new();
+    for run in &runs {
+        if workflow_run_visible(&state, &_user, run).await? {
+            visible_runs.push(run_to_json(run));
+        }
+    }
     Ok(Json(json!({
         "workflow": workflow_to_json(&row),
-        "runs": runs.iter().map(run_to_json).collect::<Vec<_>>(),
+        "runs": visible_runs,
     })))
 }
 
@@ -144,6 +150,8 @@ fn run_to_json(r: &secuscan_db::models::WorkflowRunRow) -> Value {
     json!({
         "id": r.id,
         "workflow_id": r.workflow_id,
+        "created_by": r.created_by,
+        "workspace_id": r.workspace_id,
         "status": r.status,
         "task_ids": serde_json::from_str::<Value>(&r.task_ids_json).unwrap_or(json!([])),
         "error": r.error,
@@ -218,7 +226,9 @@ async fn run(
         }
         None => None,
     };
-    let run_row = repo::workflows::create_run(&state.db, &id).await?;
+    let run_row = repo::workflows::create_run(
+        &state.db, &id, &user.0.id, workspace_id.as_deref()
+    ).await?;
     let run_id_spawn = run_row.id.clone();
 
     let state2 = state.clone();
@@ -312,15 +322,40 @@ async fn run_workflow(
     Ok(())
 }
 
+async fn workflow_run_visible(
+    state: &SharedState,
+    user: &CurrentUser,
+    run: &secuscan_db::models::WorkflowRunRow,
+) -> ApiResult<bool> {
+    if user.is_admin() { return Ok(true); }
+    match run.workspace_id.as_deref() {
+        None => Ok(run.created_by.as_deref() == Some(user.0.id.as_str())),
+        Some(ws) => {
+            if !crate::access::workspace_visible(state, user, ws).await? {
+                return Ok(false);
+            }
+            let row = repo::workspaces::get_workspace(&state.db, ws).await?;
+            // Shared template runs have historically been per-user; private
+            // workspace members can review execution history as a team.
+            Ok(row.access_mode == "private"
+                || run.created_by.as_deref() == Some(user.0.id.as_str()))
+        }
+    }
+}
+
 async fn list_runs(
     State(state): State<SharedState>,
-    _user: CurrentUser,
+    user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let runs = repo::workflows::list_runs(&state.db, &id).await?;
-    Ok(Json(json!({
-        "items": runs.iter().map(run_to_json).collect::<Vec<_>>(),
-    })))
+    let mut items = Vec::new();
+    for run in &runs {
+        if workflow_run_visible(&state, &user, run).await? {
+            items.push(run_to_json(run));
+        }
+    }
+    Ok(Json(json!({"items": items})))
 }
 
 async fn cancel_run(
@@ -328,24 +363,17 @@ async fn cancel_run(
     user: CurrentUser,
     Path(run_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    // Find which workflow this run belongs to (for the auth check).
-    let workflows = repo::workflows::list(&state.db).await?;
-    let mut owner: Option<secuscan_db::models::WorkflowRow> = None;
-    for w in workflows {
-        if repo::workflows::list_runs(&state.db, &w.id)
-            .await?
-            .iter()
-            .any(|r| r.id == run_id)
-        {
-            owner = Some(w);
-            break;
-        }
+    user.require_scanner()?;
+    let run = sqlx::query_as::<_, secuscan_db::models::WorkflowRunRow>(
+        "SELECT * FROM workflow_runs WHERE id = ?"
+    ).bind(&run_id).fetch_optional(&state.db).await
+      .map_err(|e| ApiError::Internal(format!("workflow run lookup: {e}")))?
+      .ok_or_else(|| ApiError::NotFound("not found".into()))?;
+    if !user.is_admin() && run.created_by.as_deref() != Some(user.0.id.as_str()) {
+        return Err(ApiError::NotFound("not found".into()));
     }
-    let wf = owner.ok_or_else(|| ApiError::NotFound(format!("workflow run {run_id}")))?;
-    if !user.is_admin() && wf.created_by != user.0.id {
-        return Err(ApiError::Forbidden(
-            "only the creator or an admin can cancel".into(),
-        ));
+    if let Some(ws) = run.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     // Cancel every task of this run that is still active.
     let tasks = repo::tasks::list(
