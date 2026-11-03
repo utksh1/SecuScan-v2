@@ -53,14 +53,25 @@ pub async fn create_workspace(pool: &SqlitePool, w: NewWorkspace<'_>) -> DbResul
         created_at: now(),
         updated_at: None,
         vpn_profile_id: None,
+        access_mode: "private".to_string(),
     };
     sqlx::query(
-        "INSERT INTO workspaces (id, name, description, created_by, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO workspaces (id, name, description, created_by, created_at, access_mode) \
+         VALUES (?1, ?2, ?3, ?4, ?5, 'private')",
     )
     .bind(&row.id)
     .bind(&row.name)
     .bind(&row.description)
+    .bind(&row.created_by)
+    .bind(&row.created_at)
+    .execute(pool)
+    .await?;
+    // Ownership is independent of the global scanner/viewer role.
+    sqlx::query(
+        "INSERT INTO workspace_members (workspace_id, user_id, role, added_at, added_by)
+         VALUES (?1, ?2, 'owner', ?3, ?2)",
+    )
+    .bind(&row.id)
     .bind(&row.created_by)
     .bind(&row.created_at)
     .execute(pool)
