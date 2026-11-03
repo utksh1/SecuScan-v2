@@ -167,7 +167,25 @@ jobs:
           test "$ok" = 1
           curl -fsS http://127.0.0.1:18080/api/v1/health | grep -q '"version"'
           curl -fsS http://127.0.0.1:18080/ | grep -q '<title>SecuScan</title>'
-          curl -fsS -X POST http://127.0.0.1:18080/api/v1/auth/login \
+          login_json="$(curl -fsS -X POST http://127.0.0.1:18080/api/v1/auth/login \
             -H 'content-type: application/json' \
-            -d '{"email":"admin@secuscan.local","password":"CiSmokePass1"}' \
-            | grep -q '"access_token"'
+            -d '{"email":"admin@secuscan.local","password":"CiSmokePass1"}')"
+          token="$(printf '%s' "$login_json" | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')"
+          test -n "$token"
+          curl -fsS -H "Authorization: Bearer $token" \
+            http://127.0.0.1:18080/api/v1/auth/me | grep -q 'admin@secuscan.local'
+
+          # Restart the same container with the same environment and persistent
+          # SQLite volume. An access token issued before restart must remain valid.
+          docker restart secuscan-ci >/dev/null
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:18080/api/v1/health | grep -q '"status":"ok"'; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1
+          curl -fsS -H "Authorization: Bearer $token" \
+            http://127.0.0.1:18080/api/v1/auth/me | grep -q 'admin@secuscan.local'
