@@ -67,24 +67,25 @@ fn mcp_route_allowed(method: &Method, original_path: &str) -> bool {
     if method != Method::GET {
         return false;
     }
-    matches!(parts.as_slice(),
-        (["health"])
-        | (["plugins"])
-        | (["tasks"])
-        | (["findings"])
-        | (["workspaces"])
-        | (["robots"])
-        | (["attack-surface"])
-        | (["reports"])
-        | (["vpn-profiles"]) => true,
-        (["plugins", _])
-        | (["findings", _])
-        | (["tasks", _])
-        | (["sniper", "runs", _])
-        | (["robots", "runs", _]) => true,
-        (["plugins", _, "schema"])
-        | (["tasks", _, "findings"])
-        | (["workspaces", _, "targets"]) => true,
+    matches!(
+        parts.as_slice(),
+        ["health"]
+            | ["plugins"]
+            | ["tasks"]
+            | ["findings"]
+            | ["workspaces"]
+            | ["robots"]
+            | ["attack-surface"]
+            | ["reports"]
+            | ["vpn-profiles"]
+            | ["plugins", _]
+            | ["findings", _]
+            | ["tasks", _]
+            | ["sniper", "runs", _]
+            | ["robots", "runs", _]
+            | ["plugins", _, "schema"]
+            | ["tasks", _, "findings"]
+            | ["workspaces", _, "targets"]
     )
 }
 
