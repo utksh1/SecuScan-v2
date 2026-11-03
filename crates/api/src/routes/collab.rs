@@ -131,6 +131,7 @@ async fn add_comment(
     Path(id): Path<String>,
     Json(req): Json<AddCommentRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    user.require_scanner()?;
     if req.body.trim().is_empty() || req.body.len() > 4_000 {
         return Err(ApiError::BadRequest(
             "body must be 1..=4000 characters".into(),
