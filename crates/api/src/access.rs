@@ -69,6 +69,7 @@ pub async fn require_workspace(
     match (permission, role.as_deref()) {
         (WorkspacePermission::Read, Some("owner" | "editor" | "viewer")) => Ok(()),
         (WorkspacePermission::Write, Some("owner" | "editor")) if user.0.role != "viewer" => Ok(()),
+        (WorkspacePermission::Manage, Some("owner")) if user.0.role != "viewer" => Ok(()),
         _ => Err(hidden()),
     }
 }
