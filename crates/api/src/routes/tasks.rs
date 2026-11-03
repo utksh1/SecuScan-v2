@@ -418,6 +418,7 @@ async fn delete(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    user.require_scanner()?;
     let t = load_task_for_user(&state, &user, &id).await?;
     require_resource(&state, &user, t.workspace_id.as_deref(), &t.user_id, WorkspacePermission::Write).await?;
     if !t.status().is_terminal() {
@@ -442,6 +443,7 @@ async fn cancel(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    user.require_scanner()?;
     let t = load_task_for_user(&state, &user, &id).await?;
     require_resource(&state, &user, t.workspace_id.as_deref(), &t.user_id, WorkspacePermission::Write).await?;
     match t.status() {
