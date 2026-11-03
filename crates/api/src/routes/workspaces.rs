@@ -151,6 +151,10 @@ struct CreateWorkspaceRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// New workspaces are private by default. Admins may explicitly create
+    /// shared single-team workspaces for legacy collaboration.
+    #[serde(default)]
+    pub access_mode: Option<String>,
 }
 
 async fn create(
@@ -159,6 +163,13 @@ async fn create(
     Json(req): Json<CreateWorkspaceRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
+    let mode = req.access_mode.as_deref().unwrap_or("private");
+    if !["shared", "private"].contains(&mode) {
+        return Err(ApiError::BadRequest("access_mode must be shared or private".into()));
+    }
+    if mode == "shared" {
+        user.require_admin()?;
+    }
     let name = clean_name(&req.name, 100, "workspace")?;
     let description = req
         .description
@@ -175,6 +186,12 @@ async fn create(
         },
     )
     .await?;
+    if mode == "shared" {
+        sqlx::query("UPDATE workspaces SET access_mode = 'shared' WHERE id = ?")
+            .bind(&row.id).execute(&state.db).await
+            .map_err(|e| ApiError::Internal(format!("workspace mode: {e}")))?;
+    }
+    let row = repo::workspaces::get_workspace(&state.db, &row.id).await?;
     let counts = repo::workspaces::workspace_counts(&state.db, &row.id).await?;
     Ok((StatusCode::CREATED, Json(workspace_to_json(&row, &counts))))
 }
