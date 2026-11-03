@@ -259,7 +259,13 @@ pub async fn recent_scoped(
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
          workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, \
          created_at, started_at, finished_at \
-         FROM tasks WHERE (?1 IS NULL OR user_id = ?1) \
+         FROM tasks WHERE (?1 IS NULL OR
+           (user_id = ?1 AND (workspace_id IS NULL OR EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = workspace_id
+               AND (w.access_mode = 'shared' OR w.created_by = ?1 OR EXISTS (
+                 SELECT 1 FROM workspace_members wm
+                 WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+           )))) \
          {ws_clause} \
          ORDER BY created_at DESC LIMIT {p_lim}"
     );
