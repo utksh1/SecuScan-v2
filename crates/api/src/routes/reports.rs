@@ -285,6 +285,7 @@ async fn delete_job(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    user.require_scanner()?;
     let job = load_job_for_user(&state, &user, &id).await?;
     let row = repo::reports::delete(&state.db, &job.id).await?;
     if let Some(row) = row {
