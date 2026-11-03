@@ -9,7 +9,7 @@ use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::tasks::{admit_request, task_to_json, StartTaskRequest};
 use crate::routes::workspaces::parse_workspace_scope;
-use crate::access::{require_resource, require_workspace, WorkspacePermission};
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
