@@ -135,9 +135,17 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let row = repo::robots::get(&state.db, &id).await?;
     let runs = repo::robots::list_runs(&state.db, &id).await?;
+    let mut visible_runs = Vec::new();
+    for run in &runs {
+        let permitted = match run.workspace_id.as_deref() {
+            Some(ws) => crate::access::workspace_visible(&state, &_user, ws).await?,
+            None => crate::access::is_owner_or_admin(&_user, &run.created_by),
+        };
+        if permitted { visible_runs.push(run_to_json(run)); }
+    }
     Ok(Json(json!({
         "robot": robot_to_json(&row),
-        "runs": runs.iter().map(run_to_json).collect::<Vec<_>>(),
+        "runs": visible_runs,
     })))
 }
 
