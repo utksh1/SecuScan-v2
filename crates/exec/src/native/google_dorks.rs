@@ -19,18 +19,66 @@ pub struct GoogleDorksScanner;
 
 /// (pattern, why it matters, severity)
 const DORKS: &[(&str, &str, Severity)] = &[
-    ("site:{d} intitle:\"index of\"", "Open directory listings can expose backups, dumps and source files.", Severity::Medium),
-    ("site:{d} ext:sql | ext:dump | ext:bak", "Database dumps and backups indexed by the search engine.", Severity::High),
-    ("site:{d} ext:log | ext:txt inurl:log", "Log files may contain credentials, tokens and stack traces.", Severity::Medium),
-    ("site:{d} ext:env | ext:ini | ext:conf", "Configuration files often include secrets and connection strings.", Severity::High),
-    ("site:{d} inurl:admin | inurl:login | inurl:signin", "Admin and login portals are entry points worth mapping.", Severity::Info),
-    ("site:{d} inurl:wp- | inurl:wp= | inurl:/wp-content/", "WordPress paths reveal plugins/themes whose versions can be matched to CVEs.", Severity::Info),
-    ("site:{d} intitle:\"test\" | intitle:\"staging\" | intitle:\"dev\"", "Non-production environments often lack hardening.", Severity::Low),
-    ("site:{d} inurl:phpinfo | intitle:\"phpinfo()\"", "phpinfo pages disclose paths, extensions and environment variables.", Severity::Medium),
-    ("site:{d} ext:xls | ext:xlsx | ext:csv", "Spreadsheets may contain customer data or internal inventories.", Severity::Medium),
-    ("site:{d} intitle:\"dashboard\" | intitle:\"monitor\"", "Dashboards sometimes render without authentication.", Severity::Low),
-    ("site:{d} inurl:ftp | inurl:upload | inurl:downloads", "Upload/download endpoints are worth an access-control review.", Severity::Low),
-    ("site:{d} filetype:pdf \"confidential\"", "Documents marked confidential should not be publicly indexed.", Severity::Medium),
+    (
+        "site:{d} intitle:\"index of\"",
+        "Open directory listings can expose backups, dumps and source files.",
+        Severity::Medium,
+    ),
+    (
+        "site:{d} ext:sql | ext:dump | ext:bak",
+        "Database dumps and backups indexed by the search engine.",
+        Severity::High,
+    ),
+    (
+        "site:{d} ext:log | ext:txt inurl:log",
+        "Log files may contain credentials, tokens and stack traces.",
+        Severity::Medium,
+    ),
+    (
+        "site:{d} ext:env | ext:ini | ext:conf",
+        "Configuration files often include secrets and connection strings.",
+        Severity::High,
+    ),
+    (
+        "site:{d} inurl:admin | inurl:login | inurl:signin",
+        "Admin and login portals are entry points worth mapping.",
+        Severity::Info,
+    ),
+    (
+        "site:{d} inurl:wp- | inurl:wp= | inurl:/wp-content/",
+        "WordPress paths reveal plugins/themes whose versions can be matched to CVEs.",
+        Severity::Info,
+    ),
+    (
+        "site:{d} intitle:\"test\" | intitle:\"staging\" | intitle:\"dev\"",
+        "Non-production environments often lack hardening.",
+        Severity::Low,
+    ),
+    (
+        "site:{d} inurl:phpinfo | intitle:\"phpinfo()\"",
+        "phpinfo pages disclose paths, extensions and environment variables.",
+        Severity::Medium,
+    ),
+    (
+        "site:{d} ext:xls | ext:xlsx | ext:csv",
+        "Spreadsheets may contain customer data or internal inventories.",
+        Severity::Medium,
+    ),
+    (
+        "site:{d} intitle:\"dashboard\" | intitle:\"monitor\"",
+        "Dashboards sometimes render without authentication.",
+        Severity::Low,
+    ),
+    (
+        "site:{d} inurl:ftp | inurl:upload | inurl:downloads",
+        "Upload/download endpoints are worth an access-control review.",
+        Severity::Low,
+    ),
+    (
+        "site:{d} filetype:pdf \"confidential\"",
+        "Documents marked confidential should not be publicly indexed.",
+        Severity::Medium,
+    ),
 ];
 
 #[async_trait]
@@ -54,7 +102,10 @@ impl NativeScanner for GoogleDorksScanner {
         inputs: &BTreeMap<String, serde_json::Value>,
         ctx: &NativeCtx,
     ) -> Result<Vec<Finding>, String> {
-        let domain = get_str(inputs, "target")?.trim().trim_end_matches('.').to_ascii_lowercase();
+        let domain = get_str(inputs, "target")?
+            .trim()
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         if !dns::valid_name(&domain) {
             return Err(format!("invalid domain name `{domain}`"));
         }
@@ -88,9 +139,11 @@ pub(super) fn dork_findings(domain: &str) -> Vec<Finding> {
             finding(
                 *sev,
                 format!("Dork: {query}"),
-                format!("{why} Open the prepared search and review the hits. \
+                format!(
+                    "{why} Open the prepared search and review the hits. \
                          Removing indexed sensitive content usually means fixing \
-                         the source and requesting re-indexing (Search Console)."),
+                         the source and requesting re-indexing (Search Console)."
+                ),
                 "Review indexed results; add authentication, robots rules and \
                  remove what should not be public.",
                 link.clone(),
@@ -124,9 +177,14 @@ mod tests {
     fn dorks_generated_with_links() {
         let fs = dork_findings("acme.test");
         assert_eq!(fs.len(), DORKS.len());
-        assert!(fs.iter().all(|f| f.proof.starts_with("https://www.google.com/search?q=")));
+        assert!(fs
+            .iter()
+            .all(|f| f.proof.starts_with("https://www.google.com/search?q=")));
         assert!(fs.iter().any(|f| f.severity == Severity::High));
-        let f = fs.iter().find(|f| f.metadata["query"] == json!("site:acme.test intitle:\"index of\"")).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.metadata["query"] == json!("site:acme.test intitle:\"index of\""))
+            .unwrap();
         assert_eq!(f.severity, Severity::Medium);
         assert!(f.proof.contains("site%3Aacme.test"));
     }

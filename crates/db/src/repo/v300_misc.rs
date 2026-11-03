@@ -1,9 +1,7 @@
 //! Scan groups, wordlists, finding templates, asset imports — small repos
 //! for v3.0.0 features that don't deserve their own file.
 
-use crate::models::{
-    AssetImportRow, FindingTemplateRow, ScanGroupRow, WordlistRow,
-};
+use crate::models::{AssetImportRow, FindingTemplateRow, ScanGroupRow, WordlistRow};
 use crate::{new_id, now, DbResult};
 use sqlx::SqlitePool;
 
@@ -49,12 +47,12 @@ pub async fn list_scan_groups(
         .fetch_all(db)
         .await
         .map_err(Into::into),
-        None => sqlx::query_as::<_, ScanGroupRow>(
-            "SELECT * FROM scan_groups ORDER BY created_at DESC",
-        )
-        .fetch_all(db)
-        .await
-        .map_err(Into::into),
+        None => {
+            sqlx::query_as::<_, ScanGroupRow>("SELECT * FROM scan_groups ORDER BY created_at DESC")
+                .fetch_all(db)
+                .await
+                .map_err(Into::into)
+        }
     }
 }
 
@@ -63,20 +61,15 @@ pub async fn add_task_to_group(
     scan_group_id: &str,
     task_id: &str,
 ) -> DbResult<()> {
-    sqlx::query(
-        "INSERT OR IGNORE INTO scan_group_members (scan_group_id, task_id) VALUES (?, ?)",
-    )
-    .bind(scan_group_id)
-    .bind(task_id)
-    .execute(db)
-    .await?;
+    sqlx::query("INSERT OR IGNORE INTO scan_group_members (scan_group_id, task_id) VALUES (?, ?)")
+        .bind(scan_group_id)
+        .bind(task_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
-pub async fn list_tasks_in_group(
-    db: &SqlitePool,
-    scan_group_id: &str,
-) -> DbResult<Vec<String>> {
+pub async fn list_tasks_in_group(db: &SqlitePool, scan_group_id: &str) -> DbResult<Vec<String>> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT task_id FROM scan_group_members WHERE scan_group_id = ? ORDER BY rowid",
     )
@@ -96,6 +89,9 @@ pub async fn delete_scan_group(db: &SqlitePool, id: &str) -> DbResult<()> {
 
 // --- Wordlists ------------------------------------------------------------
 
+// The existing repository API maps directly to one row's insertion fields.
+// Group these in a typed input during a separate API migration.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_wordlist(
     db: &SqlitePool,
     workspace_id: Option<&str>,
@@ -174,6 +170,9 @@ pub async fn delete_wordlist(db: &SqlitePool, id: &str) -> DbResult<()> {
 
 // --- Finding Templates ----------------------------------------------------
 
+// Keep the existing insert contract stable for its API callers.
+// Consider a typed input structure when revising the template domain model.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_template(
     db: &SqlitePool,
     scope: &str,

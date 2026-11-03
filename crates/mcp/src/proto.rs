@@ -34,19 +34,29 @@ pub struct JsonRpcError {
 
 impl JsonRpcResponse {
     pub fn ok(id: Option<Value>, result: Value) -> Self {
-        Self { jsonrpc: "2.0".into(), id, result: Some(result), error: None }
+        Self {
+            jsonrpc: "2.0".into(),
+            id,
+            result: Some(result),
+            error: None,
+        }
     }
     pub fn error(id: Option<Value>, code: i32, message: &str) -> Self {
         Self {
-            jsonrpc: "2.0".into(), id, result: None,
-            error: Some(JsonRpcError { code: code.into(), message: message.into(), data: None }),
+            jsonrpc: "2.0".into(),
+            id,
+            result: None,
+            error: Some(JsonRpcError {
+                code,
+                message: message.into(),
+                data: None,
+            }),
         }
     }
 }
 
-pub mod ErrorCodes {
+pub mod error_codes {
     pub const PARSE_ERROR: i32 = -32700;
-    pub const INVALID_REQUEST: i32 = -32600;
     pub const METHOD_NOT_FOUND: i32 = -32601;
     pub const INVALID_PARAMS: i32 = -32602;
     pub const INTERNAL_ERROR: i32 = -32603;
@@ -82,17 +92,29 @@ pub fn list_resources(req: JsonRpcRequest) -> JsonRpcResponse {
 }
 
 pub async fn read_resource(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcResponse {
-    let uri = match req.params.as_ref().and_then(|p| p.get("uri")).and_then(|v| v.as_str()) {
+    let uri = match req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("uri"))
+        .and_then(|v| v.as_str())
+    {
         Some(u) => u.to_string(),
-        None => return JsonRpcResponse::error(req.id, ErrorCodes::INVALID_PARAMS, "missing `uri`"),
+        None => {
+            return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing `uri`")
+        }
     };
     let body = match client.get_resource(&uri).await {
         Ok(b) => b,
-        Err(e) => return JsonRpcResponse::error(req.id, ErrorCodes::INTERNAL_ERROR, &e.to_string()),
+        Err(e) => {
+            return JsonRpcResponse::error(req.id, error_codes::INTERNAL_ERROR, &e.to_string())
+        }
     };
-    JsonRpcResponse::ok(req.id, json!({
-        "contents": [{ "uri": uri, "mimeType": "application/json", "text": body }]
-    }))
+    JsonRpcResponse::ok(
+        req.id,
+        json!({
+            "contents": [{ "uri": uri, "mimeType": "application/json", "text": body }]
+        }),
+    )
 }
 
 pub fn list_prompts(req: JsonRpcRequest) -> JsonRpcResponse {
@@ -112,12 +134,20 @@ pub fn list_prompts(req: JsonRpcRequest) -> JsonRpcResponse {
 }
 
 pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
-    let params = match req.params { Some(p) => p, None => return JsonRpcResponse::error(req.id, ErrorCodes::INVALID_PARAMS, "missing params") };
+    let params = match req.params {
+        Some(p) => p,
+        None => {
+            return JsonRpcResponse::error(req.id, error_codes::INVALID_PARAMS, "missing params")
+        }
+    };
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     let (description, messages) = match name {
         "pentest" => {
-            let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("TARGET");
+            let target = args
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("TARGET");
             (
                 format!("Run a comprehensive pentest against {target}"),
                 vec![json!({
@@ -125,11 +155,14 @@ pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
                     "content": { "type": "text", "text": format!(
                         "Please provide a comprehensive pentesting report for {target}, using the tools at your disposal. Run subdomain enumeration, port scanning, web scanning, and TLS checks. Aggregate findings by severity and propose remediation."
                     ) }
-                })]
+                })],
             )
         }
         "subdomains" => {
-            let domain = args.get("domain").and_then(|v| v.as_str()).unwrap_or("DOMAIN");
+            let domain = args
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("DOMAIN");
             (
                 format!("Find all subdomains for {domain}"),
                 vec![json!({
@@ -137,11 +170,14 @@ pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
                     "content": { "type": "text", "text": format!(
                         "Please find all the subdomains that you can for {domain}, using the tools at your disposal. Combine passive sources (subfinder) with active brute-force (subdomain-finder)."
                     ) }
-                })]
+                })],
             )
         }
         "summary" => {
-            let ws = args.get("workspace_id").and_then(|v| v.as_str()).unwrap_or("");
+            let ws = args
+                .get("workspace_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             (
                 "Executive summary of latest scans".into(),
                 vec![json!({
@@ -149,11 +185,14 @@ pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
                     "content": { "type": "text", "text": format!(
                         "Please create an executive summary for the latest scans in the workspace {ws}, using the tools at your disposal. Highlight critical and high findings and the affected assets."
                     ) }
-                })]
+                })],
             )
         }
         "vibeseccoding" => {
-            let fid = args.get("finding_id").and_then(|v| v.as_str()).unwrap_or("");
+            let fid = args
+                .get("finding_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             (
                 "Scan-then-remediate plan".into(),
                 vec![json!({
@@ -161,13 +200,22 @@ pub fn get_prompt(req: JsonRpcRequest) -> JsonRpcResponse {
                     "content": { "type": "text", "text": format!(
                         "Finding {fid} needs remediation. Read the finding, look up the affected code/config, propose a concrete patch, and verify by re-scanning."
                     ) }
-                })]
+                })],
             )
         }
-        _ => return JsonRpcResponse::error(req.id, ErrorCodes::INVALID_PARAMS, &format!("unknown prompt: {name}")),
+        _ => {
+            return JsonRpcResponse::error(
+                req.id,
+                error_codes::INVALID_PARAMS,
+                &format!("unknown prompt: {name}"),
+            )
+        }
     };
-    JsonRpcResponse::ok(req.id, json!({
-        "description": description,
-        "messages": messages
-    }))
+    JsonRpcResponse::ok(
+        req.id,
+        json!({
+            "description": description,
+            "messages": messages
+        }),
+    )
 }

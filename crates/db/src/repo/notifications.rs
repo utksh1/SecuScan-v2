@@ -119,6 +119,9 @@ pub async fn list_rules_for_workspace(
 
 // --- delivery log ---
 
+// This persistence entry point mirrors the existing notification delivery schema.
+// Keep its caller-facing signature stable until the notification API is redesigned.
+#[allow(clippy::too_many_arguments)]
 pub async fn log_delivery(
     db: &SqlitePool,
     rule_id: &str,

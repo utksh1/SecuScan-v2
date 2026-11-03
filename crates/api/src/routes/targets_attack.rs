@@ -135,14 +135,28 @@ fn suite_preset_preferences(suite: &str) -> &'static [&'static str] {
     match suite {
         // Lightest tier: fast triage profiles.
         "quick" | "web" => &[
-            "quick", "light", "fast", "passive", "shallow", "kev", "polite", "verified",
-            "conservative", "standard",
+            "quick",
+            "light",
+            "fast",
+            "passive",
+            "shallow",
+            "kev",
+            "polite",
+            "verified",
+            "conservative",
+            "standard",
         ],
         // Deepest thorough tier. `deep` first so plugins that offer it
         // never fall through to the slower extremes (`full-sweep`'s
         // 65,535-port nmap run, whatweb `heavy`'s greedy matching).
         "full" => &[
-            "deep", "full", "exhaustive", "aggressive", "all-reflections", "heavy", "standard",
+            "deep",
+            "full",
+            "exhaustive",
+            "aggressive",
+            "all-reflections",
+            "heavy",
+            "standard",
         ],
         // Internal-network deep dive.
         "internal" => &["deep", "standard", "quick"],
@@ -153,10 +167,7 @@ fn suite_preset_preferences(suite: &str) -> &'static [&'static str] {
 /// Pick the profile a suite should run for a plugin, given the
 /// plugin's declared presets. `None` when no preferred name matches
 /// (the plugin then launches with its plain defaults).
-fn pick_preset(
-    presets: &BTreeMap<String, BTreeMap<String, Value>>,
-    suite: &str,
-) -> Option<String> {
+fn pick_preset(presets: &BTreeMap<String, BTreeMap<String, Value>>, suite: &str) -> Option<String> {
     suite_preset_preferences(suite)
         .iter()
         .copied()
@@ -177,18 +188,13 @@ fn inputs_for(plugin_id: &str, target: &str, preset: Option<&str>) -> BTreeMap<S
     let mut m = BTreeMap::new();
     m.insert("target".to_string(), Value::String(target.to_string()));
     // Suite-level hints for plugins that accept them.
-    if preset.is_none() {
-        match plugin_id {
-            "nmap" => {
-                // v4.2.0: the equivalent of the "deep" profile -- top 1000
-                // ports + service detection. (The old `ports: "top-1000"`
-                // string failed the ports field pattern, so nmap was
-                // silently skipped by the full suite.)
-                m.insert("top_ports".to_string(), json!(1000));
-                m.insert("service_detection".to_string(), json!(true));
-            }
-            _ => {}
-        }
+    if preset.is_none() && plugin_id == "nmap" {
+        // v4.2.0: the equivalent of the "deep" profile -- top 1000
+        // ports + service detection. (The old `ports: "top-1000"`
+        // string failed the ports field pattern, so nmap was
+        // silently skipped by the full suite.)
+        m.insert("top_ports".to_string(), json!(1000));
+        m.insert("service_detection".to_string(), json!(true));
     }
     m
 }
@@ -395,8 +401,14 @@ mod tests {
     fn pick_suite_web_includes_v410_recon_engines() {
         // v4.1.0: web suite gains http-probe + crawler.
         let web = pick_suite("web", "hostname").unwrap();
-        assert!(web.contains(&"http-probe"), "web suite must include http-probe (v4.1.0)");
-        assert!(web.contains(&"crawler"), "web suite must include crawler (v4.1.0)");
+        assert!(
+            web.contains(&"http-probe"),
+            "web suite must include http-probe (v4.1.0)"
+        );
+        assert!(
+            web.contains(&"crawler"),
+            "web suite must include crawler (v4.1.0)"
+        );
     }
 
     #[test]
@@ -406,8 +418,14 @@ mod tests {
         // are kept as standalone plugins because they require inputs
         // the generic suite cannot supply.)
         let full = pick_suite("full", "url").unwrap();
-        assert!(full.contains(&"subdomain-takeover"), "full suite must include subdomain-takeover");
-        assert!(full.contains(&"http-smuggling"), "full suite must include http-smuggling");
+        assert!(
+            full.contains(&"subdomain-takeover"),
+            "full suite must include subdomain-takeover"
+        );
+        assert!(
+            full.contains(&"http-smuggling"),
+            "full suite must include http-smuggling"
+        );
         assert!(full.contains(&"http-probe"));
         assert!(full.contains(&"crawler"));
     }
@@ -416,7 +434,16 @@ mod tests {
     fn pick_suite_full_ip_includes_fast_port_scan() {
         // v4.1.0: IP full suite gains fast-port-scan (naabu) alongside nmap.
         let p = pick_suite("full", "ip_address").unwrap();
-        assert_eq!(p, vec!["nmap", "fast-port-scan", "smb-enum", "ssh-audit", "service-defaults"]);
+        assert_eq!(
+            p,
+            vec![
+                "nmap",
+                "fast-port-scan",
+                "smb-enum",
+                "ssh-audit",
+                "service-defaults"
+            ]
+        );
     }
 
     #[test]
@@ -432,7 +459,10 @@ mod tests {
         // when a preset drives nmap, the preset's own values apply.
         let m = inputs_for("nmap", "127.0.0.1", None);
         assert_eq!(m.get("top_ports").and_then(|v| v.as_i64()), Some(1000));
-        assert_eq!(m.get("service_detection").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            m.get("service_detection").and_then(|v| v.as_bool()),
+            Some(true)
+        );
     }
 
     #[test]
@@ -450,7 +480,10 @@ mod tests {
     fn inputs_for_generic_plugin_just_target() {
         let m = inputs_for("http-headers", "example.com", None);
         assert_eq!(m.len(), 1);
-        assert_eq!(m.get("target").and_then(|v| v.as_str()), Some("example.com"));
+        assert_eq!(
+            m.get("target").and_then(|v| v.as_str()),
+            Some("example.com")
+        );
     }
 
     // ---- v4.2.2: suite -> scan-profile selection --------------------------------
@@ -468,7 +501,15 @@ mod tests {
         // The user-facing contract: web suite = Quick profiles.
         let http_headers = presets(&["quick", "full"]); // quick/full only
         assert_eq!(pick_preset(&http_headers, "web").as_deref(), Some("quick"));
-        let nuclei = presets(&["kev", "light", "cve", "exposures", "misconfig", "panels", "deep"]);
+        let nuclei = presets(&[
+            "kev",
+            "light",
+            "cve",
+            "exposures",
+            "misconfig",
+            "panels",
+            "deep",
+        ]);
         assert_eq!(pick_preset(&nuclei, "web").as_deref(), Some("light"));
         let whatweb = presets(&["passive", "polite", "aggressive", "heavy"]);
         assert_eq!(pick_preset(&whatweb, "web").as_deref(), Some("passive"));
@@ -479,21 +520,37 @@ mod tests {
     #[test]
     fn full_suite_picks_deep_profiles() {
         // The user-facing contract: full suite = Deep profiles.
-        let nmap = presets(&["light", "deep", "full-sweep", "top-5000", "stealth", "vuln-scripts"]);
+        let nmap = presets(&[
+            "light",
+            "deep",
+            "full-sweep",
+            "top-5000",
+            "stealth",
+            "vuln-scripts",
+        ]);
         assert_eq!(pick_preset(&nmap, "full").as_deref(), Some("deep"));
         // ...and never the 65,535-port full-sweep (deep outranks it).
         assert_ne!(pick_preset(&nmap, "full").as_deref(), Some("full-sweep"));
         let website_scanner = presets(&["light", "deep"]);
-        assert_eq!(pick_preset(&website_scanner, "full").as_deref(), Some("deep"));
+        assert_eq!(
+            pick_preset(&website_scanner, "full").as_deref(),
+            Some("deep")
+        );
         // http-headers has no `deep`; its deepest is `full`.
         let http_headers = presets(&["quick", "full"]);
         assert_eq!(pick_preset(&http_headers, "full").as_deref(), Some("full"));
         // subfinder's deepest is `exhaustive`.
         let subfinder = presets(&["light", "standard", "exhaustive"]);
-        assert_eq!(pick_preset(&subfinder, "full").as_deref(), Some("exhaustive"));
+        assert_eq!(
+            pick_preset(&subfinder, "full").as_deref(),
+            Some("exhaustive")
+        );
         // xss-scanner's deepest is `all-reflections`.
         let xss = presets(&["verified", "all-reflections"]);
-        assert_eq!(pick_preset(&xss, "full").as_deref(), Some("all-reflections"));
+        assert_eq!(
+            pick_preset(&xss, "full").as_deref(),
+            Some("all-reflections")
+        );
         // nikto only has quick/standard -> standard fallback.
         let nikto = presets(&["quick", "standard"]);
         assert_eq!(pick_preset(&nikto, "full").as_deref(), Some("standard"));
@@ -514,7 +571,14 @@ mod tests {
 
     #[test]
     fn quick_and_internal_suite_preferences() {
-        let nmap = presets(&["light", "deep", "full-sweep", "top-5000", "stealth", "vuln-scripts"]);
+        let nmap = presets(&[
+            "light",
+            "deep",
+            "full-sweep",
+            "top-5000",
+            "stealth",
+            "vuln-scripts",
+        ]);
         assert_eq!(pick_preset(&nmap, "quick").as_deref(), Some("light"));
         let smb = presets(&["quick", "standard", "deep"]);
         assert_eq!(pick_preset(&smb, "internal").as_deref(), Some("deep"));

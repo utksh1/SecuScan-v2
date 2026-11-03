@@ -38,9 +38,9 @@
 //! passed via `SECUSCAN_API_KEY` (or `--api-key`). The key is sent as
 //! `Authorization: Bearer <key>` on every request.
 
+pub mod client;
 mod proto;
 mod tools;
-pub mod client;
 pub use client::SecuScanClient;
 
 use crate::proto::{JsonRpcRequest, JsonRpcResponse};
@@ -51,7 +51,11 @@ use std::io::{self, BufRead, Write};
 #[command(name = "secuscan-mcp", version, about = "SecuScan v2 MCP server")]
 pub struct Cli {
     /// Base URL of the SecuScan API (e.g. http://127.0.0.1:8080).
-    #[arg(long, env = "SECUSCAN_API_URL", default_value = "http://127.0.0.1:8080")]
+    #[arg(
+        long,
+        env = "SECUSCAN_API_URL",
+        default_value = "http://127.0.0.1:8080"
+    )]
     pub api_url: String,
 
     /// API key for authentication (preferred for production).
@@ -85,7 +89,7 @@ pub async fn run_stdio(client: SecuScanClient) -> Result<()> {
             Err(e) => {
                 let resp = JsonRpcResponse::error(
                     None,
-                    proto::ErrorCodes::PARSE_ERROR,
+                    proto::error_codes::PARSE_ERROR,
                     &format!("parse error: {e}"),
                 );
                 writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
@@ -93,7 +97,6 @@ pub async fn run_stdio(client: SecuScanClient) -> Result<()> {
                 continue;
             }
         };
-        let id = req.id.clone();
         let resp = dispatch(&client, req).await;
         writeln!(stdout, "{}", serde_json::to_string(&resp)?)?;
         stdout.flush()?;
@@ -114,7 +117,7 @@ async fn dispatch(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcRespon
         "prompts/get" => proto::get_prompt(req),
         _ => JsonRpcResponse::error(
             id,
-            proto::ErrorCodes::METHOD_NOT_FOUND,
+            proto::error_codes::METHOD_NOT_FOUND,
             &format!("unknown method: {}", req.method),
         ),
     }
@@ -128,20 +131,26 @@ pub async fn run_http(client: SecuScanClient, bind: String) -> Result<()> {
     let client1 = client.clone();
     let client2 = client.clone();
     let app = Router::new()
-        .route("/", post(move |AxumJson(req): AxumJson<JsonRpcRequest>| {
-            let client = client1.clone();
-            async move {
-                let resp = dispatch(&client, req).await;
-                AxumJson(resp)
-            }
-        }))
-        .route("/mcp", post(move |AxumJson(req): AxumJson<JsonRpcRequest>| {
-            let client = client2.clone();
-            async move {
-                let resp = dispatch(&client, req).await;
-                AxumJson(resp)
-            }
-        }));
+        .route(
+            "/",
+            post(move |AxumJson(req): AxumJson<JsonRpcRequest>| {
+                let client = client1.clone();
+                async move {
+                    let resp = dispatch(&client, req).await;
+                    AxumJson(resp)
+                }
+            }),
+        )
+        .route(
+            "/mcp",
+            post(move |AxumJson(req): AxumJson<JsonRpcRequest>| {
+                let client = client2.clone();
+                async move {
+                    let resp = dispatch(&client, req).await;
+                    AxumJson(resp)
+                }
+            }),
+        );
     if !(bind.starts_with("127.") || bind.starts_with("localhost") || bind.starts_with("[::1]")) {
         tracing::warn!(
             "MCP HTTP has no auth — binding {bind} exposes start_scan/run_sniper to the network. Prefer 127.0.0.1"

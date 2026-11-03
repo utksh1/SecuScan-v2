@@ -239,7 +239,10 @@ mod tests {
         assert!(other
             .decrypt(
                 Nonce::from_slice(nonce),
-                Payload { msg: ct, aad: b"secuscan-at-rest-v1" }
+                Payload {
+                    msg: ct,
+                    aad: b"secuscan-at-rest-v1"
+                }
             )
             .is_err());
     }

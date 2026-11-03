@@ -8,8 +8,8 @@
 //! Process tracking: the profile row stores the OS pid; status queries check
 //! whether the pid is still alive to detect silent tunnel death.
 
-use secuscan_db::repo;
 use secuscan_db::models::VpnProfileRow;
+use secuscan_db::repo;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 
@@ -39,11 +39,16 @@ pub fn validate_ovpn_config(config: &str) -> Result<(), String> {
     }
     let has_remote = config.lines().any(|line| {
         let t = line.trim();
-        t.starts_with("remote ") || t == "remote" || t.contains("<tls-auth>") || t.contains("<tls-crypt>")
+        t.starts_with("remote ")
+            || t == "remote"
+            || t.contains("<tls-auth>")
+            || t.contains("<tls-crypt>")
     });
     let has_remote = has_remote || config.contains("remote ");
     if !has_remote {
-        return Err("config_text does not look like an OpenVPN config (missing `remote` directive)".into());
+        return Err(
+            "config_text does not look like an OpenVPN config (missing `remote` directive)".into(),
+        );
     }
     for line in config.lines() {
         let t = line.trim();
@@ -120,15 +125,17 @@ pub async fn connect(db: &SqlitePool, profile: &VpnProfileRow) -> Result<String,
     let dir = std::env::temp_dir().join("secuscan-vpn");
     let _ = std::fs::create_dir_all(&dir);
     let cfg_path = dir.join(format!("{}.ovpn", profile.id));
-    std::fs::write(&cfg_path, &profile.config_text)
-        .map_err(|e| format!("write config: {e}"))?;
+    std::fs::write(&cfg_path, &profile.config_text).map_err(|e| format!("write config: {e}"))?;
 
     // Spawn openvpn daemon.
     let child = std::process::Command::new(OPENVPN_BIN)
         .arg("--config")
         .arg(&cfg_path)
         .arg("--daemon")
-        .arg(format!("secuscan-vpn-{}", &profile.id[..8.min(profile.id.len())]))
+        .arg(format!(
+            "secuscan-vpn-{}",
+            &profile.id[..8.min(profile.id.len())]
+        ))
         .arg("--log")
         .arg(dir.join(format!("{}.log", profile.id)))
         .stdout(std::process::Stdio::null())
@@ -139,7 +146,8 @@ pub async fn connect(db: &SqlitePool, profile: &VpnProfileRow) -> Result<String,
         Ok(c) => c,
         Err(e) => {
             let err = format!("spawn openvpn: {e}");
-            let _ = repo::vpn::update_status(db, &profile.id, "error", Some(&err), None, None).await;
+            let _ =
+                repo::vpn::update_status(db, &profile.id, "error", Some(&err), None, None).await;
             return Err(err);
         }
     };
@@ -150,7 +158,8 @@ pub async fn connect(db: &SqlitePool, profile: &VpnProfileRow) -> Result<String,
     loop {
         if std::time::Instant::now() >= deadline {
             let err = "openvpn did not establish a tunnel within 20s — check the profile log";
-            let _ = repo::vpn::update_status(db, &profile.id, "error", Some(err), Some(pid), None).await;
+            let _ = repo::vpn::update_status(db, &profile.id, "error", Some(err), Some(pid), None)
+                .await;
             return Err(err.into());
         }
         // Detect immediate death (bad config, missing certs, no tun perms).
@@ -163,7 +172,8 @@ pub async fn connect(db: &SqlitePool, profile: &VpnProfileRow) -> Result<String,
                 lines[start..].join("\n")
             };
             let err = format!("openvpn exited during startup: {tail}");
-            let _ = repo::vpn::update_status(db, &profile.id, "error", Some(&err), Some(pid), None).await;
+            let _ = repo::vpn::update_status(db, &profile.id, "error", Some(&err), Some(pid), None)
+                .await;
             return Err(err);
         }
         if let Some(iface) = detect_tun_iface() {
@@ -181,15 +191,12 @@ pub async fn disconnect(db: &SqlitePool, profile: &VpnProfileRow) -> Result<(), 
     if let Some(pid) = profile.process_id {
         if pid_alive(pid) {
             // Best-effort SIGTERM via the kill syscall.
-            unsafe {
-                // libc isn't a direct dependency; use the std trick of
-                // spawning `kill`. This keeps the crate dependency-light.
-                let _ = std::process::Command::new("kill")
-                    .arg(pid.to_string())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
-            }
+            // Invoke the system kill utility; no unsafe Rust is needed.
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
         }
     }
     repo::vpn::update_status(db, &profile.id, "disconnected", None, None, None)
@@ -213,16 +220,22 @@ fn detect_tun_iface() -> Option<String> {
 /// Reconcile statuses at startup: profiles marked connected but whose pid
 /// is dead flip to error.
 pub async fn reconcile(db: &SqlitePool) {
-    let Ok(profiles) = repo::vpn::list(db).await else { return };
+    let Ok(profiles) = repo::vpn::list(db).await else {
+        return;
+    };
     for p in profiles {
         if p.status == "connected" {
             let alive = p.process_id.map(pid_alive).unwrap_or(false);
             if !alive {
                 let _ = repo::vpn::update_status(
-                    db, &p.id, "error",
+                    db,
+                    &p.id,
+                    "error",
                     Some("tunnel process died while the server was down"),
-                    None, None,
-                ).await;
+                    None,
+                    None,
+                )
+                .await;
             }
         }
     }

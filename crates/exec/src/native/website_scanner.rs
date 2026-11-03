@@ -14,7 +14,7 @@ use super::{get_i64_or, get_str, get_str_or, NativeCtx, NativeScanner};
 use async_trait::async_trait;
 use secuscan_core::models::{Finding, FindingKind, Severity};
 use serde_json::json;
-use std::collections::{BTreeSet, BTreeMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 pub struct WebsiteScanner;
@@ -73,14 +73,28 @@ const SQL_ERRORS: &[&str] = &[
 ];
 
 const REDIRECT_PARAMS: &[&str] = &[
-    "next", "url", "redirect", "return", "returnto", "return_to", "dest",
-    "destination", "continue", "goto", "redir", "redirect_uri",
+    "next",
+    "url",
+    "redirect",
+    "return",
+    "returnto",
+    "return_to",
+    "dest",
+    "destination",
+    "continue",
+    "goto",
+    "redir",
+    "redirect_uri",
 ];
 
 #[async_trait]
 impl NativeScanner for WebsiteScanner {
-    fn id(&self) -> &'static str { "website_scanner" }
-    fn name(&self) -> &'static str { "Website Scanner" }
+    fn id(&self) -> &'static str {
+        "website_scanner"
+    }
+    fn name(&self) -> &'static str {
+        "Website Scanner"
+    }
     fn description(&self) -> &'static str {
         "DAST: spider, discovery, cookies/CORS/open-redirect/SSTI/host-header \
          and form-canary checks with request/response proof"
@@ -97,7 +111,11 @@ impl NativeScanner for WebsiteScanner {
         );
         let max_pages = get_i64_or(inputs, "max_pages", 15).clamp(1, 40) as usize;
         let exclude = get_str_or(inputs, "exclude", "/logout,/signout,/delete");
-        let exclude: Vec<&str> = exclude.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        let exclude: Vec<&str> = exclude
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
 
         // Max-Parity Sprint 1.1 — authenticated DAST: when the task carries
         // an auth profile, its cookies/headers ride on EVERY request (crawl,
@@ -106,7 +124,7 @@ impl NativeScanner for WebsiteScanner {
         let auth = ctx.auth.clone();
         let client = super::auth::authed_client(true, timeout, auth.as_ref())?;
         let no_follow = super::auth::authed_client(false, timeout, auth.as_ref())?;
-        let marker = format!("ptt{}", &uuid_like());
+        let marker = format!("ptt{}", uuid_like());
         let mut findings = Vec::new();
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut queue = vec![target.clone()];
@@ -121,12 +139,25 @@ impl NativeScanner for WebsiteScanner {
             .await;
 
         while let Some(url) = queue.pop() {
-            if ctx.cancel.is_cancelled() { break; }
-            if visited.len() >= max_pages { break; }
-            if !visited.insert(url.clone()) { continue; }
-            if exclude.iter().any(|e| url.contains(e)) { continue; }
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
+            if visited.len() >= max_pages {
+                break;
+            }
+            if !visited.insert(url.clone()) {
+                continue;
+            }
+            if exclude.iter().any(|e| url.contains(e)) {
+                continue;
+            }
 
-            let resp = match client.get(&url).header("user-agent", "SecuScan-2.0 (website-scanner)").send().await {
+            let resp = match client
+                .get(&url)
+                .header("user-agent", "SecuScan-2.0 (website-scanner)")
+                .send()
+                .await
+            {
                 Ok(r) => r,
                 Err(_) => continue,
             };
@@ -137,10 +168,15 @@ impl NativeScanner for WebsiteScanner {
 
             if visited.len() == 1 {
                 passive_headers(&url, status, &headers, &excerpt, &mut findings);
-                findings.extend(super::dast_engine::passive_page(&url, status, &headers, &body));
+                findings.extend(super::dast_engine::passive_page(
+                    &url, status, &headers, &body,
+                ));
             }
             if !server_seen {
-                if let Some(srv) = headers.get("server").or_else(|| headers.get("x-powered-by")) {
+                if let Some(srv) = headers
+                    .get("server")
+                    .or_else(|| headers.get("x-powered-by"))
+                {
                     if looks_versioned(srv) {
                         server_seen = true;
                         findings.push(issue(
@@ -166,8 +202,12 @@ impl NativeScanner for WebsiteScanner {
                             title,
                             format!("Set-Cookie on {url} is missing a hardening flag."),
                             "Set HttpOnly, Secure (HTTPS), and SameSite=Lax or Strict.",
-                            &url, "GET", status, sc,
-                            cwe, "A05:2021-Security Misconfiguration",
+                            &url,
+                            "GET",
+                            status,
+                            sc,
+                            cwe,
+                            "A05:2021-Security Misconfiguration",
                         ));
                     }
                 }
@@ -191,8 +231,12 @@ impl NativeScanner for WebsiteScanner {
                     format!("Directory listing at {url}"),
                     "The response looks like an autoindex page.",
                     "Disable autoindex / Options Indexes.",
-                    &url, "GET", status, &excerpt,
-                    "CWE-548", "A01:2021-Broken Access Control",
+                    &url,
+                    "GET",
+                    status,
+                    &excerpt,
+                    "CWE-548",
+                    "A01:2021-Broken Access Control",
                 ));
             }
             for email in email_re().find_iter(&body).take(5) {
@@ -202,8 +246,12 @@ impl NativeScanner for WebsiteScanner {
                     format!("Email address exposed: {}", email.as_str()),
                     "A crawlable page contains an email address.",
                     "Avoid publishing personal mailboxes on public pages.",
-                    &url, "GET", status, email.as_str(),
-                    "CWE-359", "A01:2021-Broken Access Control",
+                    &url,
+                    "GET",
+                    status,
+                    email.as_str(),
+                    "CWE-359",
+                    "A01:2021-Broken Access Control",
                 ));
             }
             for href in link_re().captures_iter(&body) {
@@ -220,14 +268,23 @@ impl NativeScanner for WebsiteScanner {
         // Discovery
         let origin = origin_of(&target);
         for path in DISCOVERY_PATHS {
-            if ctx.cancel.is_cancelled() { break; }
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
             let url = format!("{origin}{path}");
-            let Ok(resp) = client.get(&url).send().await else { continue };
+            let Ok(resp) = client.get(&url).send().await else {
+                continue;
+            };
             let status = resp.status().as_u16();
-            if !(200..400).contains(&status) { continue; }
+            if !(200..400).contains(&status) {
+                continue;
+            }
             let body = resp.text().await.unwrap_or_default();
-            if is_soft_404(&body) { continue; }
-            let sev = if path.contains(".env") || path.contains(".git") || path.contains("phpinfo") {
+            if is_soft_404(&body) {
+                continue;
+            }
+            let sev = if path.contains(".env") || path.contains(".git") || path.contains("phpinfo")
+            {
                 Severity::High
             } else {
                 Severity::Low
@@ -238,8 +295,12 @@ impl NativeScanner for WebsiteScanner {
                 format!("Sensitive path reachable: {path} ({status})"),
                 "A commonly sensitive URL returned a non-error response.",
                 "Remove or authenticate the path; deny directory listing of backups and VCS.",
-                &url, "GET", status, &truncate(&body, 400),
-                "CWE-538", "A01:2021-Broken Access Control",
+                &url,
+                "GET",
+                status,
+                &truncate(&body, 400),
+                "CWE-538",
+                "A01:2021-Broken Access Control",
             ));
         }
 
@@ -265,15 +326,22 @@ impl NativeScanner for WebsiteScanner {
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
             if looks_like_sql_error(&body) {
-                findings.push(issue(
-                    Severity::High,
-                    FindingKind::SuspectedIssue,
-                    "SQL error string reflected".into(),
-                    "A quote-bearing parameter produced a database error in the response.",
-                    "Use parameterized queries; do not leak SQL errors to clients.",
-                    &sqli_url, "GET", status, &truncate(&body, 600),
-                    "CWE-89", "A03:2021-Injection",
-                ).with_category("SQL"));
+                findings.push(
+                    issue(
+                        Severity::High,
+                        FindingKind::SuspectedIssue,
+                        "SQL error string reflected".into(),
+                        "A quote-bearing parameter produced a database error in the response.",
+                        "Use parameterized queries; do not leak SQL errors to clients.",
+                        &sqli_url,
+                        "GET",
+                        status,
+                        &truncate(&body, 600),
+                        "CWE-89",
+                        "A03:2021-Injection",
+                    )
+                    .with_category("SQL"),
+                );
             }
         }
 
@@ -287,29 +355,50 @@ impl NativeScanner for WebsiteScanner {
         {
             let status = resp.status().as_u16();
             let headers = header_map(resp.headers());
-            let acao = headers.get("access-control-allow-origin").cloned().unwrap_or_default();
-            let acac = headers.get("access-control-allow-credentials").cloned().unwrap_or_default();
+            let acao = headers
+                .get("access-control-allow-origin")
+                .cloned()
+                .unwrap_or_default();
+            let acac = headers
+                .get("access-control-allow-credentials")
+                .cloned()
+                .unwrap_or_default();
             if cors_is_permissive(&acao, &acac) {
-                findings.push(issue(
-                    Severity::Medium,
-                    FindingKind::SuspectedIssue,
-                    "Permissive CORS policy".into(),
-                    format!("Preflight answered ACAO=`{acao}` ACAC=`{acac}`."),
-                    "Echo only trusted origins; never combine `*` with credentials.",
-                    &target, "OPTIONS", status, &format!("acao={acao}; acac={acac}"),
-                    "CWE-942", "A05:2021-Security Misconfiguration",
-                ).with_category("CORS"));
+                findings.push(
+                    issue(
+                        Severity::Medium,
+                        FindingKind::SuspectedIssue,
+                        "Permissive CORS policy".into(),
+                        format!("Preflight answered ACAO=`{acao}` ACAC=`{acac}`."),
+                        "Echo only trusted origins; never combine `*` with credentials.",
+                        &target,
+                        "OPTIONS",
+                        status,
+                        &format!("acao={acao}; acac={acac}"),
+                        "CWE-942",
+                        "A05:2021-Security Misconfiguration",
+                    )
+                    .with_category("CORS"),
+                );
             }
         }
 
         // Open redirect: one canary per common parameter, no-follow.
         let redirect_canary = "https://canary.secuscan.test/secuscan";
         for param in REDIRECT_PARAMS {
-            if ctx.cancel.is_cancelled() { break; }
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
             let url = append_query(&target, param, redirect_canary);
-            let Ok(resp) = no_follow.get(&url).send().await else { continue };
+            let Ok(resp) = no_follow.get(&url).send().await else {
+                continue;
+            };
             let status = resp.status().as_u16();
-            let loc = resp.headers().get("location").and_then(|v| v.to_str().ok()).unwrap_or("");
+            let loc = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
             if open_redirect_hit(loc, "canary.secuscan.test") {
                 findings.push(issue(
                     Severity::Medium,
@@ -317,8 +406,12 @@ impl NativeScanner for WebsiteScanner {
                     format!("Open redirect via `{param}`"),
                     "The Location header followed an attacker-controlled absolute URL.",
                     "Allow only relative paths or an explicit allow-list of destinations.",
-                    &url, "GET", status, loc,
-                    "CWE-601", "A01:2021-Broken Access Control",
+                    &url,
+                    "GET",
+                    status,
+                    loc,
+                    "CWE-601",
+                    "A01:2021-Broken Access Control",
                 ));
                 break;
             }
@@ -332,7 +425,11 @@ impl NativeScanner for WebsiteScanner {
             .await
         {
             let status = resp.status().as_u16();
-            let loc = resp.headers().get("location").and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+            let loc = resp
+                .headers()
+                .get("location")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let body = resp.text().await.unwrap_or_default();
             if host_header_hit(&body, loc.as_deref(), "canary.secuscan.test") {
                 findings.push(issue(
@@ -341,8 +438,12 @@ impl NativeScanner for WebsiteScanner {
                     "Host header reflected".into(),
                     "The application echoed an injected Host header in the body or Location.",
                     "Use a configured canonical host; ignore the request Host for redirects.",
-                    &target, "GET", status, &truncate(&body, 400),
-                    "CWE-644", "A05:2021-Security Misconfiguration",
+                    &target,
+                    "GET",
+                    status,
+                    &truncate(&body, 400),
+                    "CWE-644",
+                    "A05:2021-Security Misconfiguration",
                 ));
             }
         }
@@ -367,24 +468,39 @@ impl NativeScanner for WebsiteScanner {
 
         // Form canary: GET forms only (no destructive POSTs).
         for (method, action, names) in forms {
-            if ctx.cancel.is_cancelled() { break; }
-            if !method.eq_ignore_ascii_case("get") { continue; }
-            if exclude.iter().any(|e| action.contains(e)) { continue; }
+            if ctx.cancel.is_cancelled() {
+                break;
+            }
+            if !method.eq_ignore_ascii_case("get") {
+                continue;
+            }
+            if exclude.iter().any(|e| action.contains(e)) {
+                continue;
+            }
             let field = names.first().map(String::as_str).unwrap_or("q");
             let url = append_query(&action, field, &marker);
-            let Ok(resp) = client.get(&url).send().await else { continue };
+            let Ok(resp) = client.get(&url).send().await else {
+                continue;
+            };
             let status = resp.status().as_u16();
             let body = resp.text().await.unwrap_or_default();
             if body.contains(&marker) {
-                findings.push(issue(
-                    Severity::Medium,
-                    FindingKind::SuspectedIssue,
-                    format!("Form parameter `{field}` reflects input"),
-                    "A crawled GET form echoed the unique marker.",
-                    "Encode output by context; validate parameter types.",
-                    &url, "GET", status, &truncate(&body, 400),
-                    "CWE-79", "A03:2021-Injection",
-                ).with_category("XSS"));
+                findings.push(
+                    issue(
+                        Severity::Medium,
+                        FindingKind::SuspectedIssue,
+                        format!("Form parameter `{field}` reflects input"),
+                        "A crawled GET form echoed the unique marker.",
+                        "Encode output by context; validate parameter types.",
+                        &url,
+                        "GET",
+                        status,
+                        &truncate(&body, 400),
+                        "CWE-79",
+                        "A03:2021-Injection",
+                    )
+                    .with_category("XSS"),
+                );
                 break;
             }
         }
@@ -426,13 +542,20 @@ fn passive_headers(
                 format!("Missing header: {name}"),
                 format!("The landing page at {url} does not send `{name}`."),
                 "Send the header on every HTTPS response.",
-                url, "GET", status, excerpt,
-                cwe, "A05:2021-Security Misconfiguration",
+                url,
+                "GET",
+                status,
+                excerpt,
+                cwe,
+                "A05:2021-Security Misconfiguration",
             ));
         }
     }
 }
 
+// This stable helper signature is shared by many detection probes.
+// Bundle the evidence parameters in a follow-up API refactor.
+#[allow(clippy::too_many_arguments)]
 fn issue(
     severity: Severity,
     kind: FindingKind,
@@ -466,9 +589,24 @@ fn issue(
         epss_score: None,
         epss_percentile: None,
         cisa_kev: false,
-        cwe: if cwe.is_empty() { None } else { Some(cwe.into()) },
-        owasp: if owasp.is_empty() { None } else { Some(owasp.into()) },
-        confidence: Some(if kind == FindingKind::SuspectedIssue { "uncertain" } else { "certain" }.into()),
+        cwe: if cwe.is_empty() {
+            None
+        } else {
+            Some(cwe.into())
+        },
+        owasp: if owasp.is_empty() {
+            None
+        } else {
+            Some(owasp.into())
+        },
+        confidence: Some(
+            if kind == FindingKind::SuspectedIssue {
+                "uncertain"
+            } else {
+                "certain"
+            }
+            .into(),
+        ),
     }
 }
 
@@ -490,19 +628,28 @@ fn header_map(h: &reqwest::header::HeaderMap) -> BTreeMap<String, String> {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..n]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..n])
+    }
 }
 
 fn uuid_like() -> String {
-    format!("{:x}", std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(1))
+    format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(1)
+    )
 }
 
 fn email_re() -> &'static regex::Regex {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}").unwrap())
+    RE.get_or_init(|| {
+        regex::Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}").unwrap()
+    })
 }
 
 fn link_re() -> &'static regex::Regex {
@@ -511,7 +658,9 @@ fn link_re() -> &'static regex::Regex {
 }
 
 pub fn join_url(base: &str, href: &str) -> Option<String> {
-    if href.starts_with("javascript:") || href.starts_with("mailto:") { return None; }
+    if href.starts_with("javascript:") || href.starts_with("mailto:") {
+        return None;
+    }
     if href.starts_with("http://") || href.starts_with("https://") {
         return Some(href.to_string());
     }
@@ -598,7 +747,11 @@ pub fn harvest_js_paths(body: &str) -> Vec<String> {
     let re = js_path_re();
     let mut out = Vec::new();
     for cap in re.captures_iter(body) {
-        let p = cap.get(1).or_else(|| cap.get(2)).map(|m| m.as_str()).unwrap_or("");
+        let p = cap
+            .get(1)
+            .or_else(|| cap.get(2))
+            .map(|m| m.as_str())
+            .unwrap_or("");
         if p.starts_with('/') && !p.starts_with("//") {
             out.push(p.to_string());
         }
@@ -614,8 +767,15 @@ pub fn extract_forms(page_url: &str, body: &str) -> Vec<(String, String, Vec<Str
         let tag = cap.get(0).map(|m| m.as_str()).unwrap_or("");
         let method = attr(tag, "method").unwrap_or_else(|| "get".into());
         let action_raw = attr(tag, "action").unwrap_or_default();
-        let action = join_url(page_url, if action_raw.is_empty() { page_url } else { &action_raw })
-            .unwrap_or_else(|| page_url.to_string());
+        let action = join_url(
+            page_url,
+            if action_raw.is_empty() {
+                page_url
+            } else {
+                &action_raw
+            },
+        )
+        .unwrap_or_else(|| page_url.to_string());
         let names: Vec<String> = input_name_re()
             .captures_iter(tag)
             .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
@@ -627,7 +787,9 @@ pub fn extract_forms(page_url: &str, body: &str) -> Vec<(String, String, Vec<Str
 
 fn attr(tag: &str, name: &str) -> Option<String> {
     let re = regex::Regex::new(&format!(r#"(?i){name}=["']([^"']*)["']"#)).ok()?;
-    re.captures(tag).and_then(|c| c.get(1)).map(|m| m.as_str().to_string())
+    re.captures(tag)
+        .and_then(|c| c.get(1))
+        .map(|m| m.as_str().to_string())
 }
 
 fn js_path_re() -> &'static regex::Regex {
@@ -656,15 +818,28 @@ mod tests {
 
     #[test]
     fn join_and_query() {
-        assert_eq!(join_url("https://a.test/app", "/x"), Some("https://a.test/x".into()));
-        assert_eq!(append_query("https://a.test/", "q", "1"), "https://a.test/?q=1");
-        assert_eq!(append_query("https://a.test/?a=1", "q", "2"), "https://a.test/?a=1&q=2");
+        assert_eq!(
+            join_url("https://a.test/app", "/x"),
+            Some("https://a.test/x".into())
+        );
+        assert_eq!(
+            append_query("https://a.test/", "q", "1"),
+            "https://a.test/?q=1"
+        );
+        assert_eq!(
+            append_query("https://a.test/?a=1", "q", "2"),
+            "https://a.test/?a=1&q=2"
+        );
     }
 
     #[test]
     fn sql_error_detect() {
-        assert!(looks_like_sql_error("You have an error in your SQL syntax near"));
-        assert!(looks_like_sql_error("ORA-01756: quoted string not properly terminated"));
+        assert!(looks_like_sql_error(
+            "You have an error in your SQL syntax near"
+        ));
+        assert!(looks_like_sql_error(
+            "ORA-01756: quoted string not properly terminated"
+        ));
         assert!(!looks_like_sql_error("welcome to the shop"));
         assert!(is_soft_404("404 not found"));
         assert!(!is_soft_404(&"x".repeat(2000)));
@@ -678,18 +853,26 @@ mod tests {
         assert!(cors_is_permissive("*", "true"));
         assert!(cors_is_permissive("https://canary.secuscan.test", "true"));
         assert!(!cors_is_permissive("https://app.example", "false"));
-        assert!(open_redirect_hit("https://canary.secuscan.test/x", "canary.secuscan.test"));
+        assert!(open_redirect_hit(
+            "https://canary.secuscan.test/x",
+            "canary.secuscan.test"
+        ));
         assert!(!open_redirect_hit("/local", "canary.secuscan.test"));
         assert!(ssti_hit("result=49"));
         assert!(!ssti_hit("literal {{7*7}}"));
-        assert!(host_header_hit("welcome canary.secuscan.test", None, "canary.secuscan.test"));
+        assert!(host_header_hit(
+            "welcome canary.secuscan.test",
+            None,
+            "canary.secuscan.test"
+        ));
         assert!(looks_versioned("nginx/1.25.3"));
         assert!(!looks_versioned("cloudflare"));
     }
 
     #[test]
     fn harvest_and_forms() {
-        let paths = harvest_js_paths(r#"<script src="/static/app.js"></script> fetch("/api/users")"#);
+        let paths =
+            harvest_js_paths(r#"<script src="/static/app.js"></script> fetch("/api/users")"#);
         assert!(paths.contains(&"/static/app.js".into()));
         assert!(paths.contains(&"/api/users".into()));
         let forms = extract_forms(

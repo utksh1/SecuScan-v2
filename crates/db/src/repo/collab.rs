@@ -1,8 +1,8 @@
 //! Collaboration: workspace members + finding comments + mentions.
 
-use crate::{DbError, DbResult};
 use crate::models::{FindingCommentRow, MentionRow, WorkspaceMemberRow};
 use crate::new_id;
+use crate::DbResult;
 use sqlx::SqlitePool;
 
 // --- workspace members -----------------------------------------------------
@@ -33,14 +33,11 @@ pub async fn add_member(
     .bind(workspace_id)
     .bind(user_id)
     .fetch_one(db)
-    .await.map_err(Into::into)
+    .await
+    .map_err(Into::into)
 }
 
-pub async fn remove_member(
-    db: &SqlitePool,
-    workspace_id: &str,
-    user_id: &str,
-) -> DbResult<()> {
+pub async fn remove_member(db: &SqlitePool, workspace_id: &str, user_id: &str) -> DbResult<()> {
     sqlx::query(
         "DELETE FROM workspace_members WHERE workspace_id = ? AND user_id = ? AND role != 'owner'",
     )
@@ -60,7 +57,8 @@ pub async fn list_members(
     )
     .bind(workspace_id)
     .fetch_all(db)
-    .await.map_err(Into::into)
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn member_role(
@@ -103,19 +101,18 @@ pub async fn add_comment(
     sqlx::query_as::<_, FindingCommentRow>("SELECT * FROM finding_comments WHERE id = ?")
         .bind(&id)
         .fetch_one(db)
-        .await.map_err(Into::into)
+        .await
+        .map_err(Into::into)
 }
 
-pub async fn list_comments(
-    db: &SqlitePool,
-    finding_id: &str,
-) -> DbResult<Vec<FindingCommentRow>> {
+pub async fn list_comments(db: &SqlitePool, finding_id: &str) -> DbResult<Vec<FindingCommentRow>> {
     sqlx::query_as::<_, FindingCommentRow>(
         "SELECT * FROM finding_comments WHERE finding_id = ? ORDER BY created_at",
     )
     .bind(finding_id)
     .fetch_all(db)
-    .await.map_err(Into::into)
+    .await
+    .map_err(Into::into)
 }
 
 // --- mentions --------------------------------------------------------------
@@ -147,7 +144,8 @@ pub async fn add_mention(
     sqlx::query_as::<_, MentionRow>("SELECT * FROM mentions WHERE id = ?")
         .bind(&id)
         .fetch_one(db)
-        .await.map_err(Into::into)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn list_mentions_for_user(

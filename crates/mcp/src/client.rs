@@ -61,22 +61,31 @@ impl SecuScanClient {
             Some(c) => c.clone(),
             None => return Ok(()), // anonymous; let the server reject if it must.
         };
-        let resp = self.http
+        let resp = self
+            .http
             .post(self.url("/api/v1/auth/login"))
             .json(&serde_json::json!({"email": email, "password": password}))
-            .send().await?;
+            .send()
+            .await?;
         if !resp.status().is_success() {
             return Err(anyhow!("login failed: HTTP {}", resp.status()));
         }
         let body: Value = resp.json().await?;
-        let token = body.get("access_token").and_then(|v| v.as_str())
+        let token = body
+            .get("access_token")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("login response missing access_token"))?
             .to_string();
         *self.token.write().unwrap() = Some(token);
         Ok(())
     }
 
-    async fn request(&self, method: reqwest::Method, path: &str, body: Option<Value>) -> Result<Value> {
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
         // Try up to 2 times: first with cached token, then refresh on 401.
         for attempt in 0..2 {
             self.ensure_authed().await?;

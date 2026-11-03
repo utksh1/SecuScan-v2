@@ -5,9 +5,9 @@
 //! at startup, so rows written through this repo carry `enc:v1:` ciphertext;
 //! legacy plaintext rows decrypt transparently on read.
 
-use crate::{DbError, DbResult};
 use crate::models::AuthProfileRow;
 use crate::new_id;
+use crate::{DbError, DbResult};
 use sqlx::SqlitePool;
 
 /// Encrypt a config for storage (no-op when crypto is uninitialized).
@@ -22,7 +22,9 @@ fn open(config_json: &str) -> String {
     match secuscan_core::crypto::decrypt_from_storage(config_json) {
         Ok(plain) => plain,
         Err(e) => {
-            tracing::error!("auth profile config is encrypted but undecryptable ({e}); returning raw value");
+            tracing::error!(
+                "auth profile config is encrypted but undecryptable ({e}); returning raw value"
+            );
             config_json.to_string()
         }
     }
@@ -60,25 +62,26 @@ pub async fn create(
     .bind(&now)
     .execute(db)
     .await?;
-    get(db, &id).await.map_err(Into::into)
+    get(db, &id).await
 }
 
-pub async fn list(
-    db: &SqlitePool,
-    workspace_id: Option<&str>,
-) -> DbResult<Vec<AuthProfileRow>> {
+pub async fn list(db: &SqlitePool, workspace_id: Option<&str>) -> DbResult<Vec<AuthProfileRow>> {
     match workspace_id {
-        Some(ws) => sqlx::query_as::<_, AuthProfileRow>(
-            "SELECT * FROM auth_profiles WHERE workspace_id = ? ORDER BY created_at DESC",
-        )
-        .bind(ws)
-        .fetch_all(db)
-        .await,
-        None => sqlx::query_as::<_, AuthProfileRow>(
-            "SELECT * FROM auth_profiles ORDER BY created_at DESC",
-        )
-        .fetch_all(db)
-        .await,
+        Some(ws) => {
+            sqlx::query_as::<_, AuthProfileRow>(
+                "SELECT * FROM auth_profiles WHERE workspace_id = ? ORDER BY created_at DESC",
+            )
+            .bind(ws)
+            .fetch_all(db)
+            .await
+        }
+        None => {
+            sqlx::query_as::<_, AuthProfileRow>(
+                "SELECT * FROM auth_profiles ORDER BY created_at DESC",
+            )
+            .fetch_all(db)
+            .await
+        }
     }
     .map(|rows| rows.into_iter().map(decrypt_row).collect())
     .map_err(Into::into)

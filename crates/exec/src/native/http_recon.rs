@@ -48,7 +48,9 @@ impl NativeScanner for HttpReconScanner {
         // --- main page ------------------------------------------------------
         let resp = super::auth::apply_auth(
             auth.as_ref(),
-            client.get(&base).header("user-agent", "SecuScan-2.0 (recon)"),
+            client
+                .get(&base)
+                .header("user-agent", "SecuScan-2.0 (recon)"),
         )
         .send()
         .await
@@ -201,7 +203,9 @@ fn harvest_js_paths(body: &str) -> Vec<String> {
 pub fn comment_leaks(body: &str) -> Vec<String> {
     let re = regex::Regex::new(r"(?is)<!--(.*?)-->").ok();
     let Some(re) = re else { return vec![] };
-    let needles = ["password", "secret", "api_key", "apikey", "todo", "fixme", "hack"];
+    let needles = [
+        "password", "secret", "api_key", "apikey", "todo", "fixme", "hack",
+    ];
     re.captures_iter(body)
         .filter_map(|c| c.get(1).map(|m| m.as_str().trim().to_string()))
         .filter(|t| {

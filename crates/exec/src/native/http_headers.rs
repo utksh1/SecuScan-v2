@@ -267,7 +267,10 @@ pub(crate) fn build_client(follow: bool, timeout: Duration) -> Result<Client, St
 /// The shared ClientBuilder (same-host redirect policy, timeouts, no
 /// proxy). Callers that need client-wide defaults (e.g. auth cookies for
 /// authenticated scans) can extend the builder before building.
-pub(crate) fn client_builder(follow: bool, timeout: Duration) -> Result<reqwest::ClientBuilder, String> {
+pub(crate) fn client_builder(
+    follow: bool,
+    timeout: Duration,
+) -> Result<reqwest::ClientBuilder, String> {
     // Only same-host redirects: a target must not be able to pivot the
     // scanner onto arbitrary internal endpoints via a redirect.
     let policy = if follow {

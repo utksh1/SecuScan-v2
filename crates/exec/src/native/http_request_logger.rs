@@ -4,7 +4,7 @@
 //! callback URL as a finding. The handler then receives callbacks at
 //! /oob/<secret> (handled by the API layer).
 
-use super::{get_str, get_i64_or, NativeCtx, NativeScanner};
+use super::{get_i64_or, get_str, NativeCtx, NativeScanner};
 use async_trait::async_trait;
 use secuscan_core::models::{Finding, FindingKind, Severity};
 use serde_json::json;
@@ -14,13 +14,21 @@ pub struct HttpRequestLogger;
 
 #[async_trait]
 impl NativeScanner for HttpRequestLogger {
-    fn id(&self) -> &'static str { "http_request_logger" }
-    fn name(&self) -> &'static str { "HTTP Request Logger (OOB)" }
+    fn id(&self) -> &'static str {
+        "http_request_logger"
+    }
+    fn name(&self) -> &'static str {
+        "HTTP Request Logger (OOB)"
+    }
     fn description(&self) -> &'static str {
         "Out-of-band callback handler for SSRF/XXE/blind-SQLi/command-injection detection"
     }
 
-    async fn run(&self, inputs: &BTreeMap<String, serde_json::Value>, _ctx: &NativeCtx) -> Result<Vec<Finding>, String> {
+    async fn run(
+        &self,
+        inputs: &BTreeMap<String, serde_json::Value>,
+        _ctx: &NativeCtx,
+    ) -> Result<Vec<Finding>, String> {
         let name = get_str(inputs, "target")?;
         let ttl_hours = get_i64_or(inputs, "ttl_hours", 1440);
         let ttl_seconds = ttl_hours * 3600;

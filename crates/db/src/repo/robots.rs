@@ -5,9 +5,9 @@
 //! walks it. This repo only persists rows — the orchestration lives higher
 //! up so it can be unit-tested without a database.
 
-use crate::{DbError, DbResult};
 use crate::models::{RobotRow, RobotRunRow};
 use crate::new_id;
+use crate::DbResult;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
@@ -38,22 +38,22 @@ pub async fn create(
     .bind(&now)
     .execute(db)
     .await?;
-    get(db, &id).await.map_err(Into::into)
+    get(db, &id).await
 }
 
 pub async fn list(db: &SqlitePool) -> DbResult<Vec<RobotRow>> {
-    sqlx::query_as::<_, RobotRow>(
-        "SELECT * FROM robots ORDER BY source DESC, created_at DESC",
-    )
-    .fetch_all(db)
-    .await.map_err(Into::into)
+    sqlx::query_as::<_, RobotRow>("SELECT * FROM robots ORDER BY source DESC, created_at DESC")
+        .fetch_all(db)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn get(db: &SqlitePool, id: &str) -> DbResult<RobotRow> {
     sqlx::query_as::<_, RobotRow>("SELECT * FROM robots WHERE id = ?")
         .bind(id)
         .fetch_one(db)
-        .await.map_err(Into::into)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn update(
@@ -112,14 +112,15 @@ pub async fn create_run(
     .bind(&now)
     .execute(db)
     .await?;
-    get_run(db, &id).await.map_err(Into::into)
+    get_run(db, &id).await
 }
 
 pub async fn get_run(db: &SqlitePool, id: &str) -> DbResult<RobotRunRow> {
     sqlx::query_as::<_, RobotRunRow>("SELECT * FROM robot_runs WHERE id = ?")
         .bind(id)
         .fetch_one(db)
-        .await.map_err(Into::into)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn list_runs(db: &SqlitePool, robot_id: &str) -> DbResult<Vec<RobotRunRow>> {
@@ -128,14 +129,11 @@ pub async fn list_runs(db: &SqlitePool, robot_id: &str) -> DbResult<Vec<RobotRun
     )
     .bind(robot_id)
     .fetch_all(db)
-    .await.map_err(Into::into)
+    .await
+    .map_err(Into::into)
 }
 
-pub async fn set_run_state(
-    db: &SqlitePool,
-    run_id: &str,
-    state_json: &str,
-) -> DbResult<()> {
+pub async fn set_run_state(db: &SqlitePool, run_id: &str, state_json: &str) -> DbResult<()> {
     sqlx::query("UPDATE robot_runs SET state_json = ? WHERE id = ?")
         .bind(state_json)
         .bind(run_id)
@@ -151,15 +149,13 @@ pub async fn finish_run(
     error: Option<&str>,
 ) -> DbResult<()> {
     let now = crate::now();
-    sqlx::query(
-        "UPDATE robot_runs SET status = ?, error = ?, finished_at = ? WHERE id = ?",
-    )
-    .bind(status)
-    .bind(error)
-    .bind(&now)
-    .bind(run_id)
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE robot_runs SET status = ?, error = ?, finished_at = ? WHERE id = ?")
+        .bind(status)
+        .bind(error)
+        .bind(&now)
+        .bind(run_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 

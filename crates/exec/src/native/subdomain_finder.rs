@@ -11,7 +11,7 @@
 //! Active probing is DNS-only: each candidate label is resolved against the
 //! system resolver. NXDOMAIN is "absent"; SERVFAIL/timeout is skipped.
 
-use super::dns::{self, DnsRecord, rtype};
+use super::dns::{self, rtype, DnsRecord};
 use super::{get_i64_or, get_str_or, NativeCtx, NativeScanner};
 use async_trait::async_trait;
 
@@ -114,7 +114,9 @@ impl NativeScanner for SubdomainFinderScanner {
                 found.push((name, ips));
             }
         } else if !use_ct {
-            return Err("both crt.sh and DNS brute-force are disabled — pick at least one source".into());
+            return Err(
+                "both crt.sh and DNS brute-force are disabled — pick at least one source".into(),
+            );
         }
 
         // ---- dedupe + report ---------------------------------------------------
@@ -129,8 +131,7 @@ fn load_labels(path: &str, max_labels: usize) -> Result<Vec<String>, String> {
     let raw: &str = if path.is_empty() {
         EMBEDDED_WORDLIST
     } else {
-        &std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read wordlist `{path}`: {e}"))?
+        &std::fs::read_to_string(path).map_err(|e| format!("cannot read wordlist `{path}`: {e}"))?
     };
     let mut out = Vec::new();
     for line in raw.lines() {
@@ -228,10 +229,8 @@ pub(super) fn extract_ct_names(body: &serde_json::Value, domain: &str) -> Vec<St
         };
         for n in nv.split('\n') {
             let n = n.trim().trim_start_matches("*.").to_ascii_lowercase();
-            if n == domain || n.ends_with(&format!(".{domain}")) {
-                if dns::valid_name(&n) {
-                    names.push(n);
-                }
+            if (n == domain || n.ends_with(&format!(".{domain}"))) && dns::valid_name(&n) {
+                names.push(n);
             }
         }
     }
@@ -263,13 +262,15 @@ pub(super) fn names_to_findings(domain: &str, found: &[(String, String)]) -> Vec
             finding(
                 Severity::Info,
                 format!("Subdomain: {name}"),
-                format!("`{name}` resolved ({}). Subdomains can host forgotten or \
+                format!(
+                    "`{name}` resolved ({}). Subdomains can host forgotten or \
                          less-hardened services — add them to the scan scope.",
-                        if note == "certificate-transparency" {
-                            "seen in public certificate-transparency logs"
-                        } else {
-                            "A record"
-                        }),
+                    if note == "certificate-transparency" {
+                        "seen in public certificate-transparency logs"
+                    } else {
+                        "A record"
+                    }
+                ),
                 "Review each discovered host for stale deployments and apply the \
                  same hardening baseline as primary domains.",
                 name.clone(),
@@ -310,7 +311,10 @@ mod tests {
             {"name_value": "not valid!!"}
         ]);
         let names = extract_ct_names(&body, "example.com");
-        assert_eq!(names, vec!["api.example.com", "example.com", "www.example.com"]);
+        assert_eq!(
+            names,
+            vec!["api.example.com", "example.com", "www.example.com"]
+        );
     }
 
     #[test]
@@ -359,6 +363,8 @@ mod tests {
         );
         assert_eq!(fs.len(), 2);
         assert!(fs[0].title.contains("Subdomain:"));
-        assert!(fs.iter().any(|f| f.metadata["source"] == json!("certificate-transparency")));
+        assert!(fs
+            .iter()
+            .any(|f| f.metadata["source"] == json!("certificate-transparency")));
     }
 }

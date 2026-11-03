@@ -1,29 +1,33 @@
-.PHONY: build test fmt clippy frontend frontend-test verify e2e docker clean
+.PHONY: build test fmt fmt-check clippy plugins-check frontend frontend-test verify e2e docker clean
 
 build: frontend
 	cargo build --release --workspace
 
 test:
-	cargo test --workspace
+	cargo test --workspace --locked
 
 fmt:
 	cargo fmt --all
 
+fmt-check:
+	cargo fmt --all --check
+
 clippy:
-	cargo clippy --workspace --all-targets -- -D warnings
+	cargo clippy --workspace --all-targets --locked -- -D warnings
+
+plugins-check:
+	cargo run -q -p secuscan-cli --locked -- plugins validate ./plugins
 
 frontend:
 	cd frontend && npm ci && npm run build
 
 frontend-test:
-	cd frontend && npm ci && npm test
+	cd frontend && npm ci && npm run typecheck && npm test
 
-# Full local verification (mirrors CI + the Node E2E proof script)
-verify: clippy test frontend-test frontend
-	cargo run -q -p secuscan-cli --locked -- plugins validate ./plugins
-	node scripts/verify.mjs
+# Run all local static checks, then the product-surface E2E.
+# Requires a local Rust toolchain, Node >= 20 and an available port 8080.
+verify: fmt-check clippy test plugins-check frontend-test e2e
 
-# What the CI `e2e` job runs: release server + built SPA + verify.mjs
 e2e: frontend
 	cargo build --locked --release --bin secuscan-server
 	node scripts/verify.mjs

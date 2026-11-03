@@ -597,31 +597,28 @@ async fn fp_memory_triage_audit_and_rescan_suppression() {
         s: &TestServer,
         auth: &dyn Fn(reqwest::RequestBuilder) -> reqwest::RequestBuilder,
     ) -> String {
-        let resp = auth(
-            reqwest::Client::new().post(format!("{}/tasks", s.base)),
-        )
-        .json(&serde_json::json!({
-            "plugin_id": "sevtest",
-            "inputs": {"target": "fp-target.test"},
-            "consent_granted": true,
-        }))
-        .send()
-        .await
-        .unwrap();
+        let resp = auth(reqwest::Client::new().post(format!("{}/tasks", s.base)))
+            .json(&serde_json::json!({
+                "plugin_id": "sevtest",
+                "inputs": {"target": "fp-target.test"},
+                "consent_granted": true,
+            }))
+            .send()
+            .await
+            .unwrap();
         assert_eq!(resp.status(), 201);
         let task: serde_json::Value = resp.json().await.unwrap();
         let task_id = task["id"].as_str().unwrap().to_string();
         for _ in 0..100 {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            let t: serde_json::Value = auth(
-                reqwest::Client::new().get(format!("{}/tasks/{task_id}", s.base)),
-            )
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+            let t: serde_json::Value =
+                auth(reqwest::Client::new().get(format!("{}/tasks/{task_id}", s.base)))
+                    .send()
+                    .await
+                    .unwrap()
+                    .json()
+                    .await
+                    .unwrap();
             match t["status"].as_str().unwrap() {
                 "completed" => break,
                 "failed" => panic!("sevtest task failed: {t:?}"),
@@ -777,13 +774,12 @@ async fn auth_profiles_encrypted_at_rest_and_readable_via_api() {
     let pid = created["id"].as_str().unwrap().to_string();
 
     // Raw SQLite row must contain ciphertext, not the secret.
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT config_json FROM auth_profiles WHERE id = ?",
-    )
-    .bind(&pid)
-    .fetch_optional(&s.state.db)
-    .await
-    .unwrap();
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT config_json FROM auth_profiles WHERE id = ?")
+            .bind(&pid)
+            .fetch_optional(&s.state.db)
+            .await
+            .unwrap();
     let raw = row.unwrap().0;
     assert!(
         raw.starts_with("enc:v1:"),
@@ -812,13 +808,12 @@ async fn auth_profiles_encrypted_at_rest_and_readable_via_api() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 204);
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT config_json FROM auth_profiles WHERE id = ?",
-    )
-    .bind(&pid)
-    .fetch_optional(&s.state.db)
-    .await
-    .unwrap();
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT config_json FROM auth_profiles WHERE id = ?")
+            .bind(&pid)
+            .fetch_optional(&s.state.db)
+            .await
+            .unwrap();
     assert!(row.unwrap().0.starts_with("enc:v1:"));
     let prof: serde_json::Value = auth(c.get(format!("{}/auth-profiles/{pid}", s.base)))
         .send()
@@ -2211,9 +2206,28 @@ async fn report_job_webhook_delivery_is_signed() {
     let body_str = String::from_utf8_lossy(&body);
     assert!(!body_str.contains("whsec_test_123"));
 
-    // First-attempt success recorded.
-    let j = wait_report_terminal(&c, &s.base, &token, &id).await;
-    assert_eq!(j["webhook_attempts"], serde_json::json!(1));
+    // The callback can reach the receiver before the worker commits
+    // webhook_attempts; poll the database-backed API for eventual persistence.
+    let mut recorded = false;
+    for _ in 0..100 {
+        let response = c
+            .get(format!("{}/reports/{id}", s.base))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        let job: serde_json::Value = response.json().await.unwrap();
+        if job["webhook_attempts"] == serde_json::json!(1) {
+            recorded = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(
+        recorded,
+        "signed webhook must record exactly one delivery attempt"
+    );
 }
 
 #[tokio::test]

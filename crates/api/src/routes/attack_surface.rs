@@ -65,19 +65,12 @@ async fn summary(
     _user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
-    let total = secuscan_db::repo::attack_surface::count(
-        &state.db,
-        q.workspace_id.as_deref(),
-    )
-    .await?;
+    let total =
+        secuscan_db::repo::attack_surface::count(&state.db, q.workspace_id.as_deref()).await?;
     // Get top technologies by counting occurrences in metadata.technologies
-    let rows = secuscan_db::repo::attack_surface::list(
-        &state.db,
-        q.workspace_id.as_deref(),
-        None,
-        500,
-    )
-    .await?;
+    let rows =
+        secuscan_db::repo::attack_surface::list(&state.db, q.workspace_id.as_deref(), None, 500)
+            .await?;
     let mut tech_counts: std::collections::BTreeMap<String, usize> = Default::default();
     let mut service_counts: std::collections::BTreeMap<String, usize> = Default::default();
     let mut risk_counts: std::collections::BTreeMap<String, usize> = Default::default();
@@ -105,13 +98,16 @@ async fn summary(
             }
         }
     }
-    let top_tech = tech_counts.into_iter()
+    let top_tech = tech_counts
+        .into_iter()
         .map(|(k, v)| json!({"name": k, "count": v}))
         .collect::<Vec<_>>();
-    let top_services = service_counts.into_iter()
+    let top_services = service_counts
+        .into_iter()
         .map(|(k, v)| json!({"name": k, "count": v}))
         .collect::<Vec<_>>();
-    let top_risks = risk_counts.into_iter()
+    let top_risks = risk_counts
+        .into_iter()
         .map(|(k, v)| json!({"name": k, "count": v}))
         .collect::<Vec<_>>();
     Ok(Json(json!({

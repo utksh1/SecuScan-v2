@@ -4,31 +4,70 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  backend:
+  rust-format:
+    name: Rust formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Verify formatting
+        run: cargo fmt --all --check
+
+  rust-clippy:
+    name: Rust Clippy
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Clippy
+        with:
+          shared-key: rust-check
+      - name: Lint all targets
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Tests
-        run: cargo test --workspace --locked -- --nocapture
-      - name: Plugin catalogue validates
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust-tests
+      - name: Run workspace tests
+        run: cargo test --workspace --locked
+
+  plugin-catalog:
+    name: Plugin catalog validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: plugin-catalog
+      - name: Validate plugin manifests
         run: cargo run -q -p secuscan-cli --locked -- plugins validate ./plugins
 
   frontend:
@@ -54,7 +93,7 @@ jobs:
 
   e2e:
     name: e2e (verify.mjs)
-    needs: [backend, frontend]
+    needs: [rust-tests, plugin-catalog, frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -87,13 +126,14 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p /tmp/secuscan-ci-data && chmod 777 /tmp/secuscan-ci-data
+          jwt_secret="$(openssl rand -hex 32)"
           docker run -d --name secuscan-ci \
-            -p 18080:8080 \
+            -p 127.0.0.1:18080:8080 \
             -v /tmp/secuscan-ci-data:/app/data \
             -e SECUSCAN_ADDR=0.0.0.0:8080 \
             -e SECUSCAN_ADMIN_EMAIL=admin@secuscan.local \
             -e SECUSCAN_ADMIN_PASSWORD=CiSmokePass1 \
-            -e SECUSCAN_JWT_SECRET=ci-smoke-secret-32bytes-long-aaaa \
+            -e SECUSCAN_JWT_SECRET="$jwt_secret" \
             secuscan-v2:ci
           trap 'docker logs secuscan-ci || true; docker rm -f secuscan-ci || true' EXIT
           ok=0

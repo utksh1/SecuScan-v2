@@ -51,10 +51,7 @@ impl NativeScanner for VhostFinderScanner {
 
         let url = reqwest::Url::parse(&target).map_err(|e| format!("bad URL: {e}"))?;
         let port = url.port_or_known_default();
-        let host = url
-            .host_str()
-            .ok_or("target URL has no host")?
-            .to_string();
+        let host = url.host_str().ok_or("target URL has no host")?.to_string();
         let base_ip = resolve_host(&host, timeout)
             .await
             .ok_or_else(|| format!("cannot resolve `{host}`"))?;
@@ -85,7 +82,7 @@ impl NativeScanner for VhostFinderScanner {
         for label in &labels {
             let ip_url = ip_url.clone();
             let client = client.clone();
-            let base = baseline.clone();
+            let base = baseline;
             let host_header = format!("{label}.{base_host_header}");
             set.spawn(async move {
                 let probe = probe(&client, &ip_url, &host_header, port).await.ok()?;
@@ -108,7 +105,12 @@ impl NativeScanner for VhostFinderScanner {
 
 type Probe = (u16, usize); // (status, body_len)
 
-async fn probe(client: &reqwest::Client, url: &str, host_header: &str, _port: Option<u16>) -> Result<Probe, String> {
+async fn probe(
+    client: &reqwest::Client,
+    url: &str,
+    host_header: &str,
+    _port: Option<u16>,
+) -> Result<Probe, String> {
     let resp = client
         .get(url)
         .header("host", host_header)
@@ -148,7 +150,8 @@ fn rebuild_url_with_ip(target: &str, ip: &str, port: Option<u16>) -> Result<Stri
     if let Some(p) = port {
         if !matches!((u.scheme(), p), ("http", 80) | ("https", 443)) {
             // url::Url::set_port errors with () — map to a message
-            u.set_port(Some(p)).map_err(|_| "cannot set port".to_string())?;
+            u.set_port(Some(p))
+                .map_err(|_| "cannot set port".to_string())?;
         } else {
             let _ = u.set_port(None);
         }
@@ -160,8 +163,7 @@ fn load_labels(path: &str, max_labels: usize) -> Result<Vec<String>, String> {
     let raw: &str = if path.is_empty() {
         DEFAULT_VHOSTS
     } else {
-        &std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read wordlist `{path}`: {e}"))?
+        &std::fs::read_to_string(path).map_err(|e| format!("cannot read wordlist `{path}`: {e}"))?
     };
     let mut out = Vec::new();
     for line in raw.lines() {
@@ -181,12 +183,9 @@ fn load_labels(path: &str, max_labels: usize) -> Result<Vec<String>, String> {
 }
 
 /// Pure conversion — unit-testable.
-pub(super) fn vhost_findings(
-    baseline: &Probe,
-    found: &[(String, u16, usize)],
-) -> Vec<Finding> {
+pub(super) fn vhost_findings(baseline: &Probe, found: &[(String, u16, usize)]) -> Vec<Finding> {
     if found.is_empty() {
-        return vec![finding(
+        vec![finding(
             Severity::Info,
             "No distinct virtual hosts found",
             format!(
@@ -260,10 +259,7 @@ mod tests {
 
     #[test]
     fn found_vhosts_listed() {
-        let fs = vhost_findings(
-            &(200, 10),
-            &[("staging.acme.test".to_string(), 403, 250)],
-        );
+        let fs = vhost_findings(&(200, 10), &[("staging.acme.test".to_string(), 403, 250)]);
         assert_eq!(fs.len(), 1);
         assert!(fs[0].title.contains("staging.acme.test"));
         assert_eq!(fs[0].metadata["status"], json!(403));

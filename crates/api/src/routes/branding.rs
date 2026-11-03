@@ -29,10 +29,7 @@ fn branding_to_json(b: &secuscan_db::models::BrandingRow) -> Value {
     })
 }
 
-async fn get_one(
-    State(state): State<SharedState>,
-    _user: CurrentUser,
-) -> ApiResult<Json<Value>> {
+async fn get_one(State(state): State<SharedState>, _user: CurrentUser) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::branding::get(&state.db).await?;
     Ok(Json(branding_to_json(&row)))
 }
@@ -52,15 +49,19 @@ async fn update(
 ) -> ApiResult<StatusCode> {
     user.require_admin()?;
     if req.org_name.trim().is_empty() || req.org_name.len() > 120 {
-        return Err(ApiError::BadRequest("org_name must be 1..=120 characters".into()));
+        return Err(ApiError::BadRequest(
+            "org_name must be 1..=120 characters".into(),
+        ));
     }
     if !is_hex_color(&req.primary_color) || !is_hex_color(&req.accent_color) {
         return Err(ApiError::BadRequest(
-            "primary_color and accent_color must be 6-character hex (no #)".into()
+            "primary_color and accent_color must be 6-character hex (no #)".into(),
         ));
     }
     if req.footer_text.len() > 500 {
-        return Err(ApiError::BadRequest("footer_text must be <= 500 characters".into()));
+        return Err(ApiError::BadRequest(
+            "footer_text must be <= 500 characters".into(),
+        ));
     }
     // Preserve existing logo on text-only updates.
     let existing = secuscan_db::repo::branding::get(&state.db).await?;
@@ -72,7 +73,8 @@ async fn update(
         &req.accent_color,
         &req.footer_text,
         Some(&user.0.id),
-    ).await?;
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -83,11 +85,15 @@ async fn upload_logo(
 ) -> ApiResult<StatusCode> {
     user.require_admin()?;
     let mut logo_bytes: Option<Vec<u8>> = None;
-    while let Some(field) = mp.next_field().await
+    while let Some(field) = mp
+        .next_field()
+        .await
         .map_err(|e| ApiError::BadRequest(format!("multipart error: {e}")))?
     {
         if field.name() == Some("logo") {
-            let bytes = field.bytes().await
+            let bytes = field
+                .bytes()
+                .await
                 .map_err(|e| ApiError::BadRequest(format!("read field: {e}")))?;
             if bytes.len() > 256 * 1024 {
                 return Err(ApiError::BadRequest("logo must be <= 256KB".into()));
@@ -109,7 +115,8 @@ async fn upload_logo(
         &existing.accent_color,
         &existing.footer_text,
         Some(&user.0.id),
-    ).await?;
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

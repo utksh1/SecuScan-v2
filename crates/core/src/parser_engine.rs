@@ -36,7 +36,12 @@ pub fn parse_output(
             metadata_fields,
             skip_patterns,
         } => parse_line_regex(
-            pattern, finding, severity_rules, metadata_fields, skip_patterns, output,
+            pattern,
+            finding,
+            severity_rules,
+            metadata_fields,
+            skip_patterns,
+            output,
         )?,
         ParserSpec::JsonLines {
             finding,
@@ -148,12 +153,11 @@ fn substitute_groups(template: &str, caps: &regex::Captures<'_>) -> String {
             }
             Some(end) => {
                 let name = &after[..end];
-                match caps.name(name) {
-                    Some(m) => out.push_str(m.as_str()),
-                    // Unmatched optional capture groups render as empty
-                    // (mustache-style) so patterns with optional groups can
-                    // feed every template field.
-                    None => {}
+                // Unmatched optional capture groups render as empty
+                // (mustache-style) so patterns with optional groups can
+                // feed every template field.
+                if let Some(m) = caps.name(name) {
+                    out.push_str(m.as_str());
                 }
                 rest = &after[end + 1..];
             }
@@ -623,9 +627,15 @@ mod tests {
             Some("AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H")
         );
         // proof_fields join: curl-command | template-id
-        assert_eq!(f.proof, "curl -X GET http://t/path | CVE-2021-44228-log4j-rce");
+        assert_eq!(
+            f.proof,
+            "curl -X GET http://t/path | CVE-2021-44228-log4j-rce"
+        );
         assert_eq!(f.metadata["tags"], json!("cve,rce,log4j"));
-        assert_eq!(f.metadata["reference"], json!(["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"]));
+        assert_eq!(
+            f.metadata["reference"],
+            json!(["https://nvd.nist.gov/vuln/detail/CVE-2021-44228"])
+        );
         assert_eq!(f.metadata["host"], json!("http://t"));
 
         // Line 2: first tag xss maps before wordpress (tag order wins).
@@ -652,15 +662,28 @@ mod tests {
             .expect("plugins/nuclei.toml must exist next to the workspace");
         let manifest: crate::manifest::PluginManifest =
             toml::from_str(&src).expect("nuclei.toml must deserialize");
-        let ParserSpec::JsonLines { finding, severity_map } = &manifest.parser else {
-            panic!("nuclei.toml parser must be json_lines, got {:?}", manifest.parser);
+        let ParserSpec::JsonLines {
+            finding,
+            severity_map,
+        } = &manifest.parser
+        else {
+            panic!(
+                "nuclei.toml parser must be json_lines, got {:?}",
+                manifest.parser
+            );
         };
         assert_eq!(finding.title_field, "info.name");
         assert_eq!(finding.url_field.as_deref(), Some("matched-at"));
-        assert_eq!(finding.cve_field.as_deref(), Some("info.classification.cve-id"));
+        assert_eq!(
+            finding.cve_field.as_deref(),
+            Some("info.classification.cve-id")
+        );
         assert!(finding.proof_fields.contains(&"curl-command".to_string()));
         assert!(finding.category_map.contains_key("sqli"));
-        assert_eq!(severity_map.get("critical").map(String::as_str), Some("critical"));
+        assert_eq!(
+            severity_map.get("critical").map(String::as_str),
+            Some("critical")
+        );
 
         // A captured (abbreviated) nuclei JSONL line.
         let out = concat!(
@@ -675,7 +698,10 @@ mod tests {
         assert_eq!(findings[0].severity, Severity::Medium);
         assert_eq!(findings[0].category, "Vulnerability"); // tags unmapped
         assert!(findings[0].proof.contains("curl"));
-        assert_eq!(findings[0].metadata["tags"], json!(["exposure", "backup", "mysql", "vuln"]));
+        assert_eq!(
+            findings[0].metadata["tags"],
+            json!(["exposure", "backup", "mysql", "vuln"])
+        );
         // Second line maps sqli -> SQL Injection + extracts CVE/CVSS.
         assert_eq!(findings[1].category, "SQL Injection");
         assert_eq!(findings[1].cve.as_deref(), Some("CVE-2024-1234"));
@@ -881,7 +907,8 @@ mod tests {
     #[test]
     fn nikto_check_ids_get_severity() {
         let spec = ParserSpec::LineRegex {
-            pattern: r"^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$".into(),
+            pattern: r"^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$"
+                .into(),
             finding: LineFindingTemplate {
                 title: "{item}".into(),
                 description: Some("{detail}".into()),
@@ -941,7 +968,8 @@ mod tests {
     #[test]
     fn nikto_diagnostics_are_skipped() {
         let spec = ParserSpec::LineRegex {
-            pattern: r"^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$".into(),
+            pattern: r"^\+\s+(?:\[(?P<check>\d+)\]\s+)?(?P<item>[^:]+?)(?:\s*:\s*(?P<detail>.+))?$"
+                .into(),
             finding: LineFindingTemplate {
                 title: "{item}".into(),
                 description: Some("{detail}".into()),

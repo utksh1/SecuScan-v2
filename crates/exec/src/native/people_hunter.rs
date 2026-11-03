@@ -24,8 +24,7 @@ use std::time::Duration;
 
 pub struct PeopleHunter;
 
-const EMAIL_RE: &str =
-    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}";
+const EMAIL_RE: &str = r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}";
 const SOCIAL_HOSTS: &[(&str, &str)] = &[
     ("linkedin.com", "LinkedIn"),
     ("twitter.com", "Twitter/X"),
@@ -40,8 +39,12 @@ const MAX_FINDINGS: usize = 200;
 
 #[async_trait]
 impl NativeScanner for PeopleHunter {
-    fn id(&self) -> &'static str { "people_hunter" }
-    fn name(&self) -> &'static str { "People Hunter" }
+    fn id(&self) -> &'static str {
+        "people_hunter"
+    }
+    fn name(&self) -> &'static str {
+        "People Hunter"
+    }
     fn description(&self) -> &'static str {
         "OSINT email + social-profile harvester with pattern analysis and address prediction"
     }
@@ -74,10 +77,18 @@ impl NativeScanner for PeopleHunter {
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut content_all = String::new();
         while let Some(page) = pages.pop() {
-            if visited.len() >= CRAWL_BUDGET { break; }
-            if !visited.insert(page.clone()) { continue; }
-            let Ok(resp) = client.get(&page).send().await else { continue };
-            let Ok(text) = resp.text().await else { continue };
+            if visited.len() >= CRAWL_BUDGET {
+                break;
+            }
+            if !visited.insert(page.clone()) {
+                continue;
+            }
+            let Ok(resp) = client.get(&page).send().await else {
+                continue;
+            };
+            let Ok(text) = resp.text().await else {
+                continue;
+            };
             // Collect same-host links.
             for cap in link_re().captures_iter(&text) {
                 if let Some(href) = cap.get(1) {
@@ -97,13 +108,20 @@ impl NativeScanner for PeopleHunter {
         for m in email_re().find_iter(&content_all) {
             let e = m.as_str().to_ascii_lowercase();
             // Filter obvious noise.
-            if e.ends_with(".png") || e.ends_with(".jpg") || e.ends_with(".gif")
-                || e.starts_with("example.") || e.contains("sentry.io")
-                || e.contains("domain.com") || e.contains("email.com") {
+            if e.ends_with(".png")
+                || e.ends_with(".jpg")
+                || e.ends_with(".gif")
+                || e.starts_with("example.")
+                || e.contains("sentry.io")
+                || e.contains("domain.com")
+                || e.contains("email.com")
+            {
                 continue;
             }
             emails.insert(e);
-            if emails.len() >= MAX_FINDINGS { break; }
+            if emails.len() >= MAX_FINDINGS {
+                break;
+            }
         }
 
         // Optional Tomba.io enrichment.
@@ -113,7 +131,11 @@ impl NativeScanner for PeopleHunter {
         ) {
             if !key.is_empty() && !secret.is_empty() {
                 if let Ok(body) = tomba_domain_search(&client, &key, &secret, &host).await {
-                    if let Some(list) = body.get("data").and_then(|d| d.get("emails")).and_then(|v| v.as_array()) {
+                    if let Some(list) = body
+                        .get("data")
+                        .and_then(|d| d.get("emails"))
+                        .and_then(|v| v.as_array())
+                    {
                         for e in list {
                             if let Some(addr) = e.get("email").and_then(|v| v.as_str()) {
                                 emails.insert(addr.to_ascii_lowercase());
@@ -132,10 +154,15 @@ impl NativeScanner for PeopleHunter {
                 for (host_frag, label) in SOCIAL_HOSTS {
                     if href.contains(host_frag) {
                         // Filter share buttons.
-                        if href.contains("share") || href.contains("intent/") || href.contains("sharer") {
+                        if href.contains("share")
+                            || href.contains("intent/")
+                            || href.contains("sharer")
+                        {
                             continue;
                         }
-                        socials.entry(label.to_string()).or_insert_with(|| href.to_string());
+                        socials
+                            .entry(label.to_string())
+                            .or_insert_with(|| href.to_string());
                     }
                 }
             }
@@ -145,7 +172,9 @@ impl NativeScanner for PeopleHunter {
         let mut validated: Vec<String> = Vec::new();
         for e in &emails {
             let domain = e.split('@').nth(1).unwrap_or("");
-            if domain.is_empty() { continue; }
+            if domain.is_empty() {
+                continue;
+            }
             if !domain.ends_with(&host) && !host.ends_with(domain) {
                 continue; // external-domain filter
             }
@@ -179,7 +208,8 @@ impl NativeScanner for PeopleHunter {
                     visited_len = visited.len()
                 ),
                 remediation: "If emails exist, ensure they are not exposed in page source; \
-                              use a contact form instead of mailto: links.".into(),
+                              use a contact form instead of mailto: links."
+                    .into(),
                 proof: format!("crawled_pages={}", visited.len()),
                 url: Some(base.clone()),
                 metadata: json!({"pages_crawled": visited.len(), "emails_found": 0}),
@@ -191,7 +221,10 @@ impl NativeScanner for PeopleHunter {
         let patterns = analyze_patterns(&reported);
         for (pattern, percentage, examples) in &patterns {
             findings.push(Finding {
-                title: format!("Email pattern: {pattern} ({percentage}% of {} addresses)", reported.len()),
+                title: format!(
+                    "Email pattern: {pattern} ({percentage}% of {} addresses)",
+                    reported.len()
+                ),
                 category: "People Hunter".into(),
                 severity: Severity::Info,
                 kind: FindingKind::Observation,
@@ -245,7 +278,8 @@ impl NativeScanner for PeopleHunter {
                     "The site links to a {label} profile: {url}. Social profiles map \
                      personnel and are useful for phishing reconnaissance."
                 ),
-                remediation: "Review whether linked social profiles expose employee identity.".into(),
+                remediation: "Review whether linked social profiles expose employee identity."
+                    .into(),
                 proof: format!("href found in crawled content: {url}"),
                 url: Some(url.clone()),
                 metadata: json!({"platform": label, "url": url}),
@@ -260,11 +294,20 @@ impl NativeScanner for PeopleHunter {
 fn normalize_host(target: &str) -> Result<String, String> {
     let t = target.trim();
     if let Ok(u) = url::Url::parse(t) {
-        return u.host_str().map(str::to_string).ok_or_else(|| "no host".into());
+        return u
+            .host_str()
+            .map(str::to_string)
+            .ok_or_else(|| "no host".into());
     }
-    let t = t.trim_start_matches("http://").trim_start_matches("https://");
+    let t = t
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
     let t = t.split('/').next().unwrap_or(t);
-    if t.is_empty() { Err("empty host".into()) } else { Ok(t.to_string()) }
+    if t.is_empty() {
+        Err("empty host".into())
+    } else {
+        Ok(t.to_string())
+    }
 }
 
 fn email_re() -> regex::Regex {
@@ -284,7 +327,12 @@ fn absolutize(base: &str, href: &str) -> Option<String> {
     }
     if href.starts_with('/') {
         let base_url = url::Url::parse(base).ok()?;
-        return Some(format!("{}://{}{}", base_url.scheme(), base_url.host_str()?, href));
+        return Some(format!(
+            "{}://{}{}",
+            base_url.scheme(),
+            base_url.host_str()?,
+            href
+        ));
     }
     None
 }
@@ -303,7 +351,9 @@ async fn tomba_domain_search(
     domain: &str,
 ) -> Result<serde_json::Value, String> {
     let resp = client
-        .get(format!("https://api.tomba.io/v1/domain-search?domain={domain}&limit=50"))
+        .get(format!(
+            "https://api.tomba.io/v1/domain-search?domain={domain}&limit=50"
+        ))
         .header("X-Tomba-Key", key)
         .header("X-Tomba-Secret", secret)
         .send()
@@ -355,14 +405,18 @@ fn analyze_patterns(emails: &[String]) -> Vec<(String, u32, Vec<String>)> {
     let push = |out: &mut Vec<(String, u32, Vec<String>)>, name: &str, list: &[String]| {
         if !list.is_empty() {
             let pct = (list.len() as u32) * 100 / total;
-            out.push((name.to_string(), pct, list.iter().take(5).cloned().collect()));
+            out.push((
+                name.to_string(),
+                pct,
+                list.iter().take(5).cloned().collect(),
+            ));
         }
     };
     push(&mut out, "first.last", &first_dot_last);
     push(&mut out, "first_last", &first_underscore_last);
     push(&mut out, "first-last", &first_dash_last);
     push(&mut out, "first_only", &other);
-    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out.sort_by_key(|item| std::cmp::Reverse(item.1));
     out
 }
 
@@ -396,6 +450,9 @@ mod tests {
             absolutize("https://example.com", "/about"),
             Some("https://example.com/about".into())
         );
-        assert_eq!(absolutize("https://example.com", "javascript:void(0)"), None);
+        assert_eq!(
+            absolutize("https://example.com", "javascript:void(0)"),
+            None
+        );
     }
 }

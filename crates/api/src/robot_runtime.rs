@@ -227,7 +227,9 @@ fn has_cycle(graph: &RobotGraph) -> bool {
         false
     }
     for n in &graph.nodes {
-        if white.contains(n.id.as_str()) && dfs(n.id.as_str(), &adj, &mut white, &mut gray, &mut black) {
+        if white.contains(n.id.as_str())
+            && dfs(n.id.as_str(), &adj, &mut white, &mut gray, &mut black)
+        {
             return true;
         }
     }
@@ -245,7 +247,11 @@ fn topo_order(graph: &RobotGraph) -> Vec<String> {
         adj.entry(e.from.as_str()).or_default().push(e.to.as_str());
         *in_deg.entry(e.to.as_str()).or_insert(0) += 1;
     }
-    let mut queue: Vec<&str> = in_deg.iter().filter(|(_, d)| **d == 0).map(|(k, _)| *k).collect();
+    let mut queue: Vec<&str> = in_deg
+        .iter()
+        .filter(|(_, d)| **d == 0)
+        .map(|(k, _)| *k)
+        .collect();
     queue.sort();
     let mut out = Vec::new();
     while let Some(u) = queue.pop() {
@@ -266,7 +272,11 @@ fn topo_order(graph: &RobotGraph) -> Vec<String> {
 }
 
 /// Items destined for a node = union of all predecessor nodes' outputs.
-fn incoming_for(graph: &RobotGraph, node_id: &str, outputs: &HashMap<String, Vec<Item>>) -> Vec<Item> {
+fn incoming_for(
+    graph: &RobotGraph,
+    node_id: &str,
+    outputs: &HashMap<String, Vec<Item>>,
+) -> Vec<Item> {
     let mut items = Vec::new();
     for e in &graph.edges {
         if e.to == node_id {
@@ -293,10 +303,10 @@ pub async fn run(
         .await
         .map_err(|e| format!("load robot: {e}"))?;
     // Reconstruct the full graph from the two separate JSON columns.
-    let nodes: Vec<RobotNode> = serde_json::from_str(&robot.nodes_json)
-        .map_err(|e| format!("parse nodes: {e}"))?;
-    let edges: Vec<RobotEdge> = serde_json::from_str(&robot.edges_json)
-        .map_err(|e| format!("parse edges: {e}"))?;
+    let nodes: Vec<RobotNode> =
+        serde_json::from_str(&robot.nodes_json).map_err(|e| format!("parse nodes: {e}"))?;
+    let edges: Vec<RobotEdge> =
+        serde_json::from_str(&robot.edges_json).map_err(|e| format!("parse edges: {e}"))?;
     let graph = RobotGraph { nodes, edges };
     validate(&graph).map_err(|e| format!("invalid graph: {e}"))?;
 
@@ -304,17 +314,28 @@ pub async fn run(
     let mut outputs: HashMap<String, Vec<Item>> = HashMap::new();
 
     // Seed source nodes with initial targets as Target items.
-    let source_ids: HashSet<String> = graph.nodes.iter()
+    let source_ids: HashSet<String> = graph
+        .nodes
+        .iter()
         .filter(|n| !graph.edges.iter().any(|e| e.to == n.id))
         .map(|n| n.id.clone())
         .collect();
     for sid in &source_ids {
-        outputs.insert(sid.clone(), initial_targets.iter().map(|t| Item {
-            kind: ItemKind::Target,
-            target: Some(t.clone()),
-            task_id: None, status: None, findings_count: None,
-            severity: BTreeMap::new(), findings: vec![],
-        }).collect());
+        outputs.insert(
+            sid.clone(),
+            initial_targets
+                .iter()
+                .map(|t| Item {
+                    kind: ItemKind::Target,
+                    target: Some(t.clone()),
+                    task_id: None,
+                    status: None,
+                    findings_count: None,
+                    severity: BTreeMap::new(),
+                    findings: vec![],
+                })
+                .collect(),
+        );
     }
 
     let deadline = Instant::now() + repo::robots::run_timeout();
@@ -322,7 +343,10 @@ pub async fn run(
         if Instant::now() >= deadline {
             return Err("robot run exceeded 48h bound".into());
         }
-        let node = graph.nodes.iter().find(|n| &n.id == node_id)
+        let node = graph
+            .nodes
+            .iter()
+            .find(|n| &n.id == node_id)
             .ok_or_else(|| format!("missing node {node_id}"))?;
         // Source nodes (no incoming edges) get their items from the
         // pre-seeded outputs map; non-source nodes pull from predecessors.
@@ -333,18 +357,36 @@ pub async fn run(
         };
 
         // Update state to running.
-        set_node_state(state, run_id, node_id, NodeState {
-            status: "running".into(),
-            items_in: items_in.len(),
-            items_out: 0,
-            task_ids: vec![],
-            error: None,
-            started_at: secuscan_db::now(),
-            finished_at: None,
-        }).await.map_err(|e| e.to_string())?;
+        set_node_state(
+            state,
+            run_id,
+            node_id,
+            NodeState {
+                status: "running".into(),
+                items_in: items_in.len(),
+                items_out: 0,
+                task_ids: vec![],
+                error: None,
+                started_at: secuscan_db::now(),
+                finished_at: None,
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         let result = match node.kind {
-            NodeKind::Tool => run_tool(state, user, node, &items_in, workspace_id, auth_profile_id, run_id).await,
+            NodeKind::Tool => {
+                run_tool(
+                    state,
+                    user,
+                    node,
+                    &items_in,
+                    workspace_id,
+                    auth_profile_id,
+                    run_id,
+                )
+                .await
+            }
             NodeKind::Filter => run_filter(node, &items_in),
             NodeKind::Extractor => run_extractor(node, &items_in),
             NodeKind::Reducer => run_reducer(node, &items_in),
@@ -358,29 +400,47 @@ pub async fn run(
                 } else {
                     out_items
                 };
-                let task_ids: Vec<String> = out_items.iter()
-                    .filter_map(|i| i.task_id.clone()).collect();
-                set_node_state(state, run_id, node_id, NodeState {
-                    status: "completed".into(),
-                    items_in: items_in.len(),
-                    items_out: out_items.len(),
-                    task_ids,
-                    error: if truncated { Some(format!("truncated to {MAX_ITEMS_PER_NODE} items")) } else { None },
-                    started_at: secuscan_db::now(),
-                    finished_at: Some(secuscan_db::now()),
-                }).await.map_err(|e| e.to_string())?;
+                let task_ids: Vec<String> =
+                    out_items.iter().filter_map(|i| i.task_id.clone()).collect();
+                set_node_state(
+                    state,
+                    run_id,
+                    node_id,
+                    NodeState {
+                        status: "completed".into(),
+                        items_in: items_in.len(),
+                        items_out: out_items.len(),
+                        task_ids,
+                        error: if truncated {
+                            Some(format!("truncated to {MAX_ITEMS_PER_NODE} items"))
+                        } else {
+                            None
+                        },
+                        started_at: secuscan_db::now(),
+                        finished_at: Some(secuscan_db::now()),
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?;
                 outputs.insert(node_id.clone(), out_items);
             }
             Err(e) => {
-                set_node_state(state, run_id, node_id, NodeState {
-                    status: "failed".into(),
-                    items_in: items_in.len(),
-                    items_out: 0,
-                    task_ids: vec![],
-                    error: Some(e.clone()),
-                    started_at: secuscan_db::now(),
-                    finished_at: Some(secuscan_db::now()),
-                }).await.map_err(|e2| e2.to_string())?;
+                set_node_state(
+                    state,
+                    run_id,
+                    node_id,
+                    NodeState {
+                        status: "failed".into(),
+                        items_in: items_in.len(),
+                        items_out: 0,
+                        task_ids: vec![],
+                        error: Some(e.clone()),
+                        started_at: secuscan_db::now(),
+                        finished_at: Some(secuscan_db::now()),
+                    },
+                )
+                .await
+                .map_err(|e2| e2.to_string())?;
                 return Err(format!("node `{node_id}` failed: {e}"));
             }
         }
@@ -398,9 +458,12 @@ async fn set_node_state(
     let row = repo::robots::get_run(&state.db, run_id)
         .await
         .map_err(|e| e.to_string())?;
-    let mut map: serde_json::Map<String, Value> = serde_json::from_str(&row.state_json)
-        .unwrap_or_else(|_| serde_json::Map::new());
-    map.insert(node_id.into(), serde_json::to_value(&st).unwrap_or(Value::Null));
+    let mut map: serde_json::Map<String, Value> =
+        serde_json::from_str(&row.state_json).unwrap_or_else(|_| serde_json::Map::new());
+    map.insert(
+        node_id.into(),
+        serde_json::to_value(&st).unwrap_or(Value::Null),
+    );
     let new_state = serde_json::to_string(&Value::Object(map)).unwrap_or_else(|_| "{}".into());
     repo::robots::set_run_state(&state.db, run_id, &new_state)
         .await
@@ -419,10 +482,18 @@ async fn run_tool(
     auth_profile_id: Option<&str>,
     run_id: &str,
 ) -> Result<Vec<Item>, String> {
-    let plugin_id = node.plugin_id.as_ref().ok_or("tool node missing plugin_id")?;
+    let plugin_id = node
+        .plugin_id
+        .as_ref()
+        .ok_or("tool node missing plugin_id")?;
     // If no incoming targets, treat the static inputs (must contain target).
     let targets: Vec<String> = if items.is_empty() {
-        match node.inputs.get("target").and_then(|v| v.as_str()).map(str::to_string) {
+        match node
+            .inputs
+            .get("target")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+        {
             Some(t) => vec![t],
             None => {
                 // No incoming items and no static target — this is a leaf
@@ -457,17 +528,23 @@ async fn run_tool(
         let _ = sqlx::query("UPDATE tasks SET robot_run_id = ? WHERE id = ?")
             .bind(run_id)
             .bind(&task.id)
-            .execute(&state.db).await;
+            .execute(&state.db)
+            .await;
         // Also set auth_profile_id if provided.
         if let Some(pid) = auth_profile_id {
             let _ = sqlx::query("UPDATE tasks SET auth_profile_id = ? WHERE id = ?")
-                .bind(pid).bind(&task.id).execute(&state.db).await;
+                .bind(pid)
+                .bind(&task.id)
+                .execute(&state.db)
+                .await;
         }
         state.tasks.spawn(task.clone(), manifest, normalized).await;
         // Wait for terminal state.
         let deadline = Instant::now() + std::time::Duration::from_secs(86_400);
         let final_status = loop {
-            let t = repo::tasks::get(&state.db, &task.id).await.map_err(|e| e.to_string())?;
+            let t = repo::tasks::get(&state.db, &task.id)
+                .await
+                .map_err(|e| e.to_string())?;
             if t.status().is_terminal() {
                 break t.status();
             }
@@ -478,7 +555,8 @@ async fn run_tool(
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         };
         let findings = repo::findings::list_all_for_task(&state.db, &task.id)
-            .await.map_err(|e| e.to_string())?;
+            .await
+            .map_err(|e| e.to_string())?;
         let mut sev: BTreeMap<String, usize> = BTreeMap::new();
         for f in &findings {
             *sev.entry(f.severity.clone()).or_insert(0) += 1;
@@ -497,7 +575,10 @@ async fn run_tool(
 }
 
 fn run_filter(node: &RobotNode, items: &[Item]) -> Result<Vec<Item>, String> {
-    let pred = node.filter.as_ref().ok_or("filter node missing predicate")?;
+    let pred = node
+        .filter
+        .as_ref()
+        .ok_or("filter node missing predicate")?;
     let mut out = Vec::new();
     for item in items {
         if eval_filter(pred, item) {
@@ -533,36 +614,51 @@ fn eval_filter(pred: &Value, item: &Item) -> bool {
                 };
                 let order = ["info", "low", "medium", "high", "critical"];
                 let want_idx = order.iter().position(|s| *s == val).unwrap_or(0);
-                let max_seen = item.severity.iter()
-                    .filter_map(|(k, _)| order.iter().position(|s| s == k))
-                    .max().unwrap_or(0);
+                let max_seen = item
+                    .severity
+                    .keys()
+                    .filter_map(|k| order.iter().position(|s| s == k))
+                    .max()
+                    .unwrap_or(0);
                 let pass = match op {
                     ">=" => max_seen >= want_idx,
                     "<=" => max_seen <= want_idx,
                     _ => max_seen == want_idx,
                 };
-                if !pass { return false; }
+                if !pass {
+                    return false;
+                }
             }
             "category" => {
                 let want = v.as_str().unwrap_or("");
-                if !item.findings.iter().any(|f| f.category == want) { return false; }
+                if !item.findings.iter().any(|f| f.category == want) {
+                    return false;
+                }
             }
             "status" => {
                 let want = v.as_str().unwrap_or("");
-                if item.status.as_deref().unwrap_or("") != want { return false; }
+                if item.status.as_deref().unwrap_or("") != want {
+                    return false;
+                }
             }
             "target_contains" => {
                 let needle = v.as_str().unwrap_or("");
-                if !item.target.as_deref().unwrap_or("").contains(needle) { return false; }
+                if !item.target.as_deref().unwrap_or("").contains(needle) {
+                    return false;
+                }
             }
             "and" => {
                 if let Some(arr) = v.as_array() {
-                    if !arr.iter().all(|p| eval_filter(p, item)) { return false; }
+                    if !arr.iter().all(|p| eval_filter(p, item)) {
+                        return false;
+                    }
                 }
             }
             "or" => {
                 if let Some(arr) = v.as_array() {
-                    if !arr.iter().any(|p| eval_filter(p, item)) { return false; }
+                    if !arr.iter().any(|p| eval_filter(p, item)) {
+                        return false;
+                    }
                 }
             }
             _ => return false,
@@ -593,19 +689,31 @@ fn run_extractor(node: &RobotNode, items: &[Item]) -> Result<Vec<Item>, String> 
             for v in extracted {
                 if seen.insert(v.clone()) {
                     out.push(v);
-                    if out.len() >= limit { break; }
+                    if out.len() >= limit {
+                        break;
+                    }
                 }
             }
-            if out.len() >= limit { break; }
+            if out.len() >= limit {
+                break;
+            }
         }
-        if out.len() >= limit { break; }
+        if out.len() >= limit {
+            break;
+        }
     }
-    Ok(out.into_iter().map(|t| Item {
-        kind: ItemKind::Target,
-        target: Some(t),
-        task_id: None, status: None, findings_count: None,
-        severity: BTreeMap::new(), findings: vec![],
-    }).collect())
+    Ok(out
+        .into_iter()
+        .map(|t| Item {
+            kind: ItemKind::Target,
+            target: Some(t),
+            task_id: None,
+            status: None,
+            findings_count: None,
+            severity: BTreeMap::new(),
+            findings: vec![],
+        })
+        .collect())
 }
 
 fn extract_finding_field(f: &secuscan_db::models::FindingRow, field: &str) -> Vec<String> {
@@ -633,17 +741,30 @@ fn extract_port_urls(f: &secuscan_db::models::FindingRow, schemes: &[String]) ->
     // Look in metadata for {ports: [{port, proto}]} or {port: n, host: h}
     let meta: Value = serde_json::from_str(&f.metadata_json).unwrap_or(Value::Null);
     let mut out = Vec::new();
-    let host = f.url.as_deref()
+    let host = f
+        .url
+        .as_deref()
         .and_then(|u| url::Url::parse(u).ok())
         .and_then(|u| u.host_str().map(str::to_string))
-        .or_else(|| meta.get("host").and_then(|v| v.as_str()).map(str::to_string));
-    let host = match host { Some(h) => h, None => return out };
+        .or_else(|| {
+            meta.get("host")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    let host = match host {
+        Some(h) => h,
+        None => return out,
+    };
     if let Some(ports) = meta.get("ports").and_then(|v| v.as_array()) {
         for p in ports {
             let port = p.get("port").and_then(|v| v.as_u64()).unwrap_or(0);
-            if port == 0 { continue; }
+            if port == 0 {
+                continue;
+            }
             let proto = p.get("proto").and_then(|v| v.as_str()).unwrap_or("tcp");
-            if proto != "tcp" { continue; }
+            if proto != "tcp" {
+                continue;
+            }
             for s in &schemes {
                 out.push(format!("{s}://{host}:{port}"));
             }
@@ -777,7 +898,10 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_graph() {
-        let g = RobotGraph { nodes: vec![], edges: vec![] };
+        let g = RobotGraph {
+            nodes: vec![],
+            edges: vec![],
+        };
         assert!(validate(&g).is_err());
     }
 
@@ -785,16 +909,38 @@ mod tests {
     fn validate_rejects_cycle() {
         let g = RobotGraph {
             nodes: vec![
-                RobotNode { id: "a".into(), kind: NodeKind::Tool, plugin_id: Some("p".into()),
-                    inputs: BTreeMap::new(), preset: None, filter: None, extractor: None,
-                    reducer: None, label: None },
-                RobotNode { id: "b".into(), kind: NodeKind::Tool, plugin_id: Some("p".into()),
-                    inputs: BTreeMap::new(), preset: None, filter: None, extractor: None,
-                    reducer: None, label: None },
+                RobotNode {
+                    id: "a".into(),
+                    kind: NodeKind::Tool,
+                    plugin_id: Some("p".into()),
+                    inputs: BTreeMap::new(),
+                    preset: None,
+                    filter: None,
+                    extractor: None,
+                    reducer: None,
+                    label: None,
+                },
+                RobotNode {
+                    id: "b".into(),
+                    kind: NodeKind::Tool,
+                    plugin_id: Some("p".into()),
+                    inputs: BTreeMap::new(),
+                    preset: None,
+                    filter: None,
+                    extractor: None,
+                    reducer: None,
+                    label: None,
+                },
             ],
             edges: vec![
-                RobotEdge { from: "a".into(), to: "b".into() },
-                RobotEdge { from: "b".into(), to: "a".into() },
+                RobotEdge {
+                    from: "a".into(),
+                    to: "b".into(),
+                },
+                RobotEdge {
+                    from: "b".into(),
+                    to: "a".into(),
+                },
             ],
         };
         assert!(validate(&g).is_err());
@@ -803,8 +949,11 @@ mod tests {
     #[test]
     fn filter_severity_ge_medium_passes_high() {
         let item = Item {
-            kind: ItemKind::Result, target: Some("t".into()),
-            task_id: None, status: None, findings_count: None,
+            kind: ItemKind::Result,
+            target: Some("t".into()),
+            task_id: None,
+            status: None,
+            findings_count: None,
             severity: [("high".to_string(), 1)].into(),
             findings: vec![],
         };
@@ -815,8 +964,11 @@ mod tests {
     #[test]
     fn filter_severity_ge_medium_fails_low() {
         let item = Item {
-            kind: ItemKind::Result, target: Some("t".into()),
-            task_id: None, status: None, findings_count: None,
+            kind: ItemKind::Result,
+            target: Some("t".into()),
+            task_id: None,
+            status: None,
+            findings_count: None,
             severity: [("low".to_string(), 1)].into(),
             findings: vec![],
         };
@@ -827,17 +979,44 @@ mod tests {
     #[test]
     fn reducer_dedup_unique_targets() {
         let items = vec![
-            Item { kind: ItemKind::Target, target: Some("a".into()), task_id: None,
-                status: None, findings_count: None, severity: BTreeMap::new(), findings: vec![] },
-            Item { kind: ItemKind::Target, target: Some("a".into()), task_id: None,
-                status: None, findings_count: None, severity: BTreeMap::new(), findings: vec![] },
-            Item { kind: ItemKind::Target, target: Some("b".into()), task_id: None,
-                status: None, findings_count: None, severity: BTreeMap::new(), findings: vec![] },
+            Item {
+                kind: ItemKind::Target,
+                target: Some("a".into()),
+                task_id: None,
+                status: None,
+                findings_count: None,
+                severity: BTreeMap::new(),
+                findings: vec![],
+            },
+            Item {
+                kind: ItemKind::Target,
+                target: Some("a".into()),
+                task_id: None,
+                status: None,
+                findings_count: None,
+                severity: BTreeMap::new(),
+                findings: vec![],
+            },
+            Item {
+                kind: ItemKind::Target,
+                target: Some("b".into()),
+                task_id: None,
+                status: None,
+                findings_count: None,
+                severity: BTreeMap::new(),
+                findings: vec![],
+            },
         ];
         let node = RobotNode {
-            id: "r".into(), kind: NodeKind::Reducer, plugin_id: None,
-            inputs: BTreeMap::new(), preset: None, filter: None, extractor: None,
-            reducer: Some("unique_targets".into()), label: None,
+            id: "r".into(),
+            kind: NodeKind::Reducer,
+            plugin_id: None,
+            inputs: BTreeMap::new(),
+            preset: None,
+            filter: None,
+            extractor: None,
+            reducer: Some("unique_targets".into()),
+            label: None,
         };
         let out = run_reducer(&node, &items).unwrap();
         assert_eq!(out.len(), 2);
@@ -847,23 +1026,56 @@ mod tests {
     fn topo_order_linear_chain() {
         let g = RobotGraph {
             nodes: vec![
-                RobotNode { id: "a".into(), kind: NodeKind::Tool, plugin_id: Some("p".into()),
-                    inputs: BTreeMap::new(), preset: None, filter: None, extractor: None,
-                    reducer: None, label: None },
-                RobotNode { id: "b".into(), kind: NodeKind::Tool, plugin_id: Some("p".into()),
-                    inputs: BTreeMap::new(), preset: None, filter: None, extractor: None,
-                    reducer: None, label: None },
-                RobotNode { id: "c".into(), kind: NodeKind::Tool, plugin_id: Some("p".into()),
-                    inputs: BTreeMap::new(), preset: None, filter: None, extractor: None,
-                    reducer: None, label: None },
+                RobotNode {
+                    id: "a".into(),
+                    kind: NodeKind::Tool,
+                    plugin_id: Some("p".into()),
+                    inputs: BTreeMap::new(),
+                    preset: None,
+                    filter: None,
+                    extractor: None,
+                    reducer: None,
+                    label: None,
+                },
+                RobotNode {
+                    id: "b".into(),
+                    kind: NodeKind::Tool,
+                    plugin_id: Some("p".into()),
+                    inputs: BTreeMap::new(),
+                    preset: None,
+                    filter: None,
+                    extractor: None,
+                    reducer: None,
+                    label: None,
+                },
+                RobotNode {
+                    id: "c".into(),
+                    kind: NodeKind::Tool,
+                    plugin_id: Some("p".into()),
+                    inputs: BTreeMap::new(),
+                    preset: None,
+                    filter: None,
+                    extractor: None,
+                    reducer: None,
+                    label: None,
+                },
             ],
             edges: vec![
-                RobotEdge { from: "a".into(), to: "b".into() },
-                RobotEdge { from: "b".into(), to: "c".into() },
+                RobotEdge {
+                    from: "a".into(),
+                    to: "b".into(),
+                },
+                RobotEdge {
+                    from: "b".into(),
+                    to: "c".into(),
+                },
             ],
         };
         let order = topo_order(&g);
-        assert_eq!(order, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            order,
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
+        );
     }
 
     #[test]
