@@ -8,7 +8,7 @@
 //! period (the recorder may still be flushing the final `finished` event).
 
 use crate::auth::extractor::CurrentUser;
-use crate::error::{ApiError, ApiResult};
+use crate::error::ApiResult;
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -35,10 +35,7 @@ async fn stream(
     Path(id): Path<String>,
     Query(q): Query<StreamQuery>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    let task = repo::tasks::get(&state.db, &id).await?;
-    if !user.is_admin() && task.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("task {id}")));
-    }
+    let task = crate::routes::tasks::load_task_for_user(&state, &user, &id).await?;
 
     // Subscribe BEFORE reading the DB so nothing is missed in between.
     let live = state.tasks.subscribe();
