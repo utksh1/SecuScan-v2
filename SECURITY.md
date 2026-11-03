@@ -25,6 +25,27 @@ the consent state is recorded with every task.
 - **Input validation** — unknown fields rejected, strict patterns, select whitelists,
   integer bounds, 1 MiB request bodies, finding caps, event caps.
 
+## JWT signing-key management
+
+- Production startup is **fail-closed**: `SECUSCAN_ENV` defaults to
+  `production`, where `SECUSCAN_JWT_SECRET` must be a persistent, randomly
+  generated 64-hex-character key (32 bytes). Missing, placeholder, short,
+  malformed, or obviously low-diversity values are rejected.
+- `SECUSCAN_ENV=development` allows an auto-generated ephemeral signing key
+  **only** when `SECUSCAN_ADDR` binds to loopback. An explicitly configured
+  weak key is never accepted, even in development.
+- Compose enforces the key at interpolation time and runs in production mode.
+  Store the signing key in a secret manager or an ignored private `.env` file.
+  Do not regenerate it on every restart. See
+  [the deployment guide](docs/DEPLOYMENT.md).
+- **Incident response:** if the previous publicly known Compose default was
+  deployed, assume JWT signatures could have been forged. Generate a new key,
+  redeploy all replicas with the same key, and revoke active refresh sessions /
+  rotate other credentials as appropriate. Replacing only the signing key
+  does not revoke refresh tokens stored independently in SQLite.
+- The 64-hex format and basic diversity checks are **not** proof of randomness.
+  Generate keys with `openssl rand -hex 32` or an equivalent CSPRNG.
+
 ## Known trust boundaries
 
 1. **DNS at admission time.** Hostname-based policy checks resolve at task creation; a
