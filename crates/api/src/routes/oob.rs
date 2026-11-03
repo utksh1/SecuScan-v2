@@ -6,6 +6,7 @@
 //!   * `/api/v1/oob-handlers` — CRUD for handlers (auth required).
 
 use crate::auth::extractor::CurrentUser;
+use crate::access::{require_workspace, workspace_visible, WorkspacePermission};
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::body::Bytes;
@@ -76,12 +77,18 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let rows = secuscan_db::repo::oob::list_handlers(&state.db, q.workspace_id.as_deref()).await?;
-    let items: Vec<Value> = rows
-        .iter()
-        .filter(|h| crate::access::is_owner_or_admin(&user, &h.user_id))
-        .map(|h| handler_to_json(h, false))
-        .collect();
+    let mut items = Vec::new();
+    for h in &rows {
+        if !crate::access::is_owner_or_admin(&user, &h.user_id) { continue; }
+        if let Some(ws) = h.workspace_id.as_deref() {
+            if !workspace_visible(&state, &user, ws).await? { continue; }
+        }
+        items.push(handler_to_json(h, false));
+    }
     Ok(Json(json!({ "items": items })))
 }
 
@@ -105,7 +112,7 @@ async fn create(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     if let Some(ws) = &req.workspace_id {
-        secuscan_db::repo::workspaces::get_workspace(&state.db, ws).await?;
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     let config_json = serde_json::to_string(&req.config).unwrap_or_else(|_| "{}".into());
     let ttl = req.ttl_seconds.unwrap_or(60 * 24 * 3600);
@@ -129,6 +136,9 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
     crate::access::require_owner(&user, &row.user_id)?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     Ok(Json(handler_to_json(&row, true)))
 }
 
@@ -140,6 +150,9 @@ async fn delete(
     user.require_scanner()?;
     let row = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
     crate::access::require_owner(&user, &row.user_id)?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     secuscan_db::repo::oob::delete_handler(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -158,6 +171,9 @@ async fn list_hits(
 ) -> ApiResult<Json<Value>> {
     let handler = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
     crate::access::require_owner(&user, &handler.user_id)?;
+    if let Some(ws) = handler.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let limit = q.limit.unwrap_or(100);
     let rows = secuscan_db::repo::oob::list_hits(&state.db, &id, limit).await?;
     Ok(Json(json!({
@@ -173,6 +189,9 @@ async fn clear_hits(
     user.require_scanner()?;
     let handler = secuscan_db::repo::oob::get_handler(&state.db, &id).await?;
     crate::access::require_owner(&user, &handler.user_id)?;
+    if let Some(ws) = handler.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     secuscan_db::repo::oob::clear_hits(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
