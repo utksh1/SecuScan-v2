@@ -158,6 +158,61 @@ pub async fn count(db: &SqlitePool, workspace_id: Option<&str>) -> DbResult<i64>
     }
 }
 
+/// Authorized asset inventory. Personal/NULL assets lack a reliable owner
+/// column and are admin-only until their schema stores an attribution key.
+pub async fn list_visible(
+    db: &SqlitePool,
+    user_id: Option<&str>,
+    workspace_id: Option<&str>,
+    q: Option<&str>,
+    limit: u32,
+) -> DbResult<Vec<AttackSurfaceAssetRow>> {
+    let pat = q.filter(|q| !q.trim().is_empty())
+        .map(|q| format!("%{}%", q.trim()))
+        .unwrap_or_else(|| "%".to_string());
+    sqlx::query_as::<_, AttackSurfaceAssetRow>(
+        "SELECT a.* FROM attack_surface_assets a
+         WHERE (?1 IS NULL OR (a.workspace_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = a.workspace_id
+               AND (w.access_mode = 'shared' OR w.created_by = ?1
+                 OR EXISTS (SELECT 1 FROM workspace_members wm
+                     WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+         )))
+         AND (?2 IS NULL OR a.workspace_id = ?2)
+         AND (a.hostname LIKE ?3 OR a.ip_address LIKE ?3 OR a.url LIKE ?3)
+         ORDER BY a.last_seen_at DESC LIMIT ?4",
+    )
+    .bind(user_id)
+    .bind(workspace_id)
+    .bind(&pat)
+    .bind(limit.clamp(1, 500) as i64)
+    .fetch_all(db)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn count_visible(
+    db: &SqlitePool,
+    user_id: Option<&str>,
+    workspace_id: Option<&str>,
+) -> DbResult<i64> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM attack_surface_assets a
+         WHERE (?1 IS NULL OR (a.workspace_id IS NOT NULL AND EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = a.workspace_id
+               AND (w.access_mode = 'shared' OR w.created_by = ?1
+                 OR EXISTS (SELECT 1 FROM workspace_members wm
+                     WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+         )))
+         AND (?2 IS NULL OR a.workspace_id = ?2)",
+    )
+    .bind(user_id)
+    .bind(workspace_id)
+    .fetch_one(db)
+    .await
+    .map_err(Into::into)
+}
+
 pub async fn delete(db: &SqlitePool, id: &str) -> DbResult<()> {
     sqlx::query("DELETE FROM attack_surface_assets WHERE id = ?")
         .bind(id)
