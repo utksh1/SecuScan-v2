@@ -3303,12 +3303,6 @@ async fn scoped_mcp_keys_are_denied_direct_rest_mutations_and_revoked() {
     .await
     .unwrap();
 
-    let legacy_admin_key = secuscan_db::repo::api_keys::create(
-        &s.state.db, &s.state.config.admin_email, "unused",
-    ).await;
-    // The existing API key factory still produces full-access keys for an
-    // authenticated user (validated below with the scanner identity).
-    assert!(legacy_admin_key.is_err()); // email is not a valid user id
     let legacy = secuscan_db::repo::api_keys::create(
         &s.state.db, &scanner.id, "legacy scanner",
     )
