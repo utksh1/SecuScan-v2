@@ -11,7 +11,9 @@ services:
       - "127.0.0.1:8080:8080"
     environment:
       SECUSCAN_ADDR: 0.0.0.0:8080
-      SECUSCAN_JWT_SECRET: ${SECUSCAN_JWT_SECRET:-change-me-openssl-rand-hex-32}
+      # Fail at Compose interpolation if the signing key is missing/empty.
+      SECUSCAN_ENV: production
+      SECUSCAN_JWT_SECRET: "${SECUSCAN_JWT_SECRET:?Set SECUSCAN_JWT_SECRET to a persistent 64-character hex key (openssl rand -hex 32)}"
       SECUSCAN_ADMIN_EMAIL: ${SECUSCAN_ADMIN_EMAIL:-admin@secuscan.local}
       SECUSCAN_ADMIN_PASSWORD: ${SECUSCAN_ADMIN_PASSWORD:-}
     volumes:
