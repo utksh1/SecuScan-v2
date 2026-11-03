@@ -19,11 +19,12 @@ scanner account and exact scan request.
 - **Lifetime:** exactly one use, expiring after **5 minutes**. The approval
   is atomically consumed even if downstream task creation fails; ask for a
   fresh approval to retry. There is no implicit renewal or batch consent.
-- **Scope:** fingerprint covers plugin ID, normalized inputs (including
-  target, method, ports, options), preset, workspace and auth profile.
-  Changing any meaningful dimension invalidates the approval. The ordinary
-  plugin and network admission policies run *both* at approval time and just
-  before task creation.
+- **Scope:** fingerprint covers plugin ID and version, execution engine,
+  capability and safety policy, normalized inputs (including target, method,
+  ports and options), preset, workspace and auth profile. Changing any
+  dimension invalidates the approval. The ordinary plugin and network
+  admission policies run *both* at approval time and just before task
+  creation.
 
 ## Example: approve a local lab scan
 
