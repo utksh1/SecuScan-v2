@@ -1,0 +1,33 @@
+name: pr21-rustfmt-once
+on:
+  push:
+    branches: [security/issue-7-workspace-authorization]
+    paths: [.github/workflows/pr21-rustfmt-once.yml]
+permissions:
+  contents: write
+jobs:
+  fmt:
+    if: github.repository == 'utksh1/SecuScan-v2' && github.ref == 'refs/heads/security/issue-7-workspace-authorization'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/issue-7-workspace-authorization
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Apply workspace authorization rustfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          cargo fmt --all --check
+          if ! git diff --quiet -- crates; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -- crates
+            git commit -m "style(authz): format final workspace RBAC and stream fixes"
+            git push origin HEAD:security/issue-7-workspace-authorization
+          fi
