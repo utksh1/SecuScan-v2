@@ -82,9 +82,13 @@ async fn list_sniper_runs(
         repo::sniper::list_runs(&state.db, q.finding_id.as_deref(), q.limit.unwrap_or(50)).await?;
     let mut items = Vec::new();
     for row in &rows {
-        if !crate::access::is_owner_or_admin(&user, &row.created_by) { continue; }
+        if !crate::access::is_owner_or_admin(&user, &row.created_by) {
+            continue;
+        }
         if let Some(ws) = row.workspace_id.as_deref() {
-            if !crate::access::workspace_visible(&state, &user, ws).await? { continue; }
+            if !crate::access::workspace_visible(&state, &user, ws).await? {
+                continue;
+            }
         }
         items.push(sniper_run_to_json(row));
     }
@@ -128,9 +132,13 @@ async fn run_sniper(
         require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     crate::access::require_resource(
-        &state, &user, source_task.workspace_id.as_deref(),
-        &source_task.user_id, WorkspacePermission::Write,
-    ).await?;
+        &state,
+        &user,
+        source_task.workspace_id.as_deref(),
+        &source_task.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     // The chain engine resolves the source task target when this URL is absent.
     let target = finding.url.clone();
     let run = repo::sniper::create_run(

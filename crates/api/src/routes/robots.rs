@@ -141,7 +141,9 @@ async fn get_one(
             Some(ws) => crate::access::workspace_visible(&state, &_user, ws).await?,
             None => crate::access::is_owner_or_admin(&_user, &run.created_by),
         };
-        if permitted { visible_runs.push(run_to_json(run)); }
+        if permitted {
+            visible_runs.push(run_to_json(run));
+        }
     }
     Ok(Json(json!({
         "robot": robot_to_json(&row),

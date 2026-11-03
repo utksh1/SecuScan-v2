@@ -226,9 +226,8 @@ async fn run(
         }
         None => None,
     };
-    let run_row = repo::workflows::create_run(
-        &state.db, &id, &user.0.id, workspace_id.as_deref()
-    ).await?;
+    let run_row =
+        repo::workflows::create_run(&state.db, &id, &user.0.id, workspace_id.as_deref()).await?;
     let run_id_spawn = run_row.id.clone();
 
     let state2 = state.clone();
@@ -327,7 +326,9 @@ async fn workflow_run_visible(
     user: &CurrentUser,
     run: &secuscan_db::models::WorkflowRunRow,
 ) -> ApiResult<bool> {
-    if user.is_admin() { return Ok(true); }
+    if user.is_admin() {
+        return Ok(true);
+    }
     match run.workspace_id.as_deref() {
         None => Ok(run.created_by.as_deref() == Some(user.0.id.as_str())),
         Some(ws) => {
@@ -365,10 +366,13 @@ async fn cancel_run(
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
     let run = sqlx::query_as::<_, secuscan_db::models::WorkflowRunRow>(
-        "SELECT * FROM workflow_runs WHERE id = ?"
-    ).bind(&run_id).fetch_optional(&state.db).await
-      .map_err(|e| ApiError::Internal(format!("workflow run lookup: {e}")))?
-      .ok_or_else(|| ApiError::NotFound("not found".into()))?;
+        "SELECT * FROM workflow_runs WHERE id = ?",
+    )
+    .bind(&run_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::Internal(format!("workflow run lookup: {e}")))?
+    .ok_or_else(|| ApiError::NotFound("not found".into()))?;
     if !user.is_admin() && run.created_by.as_deref() != Some(user.0.id.as_str()) {
         return Err(ApiError::NotFound("not found".into()));
     }

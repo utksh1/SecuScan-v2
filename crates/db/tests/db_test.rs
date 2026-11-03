@@ -290,7 +290,9 @@ async fn workflow_runs() {
     let w = repo::workflows::create(&pool, "recon-chain", "chain", steps, &u.id)
         .await
         .unwrap();
-    let run = repo::workflows::create_run(&pool, &w.id, &u.id, None).await.unwrap();
+    let run = repo::workflows::create_run(&pool, &w.id, &u.id, None)
+        .await
+        .unwrap();
     repo::workflows::append_run_task(&pool, &run.id, "task-1")
         .await
         .unwrap();

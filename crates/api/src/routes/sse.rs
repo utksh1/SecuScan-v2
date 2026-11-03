@@ -7,8 +7,8 @@
 //! When the task is already terminal, the stream closes after a short grace
 //! period (the recorder may still be flushing the final `finished` event).
 
-use crate::auth::extractor::CurrentUser;
 use crate::access::{require_resource, WorkspacePermission};
+use crate::auth::extractor::CurrentUser;
 use crate::error::ApiResult;
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
@@ -130,8 +130,16 @@ async fn stream(
                 if f.task_id != st.task_id || f.id <= st.cursor {
                     return Some((Ok(Event::default().comment("skip")), st));
                 }
-                if require_resource(&st.state, &st.user, st.workspace_id.as_deref(),
-                    &st.owner_user_id, WorkspacePermission::Read).await.is_err() {
+                if require_resource(
+                    &st.state,
+                    &st.user,
+                    st.workspace_id.as_deref(),
+                    &st.owner_user_id,
+                    WorkspacePermission::Read,
+                )
+                .await
+                .is_err()
+                {
                     return None;
                 }
                 let is_finished = is_finished_frame(&f.payload_json);
