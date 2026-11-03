@@ -1,6 +1,7 @@
 //! Notifications HTTP routes — CRUD + delivery log.
 
 use crate::auth::extractor::CurrentUser;
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
@@ -74,7 +75,7 @@ async fn create(
     }
     validate_notification_rules(&req.rules)?;
     if let Some(ws) = &req.workspace_id {
-        secuscan_db::repo::workspaces::get_workspace(&state.db, ws).await?;
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     let rules_json = serde_json::to_string(&req.rules).unwrap_or_else(|_| "{}".into());
     let row = secuscan_db::repo::notifications::create_rule(
@@ -95,6 +96,9 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &row.created_by)?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     Ok(Json(rule_to_json(&row)))
 }
 
@@ -115,6 +119,9 @@ async fn update(
     user.require_scanner()?;
     let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     if req.name.trim().is_empty() || req.name.len() > 120 {
         return Err(ApiError::BadRequest(
             "name must be 1..=120 characters".into(),
@@ -141,6 +148,9 @@ async fn delete(
     user.require_scanner()?;
     let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     secuscan_db::repo::notifications::delete_rule(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
