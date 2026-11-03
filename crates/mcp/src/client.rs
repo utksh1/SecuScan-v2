@@ -39,6 +39,9 @@ impl SecuScanClient {
             creds,
             token: RwLock::new(None),
             http: Client::builder()
+                // Never forward X-API-Key to a redirected host or path.
+                // API calls must reach the configured SecuScan origin directly.
+                .redirect(reqwest::redirect::Policy::none())
                 .timeout(std::time::Duration::from_secs(600))
                 .build()
                 .expect("reqwest client"),

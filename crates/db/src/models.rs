@@ -43,6 +43,8 @@ pub struct ApiKeyRow {
     pub name: String,
     pub prefix: String,
     pub key_hash: String,
+    pub scope: String,
+    pub issued_by: Option<String>,
     pub created_at: String,
     pub last_used_at: Option<String>,
     pub revoked_at: Option<String>,

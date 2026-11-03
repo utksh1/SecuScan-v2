@@ -44,33 +44,11 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
         tool("get_finding", "Get a finding by id", json!({
             "type": "object", "properties": { "id": { "type": "string" } }, "required": ["id"]
         })),
-        tool("triage_finding", "Update a finding's analyst status", json!({
-            "type": "object",
-            "properties": {
-                "id": { "type": "string" },
-                "status": { "type": "string", "enum": ["new", "confirmed", "needs_review", "false_positive", "accepted_risk", "fixed"] }
-            },
-            "required": ["id", "status"]
-        })),
         tool("list_workspaces", "List workspaces", json!({})),
-        tool("create_workspace", "Create a workspace", json!({
-            "type": "object",
-            "properties": { "name": { "type": "string" }, "description": { "type": "string" } },
-            "required": ["name"]
-        })),
         tool("list_targets", "List targets in a workspace", json!({
             "type": "object",
             "properties": { "workspace_id": { "type": "string" } },
             "required": ["workspace_id"]
-        })),
-        tool("add_target", "Register a target in a workspace", json!({
-            "type": "object",
-            "properties": {
-                "workspace_id": { "type": "string" },
-                "name": { "type": "string", "description": "IP, hostname, or URL" },
-                "description": { "type": "string" }
-            },
-            "required": ["workspace_id", "name"]
         })),
         tool("list_robots", "List available Pentest Robots (DAG workflows)", json!({})),
         tool("get_robot_run", "Get the status of a robot run", json!({
@@ -86,14 +64,6 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
                 "limit": { "type": "integer", "default": 100 }
             }
         })),
-        tool("create_report", "Generate a report for a task", json!({
-            "type": "object",
-            "properties": {
-                "task_id": { "type": "string" },
-                "format": { "type": "string", "enum": ["md", "json", "csv", "html", "sarif"] }
-            },
-            "required": ["task_id", "format"]
-        })),
         tool("list_reports", "List recent report jobs", json!({})),
         tool("get_sniper_run", "Get a Sniper run by id", json!({
             "type": "object",
@@ -101,11 +71,6 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
             "required": ["id"]
         })),
         tool("list_vpn_profiles", "List OpenVPN profiles owned by the caller", json!({})),
-        tool("test_vpn_profile", "Validate an OpenVPN profile without connecting", json!({
-            "type": "object",
-            "properties": { "id": { "type": "string" } },
-            "required": ["id"]
-        })),
         tool("start_people_hunter", "Start People Hunter only with a separate scoped one-use approval", json!({
             "type": "object",
             "properties": {
@@ -305,45 +270,9 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
         }
-        "triage_finding" => {
-            let id = args
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing id")?;
-            let status = args
-                .get("status")
-                .and_then(|v| v.as_str())
-                .ok_or("missing status")?;
-            let v = client
-                .patch(
-                    &format!("/api/v1/findings/{id}"),
-                    json!({"analyst_status": status}),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
         "list_workspaces" => {
             let v = client
                 .get("/api/v1/workspaces")
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
-        "create_workspace" => {
-            let name = args
-                .get("name")
-                .and_then(|v| v.as_str())
-                .ok_or("missing name")?;
-            let desc = args
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let v = client
-                .post(
-                    "/api/v1/workspaces",
-                    json!({"name": name, "description": desc}),
-                )
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
@@ -355,28 +284,6 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
                 .ok_or("missing workspace_id")?;
             let v = client
                 .get(&format!("/api/v1/workspaces/{ws}/targets"))
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
-        "add_target" => {
-            let ws = args
-                .get("workspace_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing workspace_id")?;
-            let name = args
-                .get("name")
-                .and_then(|v| v.as_str())
-                .ok_or("missing name")?;
-            let desc = args
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let v = client
-                .post(
-                    &format!("/api/v1/workspaces/{ws}/targets"),
-                    json!({"name": name, "description": desc}),
-                )
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
@@ -411,24 +318,6 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
             let v = client.get(&path).await.map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
         }
-        "create_report" => {
-            let task_id = args
-                .get("task_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing task_id")?;
-            let format = args
-                .get("format")
-                .and_then(|v| v.as_str())
-                .ok_or("missing format")?;
-            let v = client
-                .post(
-                    &format!("/api/v1/tasks/{task_id}/reports"),
-                    json!({"format": format}),
-                )
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
         "list_reports" => {
             let v = client
                 .get("/api/v1/reports")
@@ -450,17 +339,6 @@ async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Resu
         "list_vpn_profiles" => {
             let v = client
                 .get("/api/v1/vpn-profiles")
-                .await
-                .map_err(|e| e.to_string())?;
-            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
-        }
-        "test_vpn_profile" => {
-            let id = args
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing id")?;
-            let v = client
-                .post(&format!("/api/v1/vpn-profiles/{id}/test"), json!({}))
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
@@ -508,6 +386,15 @@ mod tests {
         }
         assert!(!items.iter().any(|x| x["name"] == "run_sniper"));
         assert!(!items.iter().any(|x| x["name"] == "run_robot"));
+        for action in [
+            "triage_finding",
+            "create_workspace",
+            "add_target",
+            "create_report",
+            "test_vpn_profile",
+        ] {
+            assert!(!items.iter().any(|x| x["name"] == action));
+        }
     }
 
     #[test]

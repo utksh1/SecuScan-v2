@@ -61,11 +61,21 @@ The MCP server does not expose approval issuance. `run_robot` and
 scope-bound human approval. See [MCP consent](docs/MCP_CONSENT.md) for the
 authorization flow, test cases, and deployment assumptions.
 
-**Remaining boundary:** a scanner API credential still has direct access
-to existing REST scan endpoints outside the MCP tool interface; API keys
-do not yet carry separate endpoint scopes. Isolate agent credentials and
-restrict their network capabilities. Workspace membership enforcement is
-a separate open hardening issue.
+**Credential boundary (Issue #19):** new API keys issued through
+`POST /api/v1/admin/mcp-keys` have a database-backed `mcp_scan` scope.
+They may submit a one-time approved scan via `POST /api/v1/mcp/scans`
+and access a narrowly enumerated set of read-only inspection routes.
+Every other v1 mutation is rejected server-side, including direct tasks,
+retries, schedules, workflows, robot/sniper actions, and credential
+management. Revocation is immediate for future requests. Only an
+interactive admin JWT can issue/revoke these keys.
+
+**Remaining boundaries:** existing keys intentionally retain their
+historical `full` scope. Never give full keys, scanner login passwords,
+or JWT sessions to an MCP worker. The credential scope cannot constrain
+separately compromised accounts, and workspace membership enforcement
+remains tracked in Issue #7. Isolate the agent and constrain network
+access as an additional layer.
 
 ## Known trust boundaries
 
