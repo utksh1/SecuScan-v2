@@ -1,6 +1,7 @@
 //! v3.1.0 routes: Sniper Auto-Exploiter + VPN profiles.
 
 use crate::auth::extractor::CurrentUser;
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, State};
@@ -112,7 +113,11 @@ async fn run_sniper(
     let finding =
         crate::routes::findings::load_finding_for_user(&state, &user, &req.finding_id).await?;
     if let Some(ws) = &req.workspace_id {
-        repo::workspaces::get_workspace(&state.db, ws).await?;
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
+    let source_task = repo::tasks::get(&state.db, &finding.task_id).await?;
+    if source_task.workspace_id != req.workspace_id {
+        return Err(ApiError::NotFound("finding not in selected workspace".into()));
     }
     // The chain engine resolves the source task target when this URL is absent.
     let target = finding.url.clone();
@@ -369,6 +374,7 @@ async fn get_workspace_vpn(
     _user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    require_workspace(&state, &_user, &id, WorkspacePermission::Read).await?;
     let ws = repo::workspaces::get_workspace(&state.db, &id).await?;
     match ws.vpn_profile_id {
         None => Ok(Json(json!({"profile": Value::Null}))),
@@ -394,9 +400,10 @@ async fn attach_vpn_to_workspace(
     Json(req): Json<AttachVpnRequest>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
-    repo::workspaces::get_workspace(&state.db, &id).await?;
+    require_workspace(&state, &user, &id, WorkspacePermission::Write).await?;
     if let Some(pid) = &req.vpn_profile_id {
-        repo::vpn::get(&state.db, pid).await?;
+        let profile = repo::vpn::get(&state.db, pid).await?;
+        crate::access::require_owner(&user, &profile.created_by)?;
     }
     repo::vpn::attach_to_workspace(&state.db, &id, req.vpn_profile_id.as_deref()).await?;
     Ok(StatusCode::NO_CONTENT)
