@@ -5,7 +5,7 @@ use crate::auth::hash_password;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::Json;
 use secuscan_core::policy::NetworkPolicy;
 use secuscan_db::repo;
@@ -17,6 +17,11 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/admin/settings", axum::routing::get(get_settings))
         .route("/admin/users", axum::routing::post(create_user))
         .route("/admin/users", axum::routing::get(list_users))
+        .route(
+            "/admin/mcp-keys",
+            axum::routing::post(create_mcp_key).get(list_mcp_keys),
+        )
+        .route("/admin/mcp-keys/:id", axum::routing::delete(revoke_mcp_key))
         .route("/admin/users/:id", axum::routing::patch(update_user))
         .route("/admin/users/:id", axum::routing::delete(delete_user))
         .route("/admin/network-policy", axum::routing::get(get_policy))
@@ -252,4 +257,115 @@ async fn refresh_plugins(
         "total": registry.len(),
         "available": available,
     })))
+}
+
+
+// ---- Dedicated MCP scanner credentials ------------------------------------
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateMcpKeyRequest {
+    issued_to_user_id: String,
+    name: String,
+}
+
+/// A restricted credential is issued only by a human administrator using a
+/// session JWT. A full-access admin API key is insufficient for issuance.
+fn require_admin_jwt(admin: &CurrentUser, headers: &HeaderMap) -> ApiResult<()> {
+    admin.require_admin()?;
+    let valid_bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("Bearer "));
+    if !valid_bearer || headers.contains_key("x-api-key") {
+        return Err(ApiError::Forbidden(
+            "MCP key management requires an interactive administrator JWT".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn create_mcp_key(
+    State(state): State<SharedState>,
+    admin: CurrentUser,
+    headers: HeaderMap,
+    Json(req): Json<CreateMcpKeyRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    require_admin_jwt(&admin, &headers)?;
+    if req.name.trim().is_empty() || req.name.len() > 100 {
+        return Err(ApiError::BadRequest(
+            "name must contain 1..=100 characters".into(),
+        ));
+    }
+    if req.issued_to_user_id == admin.0.id {
+        return Err(ApiError::Forbidden(
+            "MCP scanner keys must belong to a different scanner account".into(),
+        ));
+    }
+    let scanner = repo::users::find_by_id(&state.db, &req.issued_to_user_id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("scanner account not found".into()))?;
+    if scanner.role != "scanner" {
+        return Err(ApiError::Forbidden(
+            "MCP-scoped credentials require a scanner-role account".into(),
+        ));
+    }
+    let created = repo::api_keys::create_mcp_scoped(
+        &state.db,
+        &scanner.id,
+        &req.name,
+        &admin.0.id,
+    )
+    .await?;
+
+    // The raw key is shown only once; its digest alone is persisted.
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": created.row.id,
+            "name": created.row.name,
+            "user_id": scanner.id,
+            "prefix": created.row.prefix,
+            "scope": created.row.scope,
+            "issued_by": admin.0.id,
+            "created_at": created.row.created_at,
+            "key": created.raw
+        })),
+    ))
+}
+
+async fn list_mcp_keys(
+    State(state): State<SharedState>,
+    admin: CurrentUser,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    require_admin_jwt(&admin, &headers)?;
+    let rows = repo::api_keys::list_mcp_scoped(&state.db).await?;
+    Ok(Json(json!({
+        "items": rows.iter().map(|row| json!({
+            "id": row.id,
+            "user_id": row.user_id,
+            "name": row.name,
+            "prefix": row.prefix,
+            "scope": row.scope,
+            "issued_by": row.issued_by,
+            "created_at": row.created_at,
+            "last_used_at": row.last_used_at,
+            "revoked_at": row.revoked_at,
+        })).collect::<Vec<_>>(),
+    })))
+}
+
+async fn revoke_mcp_key(
+    State(state): State<SharedState>,
+    admin: CurrentUser,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    require_admin_jwt(&admin, &headers)?;
+    if repo::api_keys::revoke_mcp_scoped(&state.db, &id).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound(format!("active MCP credential {id} not found")))
+    }
 }
