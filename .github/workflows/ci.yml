@@ -131,16 +131,23 @@ jobs:
             exit 1
           fi
           # The server must also reject absent or public placeholder keys.
-          if docker run --rm secuscan-v2:ci > /tmp/secuscan-no-key.log 2>&1; then
+          if timeout 15s docker run --rm secuscan-v2:ci > /tmp/secuscan-no-key.log 2>&1; then
             echo 'SECURITY FAILURE: server started without a JWT secret'
             exit 1
           fi
           grep -q 'SECUSCAN_JWT_SECRET is required in production' /tmp/secuscan-no-key.log
-          if docker run --rm -e SECUSCAN_JWT_SECRET=change-me-openssl-rand-hex-32 secuscan-v2:ci > /tmp/secuscan-weak-key.log 2>&1; then
+          if timeout 15s docker run --rm -e SECUSCAN_JWT_SECRET=change-me-openssl-rand-hex-32 secuscan-v2:ci > /tmp/secuscan-weak-key.log 2>&1; then
             echo 'SECURITY FAILURE: server accepted the public placeholder JWT key'
             exit 1
           fi
           grep -q 'SECUSCAN_JWT_SECRET must be a persistent' /tmp/secuscan-weak-key.log
+          # Full-length, visibly patterned hex also must not be accepted.
+          patterned_secret='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+          if timeout 15s docker run --rm -e SECUSCAN_JWT_SECRET="$patterned_secret" secuscan-v2:ci > /tmp/secuscan-patterned-key.log 2>&1; then
+            echo 'SECURITY FAILURE: server accepted a repeated 64-character JWT key'
+            exit 1
+          fi
+          grep -q 'repeated, or sequential keys are rejected' /tmp/secuscan-patterned-key.log
       - name: Smoke health + login + SPA
         run: |
           set -euo pipefail
