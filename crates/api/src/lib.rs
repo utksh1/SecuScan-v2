@@ -6,6 +6,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod manager;
+pub mod mcp_key_scope;
 pub mod notifications_engine;
 pub mod report_jobs;
 pub mod reports_render;
@@ -25,7 +26,13 @@ use tower_http::trace::TraceLayer;
 /// Build the full application (API + static SPA) — also used by tests.
 pub fn build_app(state: SharedState) -> axum::Router {
     let mut app = axum::Router::new()
-        .nest("/api/v1", routes::api_router())
+        .nest(
+            "/api/v1",
+            routes::api_router().layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                mcp_key_scope::enforce,
+            )),
+        )
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024)) // 1 MiB JSON bodies
         .layer(TraceLayer::new_for_http());
 
