@@ -30,6 +30,7 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/tasks/:id", axum::routing::delete(delete))
         .route("/tasks/:id/cancel", axum::routing::post(cancel))
         .route("/tasks/:id/retry", axum::routing::post(retry))
+        .route("/tasks/:id/findings", axum::routing::get(task_findings))
         .route("/tasks/:id/result", axum::routing::get(result))
         .route("/tasks/:id/output", axum::routing::get(raw_output))
 }
@@ -512,6 +513,29 @@ async fn retry(
             .await?;
     state.tasks.spawn(row.clone(), manifest, inputs).await;
     Ok((StatusCode::CREATED, Json(task_to_json(&row, false))))
+}
+
+/// MCP and REST clients share this task-scoped findings endpoint. Always
+/// verify task visibility before querying its findings, including for
+/// private workspace members and recently revoked users.
+async fn task_findings(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let task = load_task_for_user(&state, &user, &id).await?;
+    let findings = repo::findings::list(
+        &state.db,
+        &repo::findings::FindingFilters {
+            task_id: Some(task.id),
+            limit: 1000,
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(Json(json!({
+        "items": findings.iter().map(crate::routes::findings::finding_to_json).collect::<Vec<_>>(),
+    })))
 }
 
 async fn result(
