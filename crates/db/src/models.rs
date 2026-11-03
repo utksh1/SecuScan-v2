@@ -170,6 +170,8 @@ pub struct WorkflowRow {
 pub struct WorkflowRunRow {
     pub id: String,
     pub workflow_id: String,
+    pub created_by: Option<String>,
+    pub workspace_id: Option<String>,
     pub status: String,
     pub task_ids_json: String,
     pub error: Option<String>,
