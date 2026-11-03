@@ -239,8 +239,17 @@ async fn mark_mention_read(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    // The mention row ID is not an authorization credential. Only its
+    // intended recipient (or an admin) may mark it read.
+    let owner: Option<(String,)> = sqlx::query_as(
+        "SELECT mentioned_user_id FROM mentions WHERE id = ?"
+    ).bind(&id).fetch_optional(&state.db).await
+      .map_err(|e| ApiError::Internal(format!("mention lookup: {e}")))?;
+    let (recipient,) = owner.ok_or_else(|| ApiError::NotFound("not found".into()))?;
+    if !user.is_admin() && recipient != user.0.id {
+        return Err(ApiError::NotFound("not found".into()));
+    }
     secuscan_db::repo::collab::mark_mention_read(&state.db, &id).await?;
-    let _ = user; // auth required to call, but no per-user check on the mention row
     Ok(StatusCode::NO_CONTENT)
 }
 
