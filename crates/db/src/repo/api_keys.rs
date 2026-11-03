@@ -14,7 +14,28 @@ pub struct CreatedApiKey {
 }
 
 pub async fn create(pool: &SqlitePool, user_id: &str, name: &str) -> DbResult<CreatedApiKey> {
-    let raw = generate_token("scsk");
+    create_with_scope(pool, user_id, name, "full", None).await
+}
+
+/// Only an authenticated admin endpoint should call this factory. The owner
+/// must be a dedicated scanner account, not an administrator account.
+pub async fn create_mcp_scoped(
+    pool: &SqlitePool,
+    user_id: &str,
+    name: &str,
+    issued_by: &str,
+) -> DbResult<CreatedApiKey> {
+    create_with_scope(pool, user_id, name, "mcp_scan", Some(issued_by)).await
+}
+
+async fn create_with_scope(
+    pool: &SqlitePool,
+    user_id: &str,
+    name: &str,
+    scope: &str,
+    issued_by: Option<&str>,
+) -> DbResult<CreatedApiKey> {
+    let raw = generate_token(if scope == "mcp_scan" { "scmcp" } else { "scsk" });
     let prefix = raw[..12].to_string();
     let row = ApiKeyRow {
         id: new_id(),
@@ -22,19 +43,23 @@ pub async fn create(pool: &SqlitePool, user_id: &str, name: &str) -> DbResult<Cr
         name: name.trim().to_string(),
         prefix: prefix.clone(),
         key_hash: sha256_hex(&raw),
+        scope: scope.to_string(),
+        issued_by: issued_by.map(str::to_string),
         created_at: now(),
         last_used_at: None,
         revoked_at: None,
     };
     sqlx::query(
-        "INSERT INTO api_keys (id, user_id, name, prefix, key_hash, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO api_keys (id, user_id, name, prefix, key_hash, scope, issued_by, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&row.id)
     .bind(&row.user_id)
     .bind(&row.name)
     .bind(&row.prefix)
     .bind(&row.key_hash)
+    .bind(&row.scope)
+    .bind(&row.issued_by)
     .bind(&row.created_at)
     .execute(pool)
     .await?;
@@ -82,4 +107,28 @@ pub async fn revoke(pool: &SqlitePool, id: &str, user_id: &str) -> DbResult<bool
     .execute(pool)
     .await?;
     Ok(res.rows_affected() > 0)
+}
+
+    
+/// Admin-only inventory of scoped keys (returns metadata, never plaintext).
+pub async fn list_mcp_scoped(pool: &SqlitePool) -> DbResult<Vec<ApiKeyRow>> {
+    sqlx::query_as::<_, ApiKeyRow>(
+        "SELECT * FROM api_keys WHERE scope = 'mcp_scan' ORDER BY created_at DESC",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
+}
+
+/// Revoke an MCP-scoped key by id, independent of who owns the scanner account.
+pub async fn revoke_mcp_scoped(pool: &SqlitePool, id: &str) -> DbResult<bool> {
+    let res = sqlx::query(
+        "UPDATE api_keys SET revoked_at = ?1
+         WHERE id = ?2 AND scope = 'mcp_scan' AND revoked_at IS NULL",
+    )
+    .bind(now())
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() == 1)
 }
