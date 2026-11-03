@@ -46,6 +46,27 @@ the consent state is recorded with every task.
 - The 64-hex format and basic diversity checks are **not** proof of randomness.
   Generate keys with `openssl rand -hex 32` or an equivalent CSPRNG.
 
+## MCP agent authorization
+
+MCP agents cannot self-approve scans. `start_scan` and
+`start_people_hunter` require a human admin-issued **single-use approval
+token** bound to a distinct scanner account, the target, normalized inputs,
+preset, workspace, and auth profile. The REST API verifies the token,
+re-runs the ordinary plugin/consent/network admission policy, atomically
+consumes the token and links the approval to the resulting task audit.
+Tokens expire after five minutes; a replay or changed scope is rejected.
+
+The MCP server does not expose approval issuance. `run_robot` and
+`run_sniper` are not exposed as MCP actions until they have equivalent
+scope-bound human approval. See [MCP consent](docs/MCP_CONSENT.md) for the
+authorization flow, test cases, and deployment assumptions.
+
+**Remaining boundary:** a scanner API credential still has direct access
+to existing REST scan endpoints outside the MCP tool interface; API keys
+do not yet carry separate endpoint scopes. Isolate agent credentials and
+restrict their network capabilities. Workspace membership enforcement is
+a separate open hardening issue.
+
 ## Known trust boundaries
 
 1. **DNS at admission time.** Hostname-based policy checks resolve at task creation; a
