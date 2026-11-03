@@ -40,8 +40,15 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status();
+        // Never distinguish an absent resource ID from an existing resource
+        // concealed by membership or ownership authorization (IDOR probing).
+        let message = if matches!(&self, ApiError::NotFound(_)) {
+            "not found".to_string()
+        } else {
+            self.to_string()
+        };
         let body = Json(json!({
-            "error": { "code": status.as_u16(), "message": self.to_string() }
+            "error": { "code": status.as_u16(), "message": message }
         }));
         (status, body).into_response()
     }
