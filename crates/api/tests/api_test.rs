@@ -3536,3 +3536,194 @@ async fn scoped_mcp_keys_are_denied_direct_rest_mutations_and_revoked() {
         .unwrap();
     assert_eq!(denied_after_revoke.status(), 401);
 }
+
+#[tokio::test]
+async fn private_workspace_membership_blocks_cross_workspace_idors_and_streams() {
+    let s = spawn_app().await;
+    let (c, admin) = login(&s).await;
+    let hash = secuscan_api::auth::hash_password("workspace-test-password").unwrap();
+    let owner = secuscan_db::repo::users::create(
+        &s.state.db, "ws-owner@test.local", "WS owner", &hash, "scanner",
+    ).await.unwrap();
+    let editor = secuscan_db::repo::users::create(
+        &s.state.db, "ws-editor@test.local", "WS editor", &hash, "scanner",
+    ).await.unwrap();
+    let viewer = secuscan_db::repo::users::create(
+        &s.state.db, "ws-viewer@test.local", "WS viewer", &hash, "viewer",
+    ).await.unwrap();
+    let outsider = secuscan_db::repo::users::create(
+        &s.state.db, "ws-outsider@test.local", "WS outsider", &hash, "scanner",
+    ).await.unwrap();
+
+    let mut tokens = std::collections::HashMap::new();
+    for email in [
+        "ws-owner@test.local", "ws-editor@test.local",
+        "ws-viewer@test.local", "ws-outsider@test.local",
+    ] {
+        let resp = c.post(format!("{}/auth/login", s.base)).json(&serde_json::json!({
+            "email": email, "password": "workspace-test-password",
+        })).send().await.unwrap();
+        assert_eq!(resp.status(), 200);
+        let body: serde_json::Value = resp.json().await.unwrap();
+        tokens.insert(email, body["access_token"].as_str().unwrap().to_string());
+    }
+    let owner_token = &tokens["ws-owner@test.local"];
+    let editor_token = &tokens["ws-editor@test.local"];
+    let viewer_token = &tokens["ws-viewer@test.local"];
+    let outsider_token = &tokens["ws-outsider@test.local"];
+
+    let created = c.post(format!("{}/workspaces", s.base))
+        .bearer_auth(owner_token)
+        .json(&serde_json::json!({"name":"private-client"}))
+        .send().await.unwrap();
+    assert_eq!(created.status(), 201);
+    let workspace: serde_json::Value = created.json().await.unwrap();
+    assert_eq!(workspace["access_mode"], "private");
+    let ws = workspace["id"].as_str().unwrap();
+    let members = c.get(format!("{}/workspaces/{ws}/members", s.base))
+        .bearer_auth(owner_token).send().await.unwrap();
+    assert_eq!(members.status(), 200);
+    let listing: serde_json::Value = members.json().await.unwrap();
+    assert!(listing["items"].as_array().unwrap().iter().any(|row| {
+        row["user_id"] == owner.id && row["role"] == "owner"
+    }));
+
+    let target = c.post(format!("{}/workspaces/{ws}/targets", s.base))
+        .bearer_auth(owner_token)
+        .json(&serde_json::json!({"name":"127.0.0.1"}))
+        .send().await.unwrap();
+    assert_eq!(target.status(), 201);
+    let target_id: serde_json::Value = target.json().await.unwrap();
+    let task = c.post(format!("{}/tasks", s.base))
+        .bearer_auth(owner_token)
+        .json(&serde_json::json!({
+            "plugin_id":"sevtest",
+            "inputs":{"target":"127.0.0.1"},
+            "consent_granted":true,
+            "workspace_id":ws
+        })).send().await.unwrap();
+    assert_eq!(task.status(), 201);
+    let created_task: serde_json::Value = task.json().await.unwrap();
+    let task_id = created_task["id"].as_str().unwrap();
+    let terminal = wait_terminal(&c, &s.base, owner_token, task_id).await;
+    assert_eq!(terminal["status"], "completed");
+    let finds = c.get(format!("{}/tasks/{task_id}/findings", s.base))
+        .bearer_auth(owner_token).send().await.unwrap();
+    assert_eq!(finds.status(), 200);
+    let finds: serde_json::Value = finds.json().await.unwrap();
+    let finding_id = finds["items"][0]["id"].as_str().unwrap();
+
+    // Non-members see the same 404 as unknown IDs, including ID-based
+    // target mutation, task evidence, exported reports and SSE.
+    for path in [
+        format!("/workspaces/{ws}"),
+        format!("/workspaces/{ws}/targets"),
+        format!("/workspaces/{ws}/members"),
+        format!("/tasks/{task_id}"),
+        format!("/findings/{finding_id}"),
+        format!("/tasks/{task_id}/report/md"),
+        format!("/tasks/{task_id}/stream"),
+        format!("/findings/{finding_id}/comments"),
+        format!("/dashboard/summary?workspace_id={ws}"),
+    ] {
+        let denied = c.get(format!("{}{}", s.base, path))
+            .bearer_auth(outsider_token).send().await.unwrap();
+        assert_eq!(denied.status(), 404, "GET {path}");
+    }
+    let denied_mutation = c.patch(format!(
+        "{}/targets/{}", s.base, target_id["id"].as_str().unwrap()
+    )).bearer_auth(outsider_token).json(&serde_json::json!({"description":"attempted"}))
+        .send().await.unwrap();
+    assert_eq!(denied_mutation.status(), 404);
+    let denied_scan = c.post(format!("{}/tasks", s.base))
+        .bearer_auth(outsider_token).json(&serde_json::json!({
+            "plugin_id":"sevtest", "inputs":{"target":"127.0.0.1"},
+            "consent_granted":true, "workspace_id":ws
+        })).send().await.unwrap();
+    assert_eq!(denied_scan.status(), 404);
+    let list = c.get(format!("{}/workspaces", s.base))
+        .bearer_auth(outsider_token).send().await.unwrap();
+    let list: serde_json::Value = list.json().await.unwrap();
+    assert!(!list["items"].as_array().unwrap().iter().any(|v| v["id"] == ws));
+    let tasks = c.get(format!("{}/tasks", s.base))
+        .bearer_auth(outsider_token).send().await.unwrap();
+    let tasks: serde_json::Value = tasks.json().await.unwrap();
+    assert_eq!(tasks["total"], 0);
+    let findings = c.get(format!("{}/findings", s.base))
+        .bearer_auth(outsider_token).send().await.unwrap();
+    let findings: serde_json::Value = findings.json().await.unwrap();
+    assert_eq!(findings["total"], 0);
+
+    for (member, role) in [(&editor, "editor"), (&viewer, "viewer")] {
+        let resp = c.post(format!("{}/workspaces/{ws}/members", s.base))
+            .bearer_auth(owner_token)
+            .json(&serde_json::json!({"user_id":member.id, "role":role}))
+            .send().await.unwrap();
+        assert_eq!(resp.status(), 201);
+    }
+    // Viewers can browse evidence and export it, but cannot mutate it.
+    for path in [
+        format!("/workspaces/{ws}"),
+        format!("/tasks/{task_id}"),
+        format!("/findings/{finding_id}"),
+        format!("/tasks/{task_id}/report/md"),
+        format!("/tasks/{task_id}/stream"),
+    ] {
+        let allowed = c.get(format!("{}{}", s.base, path))
+            .bearer_auth(viewer_token).send().await.unwrap();
+        assert_eq!(allowed.status(), 200, "GET {path}");
+    }
+    let denied_edit = c.patch(format!(
+        "{}/targets/{}", s.base, target_id["id"].as_str().unwrap()
+    )).bearer_auth(viewer_token)
+        .json(&serde_json::json!({"description":"viewer write"}))
+        .send().await.unwrap();
+    assert_eq!(denied_edit.status(), 403);
+    let denied_role_change = c.post(format!("{}/workspaces/{ws}/members", s.base))
+        .bearer_auth(editor_token)
+        .json(&serde_json::json!({"user_id":outsider.id, "role":"editor"}))
+        .send().await.unwrap();
+    assert_eq!(denied_role_change.status(), 404);
+
+    let editor_scan = c.post(format!("{}/tasks", s.base))
+        .bearer_auth(editor_token).json(&serde_json::json!({
+            "plugin_id":"sevtest", "inputs":{"target":"127.0.0.1"},
+            "consent_granted":true, "workspace_id":ws
+        })).send().await.unwrap();
+    assert_eq!(editor_scan.status(), 201);
+
+    // Revoke editor: formerly authorized evidence and new launches both
+    // become inaccessible without disclosing the private workspace ID.
+    let revoked = c.delete(format!("{}/workspaces/{ws}/members/{}", s.base, editor.id))
+        .bearer_auth(owner_token).send().await.unwrap();
+    assert_eq!(revoked.status(), 204);
+    let denied = c.get(format!("{}/tasks/{task_id}", s.base))
+        .bearer_auth(editor_token).send().await.unwrap();
+    assert_eq!(denied.status(), 404);
+    let denied = c.get(format!("{}/tasks/{task_id}/stream", s.base))
+        .bearer_auth(editor_token).send().await.unwrap();
+    assert_eq!(denied.status(), 404);
+    let denied = c.post(format!("{}/tasks", s.base))
+        .bearer_auth(editor_token).json(&serde_json::json!({
+            "plugin_id":"sevtest", "inputs":{"target":"127.0.0.1"},
+            "consent_granted":true, "workspace_id":ws
+        })).send().await.unwrap();
+    assert_eq!(denied.status(), 404);
+
+    // Explicit admin-created shared workspace preserves original behavior.
+    let shared = c.post(format!("{}/workspaces", s.base))
+        .bearer_auth(&admin)
+        .json(&serde_json::json!({"name":"legacy-shared", "access_mode":"shared"}))
+        .send().await.unwrap();
+    assert_eq!(shared.status(), 201);
+    let shared: serde_json::Value = shared.json().await.unwrap();
+    let shared_id = shared["id"].as_str().unwrap();
+    let visible = c.get(format!("{}/workspaces/{shared_id}", s.base))
+        .bearer_auth(outsider_token).send().await.unwrap();
+    assert_eq!(visible.status(), 200);
+    let shared_target = c.post(format!("{}/workspaces/{shared_id}/targets", s.base))
+        .bearer_auth(outsider_token)
+        .json(&serde_json::json!({"name":"shared.local"}))
+        .send().await.unwrap();
+    assert_eq!(shared_target.status(), 201);
+}
