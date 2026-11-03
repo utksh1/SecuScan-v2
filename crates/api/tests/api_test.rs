@@ -3196,6 +3196,28 @@ async fn mcp_scan_approvals_are_out_of_band_scoped_one_use_and_audited() {
         .unwrap();
     assert_eq!(changed_target.status(), 403);
 
+    // Plugin version, engine and safety metadata are bound to the approval.
+    let manifest_path = s._plugins_dir.path().join("port-scanner.toml");
+    let original_manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let changed_manifest = original_manifest.replacen(
+        "version = \"1.1.0\"",
+        "version = \"9.9.9\"",
+        1,
+    );
+    assert_ne!(original_manifest, changed_manifest);
+    std::fs::write(&manifest_path, changed_manifest).unwrap();
+    *s.state.registry.write().await = PluginRegistry::load_dir(s._plugins_dir.path());
+    let version_mismatch = c
+        .post(&start_url)
+        .header("x-api-key", &key)
+        .json(&good)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(version_mismatch.status(), 403);
+    std::fs::write(&manifest_path, original_manifest).unwrap();
+    *s.state.registry.write().await = PluginRegistry::load_dir(s._plugins_dir.path());
+
     let created = c
         .post(&start_url)
         .header("x-api-key", &key)
