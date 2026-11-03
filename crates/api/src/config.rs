@@ -77,7 +77,9 @@ fn validate_jwt_secret(secret: &str) -> Result<(), String> {
     let decoded = hex::decode(secret).map_err(|_| invalid.to_string())?;
     let distinct: std::collections::HashSet<u8> = decoded.into_iter().collect();
     if distinct.len() < 8 {
-        return Err(format!("{invalid}; repeated or low-diversity keys are rejected"));
+        return Err(format!(
+            "{invalid}; repeated or low-diversity keys are rejected"
+        ));
     }
     Ok(())
 }
@@ -197,12 +199,8 @@ mod tests {
     #[test]
     fn production_rejects_missing_or_empty_secret() {
         for value in [None, Some(""), Some("   ")] {
-            let err = resolve_jwt_secret(
-                value,
-                Environment::Production,
-                addr("0.0.0.0:8080"),
-            )
-            .unwrap_err();
+            let err = resolve_jwt_secret(value, Environment::Production, addr("0.0.0.0:8080"))
+                .unwrap_err();
             assert!(err.contains("SECUSCAN_JWT_SECRET"));
         }
     }
@@ -223,32 +221,31 @@ mod tests {
     fn strong_key_is_stable_across_config_reload() {
         let key = example_valid_key();
         let first =
-            resolve_jwt_secret(Some(&key), Environment::Production, addr("0.0.0.0:8080"))
-                .unwrap();
+            resolve_jwt_secret(Some(&key), Environment::Production, addr("0.0.0.0:8080")).unwrap();
         let second =
-            resolve_jwt_secret(Some(&key), Environment::Production, addr("0.0.0.0:8080"))
-                .unwrap();
+            resolve_jwt_secret(Some(&key), Environment::Production, addr("0.0.0.0:8080")).unwrap();
         assert_eq!(first, second);
     }
 
     #[test]
     fn dev_ephemeral_secret_requires_loopback_and_explicit_mode() {
-        assert!(
-            resolve_jwt_secret(None, Environment::Development, addr("0.0.0.0:8080"))
-                .is_err()
-        );
+        assert!(resolve_jwt_secret(None, Environment::Development, addr("0.0.0.0:8080")).is_err());
         let key =
-            resolve_jwt_secret(None, Environment::Development, addr("127.0.0.1:8080"))
-                .unwrap();
+            resolve_jwt_secret(None, Environment::Development, addr("127.0.0.1:8080")).unwrap();
         assert!(!key.is_empty());
-        assert!(resolve_jwt_secret(None, Environment::Production, addr("127.0.0.1:8080"))
-            .is_err());
+        assert!(resolve_jwt_secret(None, Environment::Production, addr("127.0.0.1:8080")).is_err());
     }
 
     #[test]
     fn invalid_environment_rejected() {
         assert!(Environment::parse("prod").is_err());
-        assert_eq!(Environment::parse("production").unwrap(), Environment::Production);
-        assert_eq!(Environment::parse("development").unwrap(), Environment::Development);
+        assert_eq!(
+            Environment::parse("production").unwrap(),
+            Environment::Production
+        );
+        assert_eq!(
+            Environment::parse("development").unwrap(),
+            Environment::Development
+        );
     }
 }
