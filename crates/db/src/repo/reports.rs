@@ -67,56 +67,49 @@ pub struct ReportJobListFilters {
     pub offset: i64,
 }
 
-/// List jobs newest-first. Callers clamp `limit` (the route enforces 1..=100).
+/// List jobs newest-first; a revoked private membership removes old
+/// job metadata from listings as well as artifact downloads.
 pub async fn list(pool: &SqlitePool, f: &ReportJobListFilters) -> DbResult<Vec<ReportJobRow>> {
-    let mut sql = String::from("SELECT * FROM report_jobs");
-    let mut clauses: Vec<&'static str> = Vec::new();
-    if f.user_id.is_some() {
-        clauses.push("user_id = ?");
-    }
-    if f.task_id.is_some() {
-        clauses.push("task_id = ?");
-    }
-    if !clauses.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&clauses.join(" AND "));
-    }
-    sql.push_str(" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?");
-    let mut q = sqlx::query_as::<_, ReportJobRow>(&sql);
-    if let Some(u) = &f.user_id {
-        q = q.bind(u);
-    }
-    if let Some(t) = &f.task_id {
-        q = q.bind(t);
-    }
-    q.bind(f.limit)
-        .bind(f.offset)
-        .fetch_all(pool)
-        .await
-        .map_err(Into::into)
+    sqlx::query_as::<_, ReportJobRow>(
+        "SELECT r.* FROM report_jobs r
+         JOIN tasks t ON t.id = r.task_id
+         WHERE (?1 IS NULL OR (r.user_id = ?1 AND
+           (t.workspace_id IS NULL OR EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = t.workspace_id
+             AND (w.access_mode = 'shared' OR w.created_by = ?1 OR EXISTS (
+               SELECT 1 FROM workspace_members wm
+               WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+           ))))
+         AND (?2 IS NULL OR r.task_id = ?2)
+         ORDER BY r.created_at DESC, r.id DESC LIMIT ?3 OFFSET ?4",
+    )
+    .bind(&f.user_id)
+    .bind(&f.task_id)
+    .bind(f.limit)
+    .bind(f.offset)
+    .fetch_all(pool)
+    .await
+    .map_err(Into::into)
 }
 
 pub async fn count(pool: &SqlitePool, f: &ReportJobListFilters) -> DbResult<i64> {
-    let mut sql = String::from("SELECT COUNT(*) FROM report_jobs");
-    let mut clauses: Vec<&'static str> = Vec::new();
-    if f.user_id.is_some() {
-        clauses.push("user_id = ?");
-    }
-    if f.task_id.is_some() {
-        clauses.push("task_id = ?");
-    }
-    if !clauses.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&clauses.join(" AND "));
-    }
-    let mut q = sqlx::query_scalar::<_, i64>(&sql);
-    if let Some(u) = &f.user_id {
-        q = q.bind(u);
-    }
-    if let Some(t) = &f.task_id {
-        q = q.bind(t);
-    }
-    q.fetch_one(pool).await.map_err(Into::into)
+    sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM report_jobs r
+         JOIN tasks t ON t.id = r.task_id
+         WHERE (?1 IS NULL OR (r.user_id = ?1 AND
+           (t.workspace_id IS NULL OR EXISTS (
+             SELECT 1 FROM workspaces w WHERE w.id = t.workspace_id
+             AND (w.access_mode = 'shared' OR w.created_by = ?1 OR EXISTS (
+               SELECT 1 FROM workspace_members wm
+               WHERE wm.workspace_id = w.id AND wm.user_id = ?1))
+           ))))
+         AND (?2 IS NULL OR r.task_id = ?2)",
+    )
+    .bind(&f.user_id)
+    .bind(&f.task_id)
+    .fetch_one(pool)
+    .await
+    .map_err(Into::into)
 }
 
 /// Number of jobs a user still has queued or rendering (admission cap).

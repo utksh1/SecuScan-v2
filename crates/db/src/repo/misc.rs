@@ -200,10 +200,23 @@ pub async fn dashboard_summary(
         }
     };
 
+    // Workspace membership is checked inside the aggregate SQL so a
+    // revoked private member cannot infer task/finding counts from charts.
+    let vis_tasks = " AND (workspace_id IS NULL OR EXISTS (
+        SELECT 1 FROM workspaces w WHERE w.id = workspace_id
+        AND (w.access_mode = 'shared' OR w.created_by = ?1 OR EXISTS (
+            SELECT 1 FROM workspace_members wm
+            WHERE wm.workspace_id = w.id AND wm.user_id = ?1)))";
+    let vis_findings = " AND (t.workspace_id IS NULL OR EXISTS (
+        SELECT 1 FROM workspaces w WHERE w.id = t.workspace_id
+        AND (w.access_mode = 'shared' OR w.created_by = ?1 OR EXISTS (
+            SELECT 1 FROM workspace_members wm
+            WHERE wm.workspace_id = w.id AND wm.user_id = ?1)))";
+
     // --- task-table counters (workspace column is unaliased) -------------
     let status_sql = match user_id {
         Some(_) => format!(
-            "SELECT status, COUNT(*) FROM tasks WHERE user_id = ?1{ws_tasks} GROUP BY status"
+            "SELECT status, COUNT(*) FROM tasks WHERE user_id = ?1{ws_tasks}{vis_tasks} GROUP BY status"
         ),
         None => format!("SELECT status, COUNT(*) FROM tasks WHERE 1=1{ws_tasks} GROUP BY status"),
     };
@@ -217,7 +230,7 @@ pub async fn dashboard_summary(
     .await?;
 
     let total_sql = match user_id {
-        Some(_) => format!("SELECT COUNT(*) FROM tasks WHERE user_id = ?1{ws_tasks}"),
+        Some(_) => format!("SELECT COUNT(*) FROM tasks WHERE user_id = ?1{ws_tasks}{vis_tasks}"),
         None => format!("SELECT COUNT(*) FROM tasks WHERE 1=1{ws_tasks}"),
     };
     let tasks_total: i64 = match (user_id, ws_id) {
@@ -233,7 +246,7 @@ pub async fn dashboard_summary(
     let sev_sql = match user_id {
         Some(_) => format!(
             "SELECT f.severity, COUNT(*) FROM findings f \
-             JOIN tasks t ON t.id = f.task_id WHERE t.user_id = ?1{ws_join} GROUP BY f.severity"
+             JOIN tasks t ON t.id = f.task_id WHERE t.user_id = ?1{ws_join}{vis_findings} GROUP BY f.severity"
         ),
         None => format!(
             "SELECT f.severity, COUNT(*) FROM findings f \
@@ -252,7 +265,7 @@ pub async fn dashboard_summary(
     let new_sql = match user_id {
         Some(_) => format!(
             "SELECT COUNT(*) FROM findings f JOIN tasks t ON t.id = f.task_id \
-             WHERE f.analyst_status = 'new' AND t.user_id = ?1{ws_join}"
+             WHERE f.analyst_status = 'new' AND t.user_id = ?1{ws_join}{vis_findings}"
         ),
         None => format!(
             "SELECT COUNT(*) FROM findings f JOIN tasks t ON t.id = f.task_id \

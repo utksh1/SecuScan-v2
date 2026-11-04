@@ -85,10 +85,17 @@ pub async fn delete(pool: &SqlitePool, id: &str) -> DbResult<bool> {
 
 // --- runs ------------------------------------------------------------------
 
-pub async fn create_run(pool: &SqlitePool, workflow_id: &str) -> DbResult<WorkflowRunRow> {
+pub async fn create_run(
+    pool: &SqlitePool,
+    workflow_id: &str,
+    created_by: &str,
+    workspace_id: Option<&str>,
+) -> DbResult<WorkflowRunRow> {
     let row = WorkflowRunRow {
         id: new_id(),
         workflow_id: workflow_id.to_string(),
+        created_by: Some(created_by.to_string()),
+        workspace_id: workspace_id.map(str::to_string),
         status: TaskStatus::Queued.label().to_string(),
         task_ids_json: "[]".into(),
         error: None,
@@ -96,14 +103,16 @@ pub async fn create_run(pool: &SqlitePool, workflow_id: &str) -> DbResult<Workfl
         finished_at: None,
     };
     sqlx::query(
-        "INSERT INTO workflow_runs (id, workflow_id, status, task_ids_json, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO workflow_runs (id, workflow_id, status, task_ids_json, created_at, created_by, workspace_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
     .bind(&row.id)
     .bind(&row.workflow_id)
     .bind(&row.status)
     .bind(&row.task_ids_json)
     .bind(&row.created_at)
+    .bind(&row.created_by)
+    .bind(&row.workspace_id)
     .execute(pool)
     .await?;
     Ok(row)

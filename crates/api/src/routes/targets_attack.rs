@@ -207,22 +207,13 @@ async fn attack_target(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let target = repo::workspaces::get_target(&state.db, &id).await?;
-    // Authorization: caller must own a task in the target's workspace OR
-    // be admin. For simplicity (and because targets are workspace-scoped),
-    // require the user to be a member of the workspace. Admins bypass.
-    if !user.is_admin() {
-        let ws = repo::workspaces::get_workspace(&state.db, &target.workspace_id).await?;
-        if ws.created_by != user.0.id {
-            // Fall back to membership check.
-            let members = repo::collab::list_members(&state.db, &target.workspace_id).await?;
-            let is_member = members.iter().any(|m| m.user_id == user.0.id);
-            if !is_member {
-                return Err(ApiError::Forbidden(
-                    "you are not a member of this target's workspace".into(),
-                ));
-            }
-        }
-    }
+    crate::access::require_workspace(
+        &state,
+        &user,
+        &target.workspace_id,
+        crate::access::WorkspacePermission::Write,
+    )
+    .await?;
 
     let plugin_ids = pick_suite(&req.suite, &target.kind)?;
     // Pre-flight: every requested plugin must be enabled and (if it has

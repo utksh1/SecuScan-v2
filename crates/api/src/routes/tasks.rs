@@ -5,6 +5,7 @@
 //! scheduler; `admit_request` (validation without persistence) is shared
 //! with schedule creation.
 
+use crate::access::{require_resource, require_workspace, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::routes::workspaces::parse_workspace_scope;
@@ -29,6 +30,7 @@ pub fn router() -> axum::Router<SharedState> {
         .route("/tasks/:id", axum::routing::delete(delete))
         .route("/tasks/:id/cancel", axum::routing::post(cancel))
         .route("/tasks/:id/retry", axum::routing::post(retry))
+        .route("/tasks/:id/findings", axum::routing::get(task_findings))
         .route("/tasks/:id/result", axum::routing::get(result))
         .route("/tasks/:id/output", axum::routing::get(raw_output))
 }
@@ -137,9 +139,9 @@ pub async fn admit_request(
         ));
     }
 
-    // 7) workspace (must exist when provided)
+    // 7) workspace admission: use the same membership check as all routes.
     if let Some(ws) = &req.workspace_id {
-        repo::workspaces::get_workspace(&state.db, ws).await?; // 404 when unknown
+        require_workspace(state, user, ws, WorkspacePermission::Write).await?;
     }
 
     // 8) target policy (global allow/deny + plugin allowed_targets)
@@ -361,7 +363,7 @@ async fn list(
             return Err(ApiError::BadRequest(format!("unknown status `{s}`")));
         }
     }
-    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
+    let workspace = parse_workspace_scope(&state, &user, q.workspace_id.as_deref()).await?;
     let filters = repo::tasks::TaskListFilters {
         user_id: if user.is_admin() {
             None
@@ -401,9 +403,14 @@ pub async fn load_task_for_user(
     id: &str,
 ) -> ApiResult<TaskRow> {
     let t = repo::tasks::get(&state.db, id).await?;
-    if !user.is_admin() && t.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("task {id}"))); // don't leak existence
-    }
+    require_resource(
+        state,
+        user,
+        t.workspace_id.as_deref(),
+        &t.user_id,
+        WorkspacePermission::Read,
+    )
+    .await?;
     Ok(t)
 }
 
@@ -412,7 +419,16 @@ async fn delete(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    user.require_scanner()?;
     let t = load_task_for_user(&state, &user, &id).await?;
+    require_resource(
+        &state,
+        &user,
+        t.workspace_id.as_deref(),
+        &t.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     if !t.status().is_terminal() {
         // Signal cancellation so a queued task does not still run after its
         // row is gone (the runner's final status write is a harmless no-op
@@ -435,7 +451,16 @@ async fn cancel(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    user.require_scanner()?;
     let t = load_task_for_user(&state, &user, &id).await?;
+    require_resource(
+        &state,
+        &user,
+        t.workspace_id.as_deref(),
+        &t.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     match t.status() {
         s if s.is_terminal() => {
             return Ok(Json(json!({ "cancelled": false, "status": s.label() })));
@@ -461,6 +486,14 @@ async fn retry(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     let original = load_task_for_user(&state, &user, &id).await?;
+    require_resource(
+        &state,
+        &user,
+        original.workspace_id.as_deref(),
+        &original.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let inputs: BTreeMap<String, Value> =
         serde_json::from_str(&original.inputs_json).unwrap_or_default();
     let options: Value = serde_json::from_str(&original.options_json).unwrap_or(json!({}));
@@ -480,6 +513,29 @@ async fn retry(
             .await?;
     state.tasks.spawn(row.clone(), manifest, inputs).await;
     Ok((StatusCode::CREATED, Json(task_to_json(&row, false))))
+}
+
+/// MCP and REST clients share this task-scoped findings endpoint. Always
+/// verify task visibility before querying its findings, including for
+/// private workspace members and recently revoked users.
+async fn task_findings(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let task = load_task_for_user(&state, &user, &id).await?;
+    let findings = repo::findings::list(
+        &state.db,
+        &repo::findings::FindingFilters {
+            task_id: Some(task.id),
+            limit: 1000,
+            ..Default::default()
+        },
+    )
+    .await?;
+    Ok(Json(json!({
+        "items": findings.iter().map(crate::routes::findings::finding_to_json).collect::<Vec<_>>(),
+    })))
 }
 
 async fn result(

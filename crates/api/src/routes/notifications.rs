@@ -1,5 +1,6 @@
 //! Notifications HTTP routes — CRUD + delivery log.
 
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
@@ -43,13 +44,23 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let rows =
         secuscan_db::repo::notifications::list_rules(&state.db, q.workspace_id.as_deref()).await?;
-    let items: Vec<Value> = rows
-        .iter()
-        .filter(|r| crate::access::is_owner_or_admin(&user, &r.created_by))
-        .map(rule_to_json)
-        .collect();
+    let mut items = Vec::new();
+    for r in &rows {
+        if !crate::access::is_owner_or_admin(&user, &r.created_by) {
+            continue;
+        }
+        if let Some(ws) = r.workspace_id.as_deref() {
+            if !crate::access::workspace_visible(&state, &user, ws).await? {
+                continue;
+            }
+        }
+        items.push(rule_to_json(r));
+    }
     Ok(Json(json!({ "items": items })))
 }
 
@@ -74,7 +85,7 @@ async fn create(
     }
     validate_notification_rules(&req.rules)?;
     if let Some(ws) = &req.workspace_id {
-        secuscan_db::repo::workspaces::get_workspace(&state.db, ws).await?;
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     let rules_json = serde_json::to_string(&req.rules).unwrap_or_else(|_| "{}".into());
     let row = secuscan_db::repo::notifications::create_rule(
@@ -95,6 +106,9 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &row.created_by)?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     Ok(Json(rule_to_json(&row)))
 }
 
@@ -115,6 +129,9 @@ async fn update(
     user.require_scanner()?;
     let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     if req.name.trim().is_empty() || req.name.len() > 120 {
         return Err(ApiError::BadRequest(
             "name must be 1..=120 characters".into(),
@@ -141,6 +158,9 @@ async fn delete(
     user.require_scanner()?;
     let existing = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     secuscan_db::repo::notifications::delete_rule(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -159,6 +179,9 @@ async fn list_log(
 ) -> ApiResult<Json<Value>> {
     let rule = secuscan_db::repo::notifications::get_rule(&state.db, &id).await?;
     crate::access::require_owner(&user, &rule.created_by)?;
+    if let Some(ws) = rule.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let limit = q.limit.unwrap_or(100);
     let rows =
         secuscan_db::repo::notifications::list_delivery_log(&state.db, Some(&id), limit).await?;

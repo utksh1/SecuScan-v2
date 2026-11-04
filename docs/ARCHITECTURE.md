@@ -111,14 +111,55 @@ on delete.
 
 ### Workspaces
 
-Workspaces are shared project hubs (visible to every authenticated user; scanner role
-mutates; admin deletes). `tasks.workspace_id` is nullable — NULL is the synthetic
-*Personal* scope, which keeps pre-workspace data and ad-hoc scans working unchanged.
+Workspace authorization uses an explicit compatibility boundary.
+**Existing workspaces remain `shared`** after migration 0011 (visible to all
+authenticated users, global scanners can edit, workspace creator/admin manages).
+**New workspaces are `private` by default** (creator is owner; admins can
+override; explicitly invited `editor`/`viewer` members have different
+permissions). Only administrators can deliberately create a new `shared`
+workspace using `access_mode: "shared"`. There is no implicit conversion
+from private to shared through a PATCH.
+
+Global `admin` bypasses workspace RBAC. The global `scanner` role is
+required in addition to private `owner/editor` membership for write
+operations; global `viewer` is always read-only. Unknown workspaces and
+private non-member IDs respond with the same 404. List filtering happens
+server-side, including counts, instead of trusting the UI's workspace filter.
+An existing workspace's `created_by` is treated as owner even if an old
+database lacks a membership row; migration 0011 backfills those rows.
+
+`tasks.workspace_id` is nullable — NULL is the synthetic *Personal*
+scope. Personal tasks, findings, schedules, reports and live streams remain
+restricted to their creator (admins can inspect). For `shared` workspaces,
+the previous per-user task isolation is retained; for `private` workspaces,
+members may read the workspace's task/findings evidence and editors may
+modify it. Auth profiles and report jobs retain additional credential/job
+owner restrictions.
 Deleting a workspace sets its tasks' `workspace_id` to NULL (they fall back to Personal)
 and cascades its targets away. Registered targets are unique per workspace and their
 kind (hostname / IP address / URL) is derived server-side. Dynamic query fragments
 (workspace scope, severity sets) share a running placeholder counter so bind order can
 never drift from placeholder numbering — the class of bug found and fixed in cycle 7.
+
+### Workspace authorization matrix
+
+| Resource | Private owner | Private editor | Private viewer | Non-member | Legacy shared |
+|---|---|---|---|---|---|
+| Workspace metadata, targets, member roster | Read/write/manage | Read/write targets | Read only | 404 | Read by all, scanner writes, creator/admin manages |
+| Workspace member changes | Manage | No | No | 404 | Creator/admin |
+| Task creation, robot/workflow/sniper launch | Global scanner needed | Global scanner needed | Denied | 404 | Global scanner |
+| Task/findings read, synchronous export, SSE | Read | Read | Read | 404 | Existing task-owner/admin visibility |
+| Task/findings mutation | Global scanner needed | Global scanner needed | Denied | 404 | Task owner/admin with scanner role |
+| Schedules, auth profiles, notification rules | Owner-specific plus workspace permission | Owner-specific plus workspace permission | No mutation | 404 | Creator/admin + global role |
+| Asynchronous report jobs and downloads | Job owner (with workspace read) | Job owner (with workspace read) | Existing job restrictions | 404 | Existing job owner/admin rules |
+| Personal (no workspace) | Creator only | — | — | 404 | Creator only |
+| Admin across all workspaces | Full access | Full access | Full access | Full access | Full access |
+
+The workspace authorizer is centralized in `crates/api/src/access.rs`;
+routes must use `require_workspace` for workspace IDs and
+`require_resource` for task-linked records, including mutation, export,
+and live-stream paths. Workflow templates are globally reusable; executing
+one into a private workspace requires editor permissions.
 
 ### Schedules
 

@@ -52,7 +52,7 @@ async fn summary(
     RawQuery(raw): RawQuery,
 ) -> ApiResult<Json<Value>> {
     let q = SummaryQuery::parse(raw.as_deref());
-    let workspace = parse_workspace_scope(&state, q.workspace_id.as_deref()).await?;
+    let workspace = parse_workspace_scope(&state, &user, q.workspace_id.as_deref()).await?;
     let scope_user = if user.is_admin() {
         None
     } else {

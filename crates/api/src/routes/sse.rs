@@ -7,8 +7,9 @@
 //! When the task is already terminal, the stream closes after a short grace
 //! period (the recorder may still be flushing the final `finished` event).
 
+use crate::access::{require_resource, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
-use crate::error::{ApiError, ApiResult};
+use crate::error::ApiResult;
 use crate::state::SharedState;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -35,10 +36,7 @@ async fn stream(
     Path(id): Path<String>,
     Query(q): Query<StreamQuery>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
-    let task = repo::tasks::get(&state.db, &id).await?;
-    if !user.is_admin() && task.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("task {id}")));
-    }
+    let task = crate::routes::tasks::load_task_for_user(&state, &user, &id).await?;
 
     // Subscribe BEFORE reading the DB so nothing is missed in between.
     let live = state.tasks.subscribe();
@@ -46,8 +44,11 @@ async fn stream(
     let cursor = replay.last().map(|e| e.id).unwrap_or(q.after.unwrap_or(0));
     let terminal = task.status().is_terminal() && !state.tasks.is_running(&id).await;
 
-    #[derive(Debug)]
     struct St {
+        state: SharedState,
+        user: CurrentUser,
+        owner_user_id: String,
+        workspace_id: Option<String>,
         replay: VecDeque<TaskEventRow>,
         live: tokio::sync::broadcast::Receiver<crate::manager::SseFrame>,
         cursor: i64,
@@ -57,6 +58,10 @@ async fn stream(
     }
 
     let st = St {
+        state: state.clone(),
+        user: user.clone(),
+        owner_user_id: task.user_id.clone(),
+        workspace_id: task.workspace_id.clone(),
         replay: replay.into(),
         live,
         cursor,
@@ -67,6 +72,21 @@ async fn stream(
 
     let stream = futures::stream::unfold(st, |mut st| async move {
         if st.done {
+            return None;
+        }
+        // Re-check against the live membership database on every replay
+        // and event emission, so revoked members cannot continue reading an
+        // already-open SSE stream after their authorization is removed.
+        if require_resource(
+            &st.state,
+            &st.user,
+            st.workspace_id.as_deref(),
+            &st.owner_user_id,
+            WorkspacePermission::Read,
+        )
+        .await
+        .is_err()
+        {
             return None;
         }
         // 1) drain persisted replay first
@@ -85,6 +105,10 @@ async fn stream(
                 frame = st.live.recv() => {
                     match frame {
                         Ok(f) if f.task_id == st.task_id && f.id > st.cursor => {
+                            if require_resource(&st.state, &st.user, st.workspace_id.as_deref(),
+                                &st.owner_user_id, WorkspacePermission::Read).await.is_err() {
+                                return None;
+                            }
                             let is_finished = is_finished_frame(&f.payload_json);
                             st.cursor = f.id;
                             if is_finished { st.done = true; }
@@ -105,6 +129,18 @@ async fn stream(
             Ok(f) => {
                 if f.task_id != st.task_id || f.id <= st.cursor {
                     return Some((Ok(Event::default().comment("skip")), st));
+                }
+                if require_resource(
+                    &st.state,
+                    &st.user,
+                    st.workspace_id.as_deref(),
+                    &st.owner_user_id,
+                    WorkspacePermission::Read,
+                )
+                .await
+                .is_err()
+                {
+                    return None;
                 }
                 let is_finished = is_finished_frame(&f.payload_json);
                 st.cursor = f.id;

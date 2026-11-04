@@ -1,6 +1,7 @@
 //! Authentication profiles — reusable credentials/cookies/headers for
 //! authenticated web scans.
 
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
@@ -56,12 +57,22 @@ async fn list(
     user: CurrentUser,
     Query(q): Query<ListQuery>,
 ) -> ApiResult<Json<Value>> {
+    if let Some(ws) = q.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     let rows = secuscan_db::repo::auth_profiles::list(&state.db, q.workspace_id.as_deref()).await?;
-    let items: Vec<Value> = rows
-        .iter()
-        .filter(|p| crate::access::is_owner_or_admin(&user, &p.created_by))
-        .map(profile_to_json)
-        .collect();
+    let mut items = Vec::new();
+    for p in &rows {
+        if !crate::access::is_owner_or_admin(&user, &p.created_by) {
+            continue;
+        }
+        if let Some(ws) = p.workspace_id.as_deref() {
+            if !crate::access::workspace_visible(&state, &user, ws).await? {
+                continue;
+            }
+        }
+        items.push(profile_to_json(p));
+    }
     Ok(Json(json!({ "items": items })))
 }
 
@@ -78,7 +89,7 @@ async fn create(
         ));
     }
     if let Some(ws) = &req.workspace_id {
-        secuscan_db::repo::workspaces::get_workspace(&state.db, ws).await?;
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
     }
     let config_json = serde_json::to_string(&req.config).unwrap_or_else(|_| "{}".into());
     let row = secuscan_db::repo::auth_profiles::create(
@@ -101,6 +112,9 @@ async fn get_one(
 ) -> ApiResult<Json<Value>> {
     let row = secuscan_db::repo::auth_profiles::get(&state.db, &id).await?;
     crate::access::require_owner(&user, &row.created_by)?;
+    if let Some(ws) = row.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Read).await?;
+    }
     Ok(Json(profile_to_json(&row)))
 }
 
@@ -113,6 +127,9 @@ async fn update(
     user.require_scanner()?;
     let existing = secuscan_db::repo::auth_profiles::get(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     validate_method(&req.method, &req.config)?;
     let config_json = serde_json::to_string(&req.config).unwrap_or_else(|_| "{}".into());
     secuscan_db::repo::auth_profiles::update(
@@ -135,6 +152,9 @@ async fn delete(
     user.require_scanner()?;
     let existing = secuscan_db::repo::auth_profiles::get(&state.db, &id).await?;
     crate::access::require_owner(&user, &existing.created_by)?;
+    if let Some(ws) = existing.workspace_id.as_deref() {
+        require_workspace(&state, &user, ws, WorkspacePermission::Write).await?;
+    }
     secuscan_db::repo::auth_profiles::delete(&state.db, &id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

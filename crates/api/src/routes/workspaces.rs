@@ -4,6 +4,7 @@
 //! environment scoping). Every authenticated user can view them; the
 //! scanner role is required to create or modify; deletion is admin-only.
 
+use crate::access::{require_workspace, workspace_visible, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
@@ -37,15 +38,16 @@ pub fn router() -> axum::Router<SharedState> {
 /// existing workspace (404 otherwise); absent = no filtering.
 pub async fn parse_workspace_scope(
     state: &SharedState,
+    user: &CurrentUser,
     raw: Option<&str>,
 ) -> ApiResult<WorkspaceScope> {
     match raw {
         None | Some("") => Ok(WorkspaceScope::All),
         Some("none") => Ok(WorkspaceScope::Personal),
-        Some(id) => repo::workspaces::get_workspace(&state.db, id)
-            .await
-            .map(|_| WorkspaceScope::Id(id.to_string()))
-            .map_err(|_| ApiError::NotFound(format!("workspace {id}"))),
+        Some(id) => {
+            require_workspace(state, user, id, WorkspacePermission::Read).await?;
+            Ok(WorkspaceScope::Id(id.to_string()))
+        }
     }
 }
 
@@ -54,6 +56,7 @@ fn workspace_to_json(w: &WorkspaceRow, counts: &repo::workspaces::WorkspaceCount
         "id": w.id,
         "name": w.name,
         "description": w.description,
+        "access_mode": w.access_mode,
         "created_by": w.created_by,
         "created_at": w.created_at,
         "updated_at": w.updated_at,
@@ -103,17 +106,35 @@ fn validate_target_name(raw: &str) -> ApiResult<String> {
     Ok(name)
 }
 
-async fn list(State(state): State<SharedState>, _user: CurrentUser) -> ApiResult<Json<Value>> {
+async fn list(State(state): State<SharedState>, user: CurrentUser) -> ApiResult<Json<Value>> {
     let workspaces = repo::workspaces::list_workspaces(&state.db).await?;
-    // Fixed query count regardless of how many workspaces exist.
-    let (counts_by_id, personal) = repo::workspaces::all_workspace_counts(&state.db).await?;
-    let items = workspaces
-        .iter()
-        .map(|w| {
-            let counts = counts_by_id.get(&w.id).cloned().unwrap_or_default();
-            workspace_to_json(w, &counts)
-        })
-        .collect::<Vec<_>>();
+    let (counts_by_id, global_personal) = repo::workspaces::all_workspace_counts(&state.db).await?;
+    let mut items = Vec::new();
+    for w in &workspaces {
+        if !workspace_visible(&state, &user, &w.id).await? {
+            continue;
+        }
+        let counts = counts_by_id.get(&w.id).cloned().unwrap_or_default();
+        items.push(workspace_to_json(w, &counts));
+    }
+    // Personal is private even when the ordinary workspace mode is shared.
+    let personal = if user.is_admin() {
+        global_personal
+    } else {
+        let (total, active): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(*), COALESCE(SUM(status IN ('queued', 'running')), 0)
+             FROM tasks WHERE workspace_id IS NULL AND user_id = ?",
+        )
+        .bind(&user.0.id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| ApiError::Internal(format!("personal workspace counts: {e}")))?;
+        repo::workspaces::WorkspaceCounts {
+            tasks_total: total,
+            tasks_active: active,
+            targets_total: 0,
+        }
+    };
     Ok(Json(json!({
         "items": items,
         "personal": {
@@ -130,6 +151,10 @@ struct CreateWorkspaceRequest {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// New workspaces are private by default. Admins may explicitly create
+    /// shared single-team workspaces for legacy collaboration.
+    #[serde(default)]
+    pub access_mode: Option<String>,
 }
 
 async fn create(
@@ -138,6 +163,15 @@ async fn create(
     Json(req): Json<CreateWorkspaceRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
+    let mode = req.access_mode.as_deref().unwrap_or("private");
+    if !["shared", "private"].contains(&mode) {
+        return Err(ApiError::BadRequest(
+            "access_mode must be shared or private".into(),
+        ));
+    }
+    if mode == "shared" {
+        user.require_admin()?;
+    }
     let name = clean_name(&req.name, 100, "workspace")?;
     let description = req
         .description
@@ -154,6 +188,14 @@ async fn create(
         },
     )
     .await?;
+    if mode == "shared" {
+        sqlx::query("UPDATE workspaces SET access_mode = 'shared' WHERE id = ?")
+            .bind(&row.id)
+            .execute(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("workspace mode: {e}")))?;
+    }
+    let row = repo::workspaces::get_workspace(&state.db, &row.id).await?;
     let counts = repo::workspaces::workspace_counts(&state.db, &row.id).await?;
     Ok((StatusCode::CREATED, Json(workspace_to_json(&row, &counts))))
 }
@@ -163,6 +205,7 @@ async fn get_one(
     _user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    require_workspace(&state, &_user, &id, WorkspacePermission::Read).await?;
     let w = repo::workspaces::get_workspace(&state.db, &id).await?;
     let counts = repo::workspaces::workspace_counts(&state.db, &id).await?;
     Ok(Json(workspace_to_json(&w, &counts)))
@@ -181,6 +224,7 @@ async fn update(
     Json(req): Json<UpdateWorkspaceRequest>,
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
+    require_workspace(&state, &user, &id, WorkspacePermission::Write).await?;
     let name = match req.name {
         Some(raw) => Some(clean_name(&raw, 100, "workspace")?),
         None => None,
@@ -208,6 +252,7 @@ async fn delete(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_admin()?;
+    require_workspace(&state, &user, &id, WorkspacePermission::Manage).await?;
     repo::workspaces::delete_workspace(&state.db, &id)
         .await?
         .then_some(())
@@ -220,8 +265,7 @@ async fn list_targets(
     _user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    // 404 if the workspace does not exist.
-    repo::workspaces::get_workspace(&state.db, &id).await?;
+    require_workspace(&state, &_user, &id, WorkspacePermission::Read).await?;
     let targets = repo::workspaces::list_targets(&state.db, &id).await?;
     let stats = repo::workspaces::target_stats_many(&state.db, &id).await?;
     Ok(Json(json!({
@@ -249,8 +293,7 @@ async fn create_target(
     Json(req): Json<CreateTargetRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
-    // 404 (not 500) when the workspace does not exist.
-    repo::workspaces::get_workspace(&state.db, &id).await?;
+    require_workspace(&state, &user, &id, WorkspacePermission::Write).await?;
     let name = validate_target_name(&req.name)?;
     let description = req
         .description
@@ -285,6 +328,14 @@ async fn update_target(
     Json(req): Json<UpdateTargetRequest>,
 ) -> ApiResult<Json<Value>> {
     user.require_scanner()?;
+    let target = repo::workspaces::get_target(&state.db, &id).await?;
+    require_workspace(
+        &state,
+        &user,
+        &target.workspace_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let name = match req.name {
         Some(raw) => Some(validate_target_name(&raw)?),
         None => None,
@@ -312,6 +363,14 @@ async fn delete_target(
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
+    let target = repo::workspaces::get_target(&state.db, &id).await?;
+    require_workspace(
+        &state,
+        &user,
+        &target.workspace_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     repo::workspaces::delete_target(&state.db, &id)
         .await?
         .then_some(())

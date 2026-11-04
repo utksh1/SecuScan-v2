@@ -122,7 +122,14 @@ pub async fn list(pool: &SqlitePool, f: &FindingFilters) -> DbResult<Vec<Finding
         "SELECT f.* FROM findings f \
          JOIN tasks t ON t.id = f.task_id \
          WHERE ({p_task} IS NULL OR f.task_id = {p_task}) \
-           AND ({p_user} IS NULL OR t.user_id = {p_user}) \
+           AND ({p_user} IS NULL
+             OR (t.workspace_id IS NULL AND t.user_id = {p_user})
+             OR EXISTS (SELECT 1 FROM workspaces w WHERE w.id = t.workspace_id
+               AND ((w.access_mode = 'shared' AND t.user_id = {p_user})
+                 OR (w.access_mode = 'private'
+                   AND (w.created_by = {p_user} OR EXISTS (
+                     SELECT 1 FROM workspace_members wm
+                     WHERE wm.workspace_id = w.id AND wm.user_id = {p_user})))))) \
            AND ({p_kind} IS NULL OR f.kind = {p_kind}) \
            AND ({p_status} IS NULL OR f.analyst_status = {p_status}) \
            AND ({p_cat} IS NULL OR f.category = {p_cat}) \
@@ -164,7 +171,14 @@ pub async fn count(pool: &SqlitePool, f: &FindingFilters) -> DbResult<i64> {
         "SELECT COUNT(*) FROM findings f \
          JOIN tasks t ON t.id = f.task_id \
          WHERE ({p_task} IS NULL OR f.task_id = {p_task}) \
-           AND ({p_user} IS NULL OR t.user_id = {p_user}) \
+           AND ({p_user} IS NULL
+             OR (t.workspace_id IS NULL AND t.user_id = {p_user})
+             OR EXISTS (SELECT 1 FROM workspaces w WHERE w.id = t.workspace_id
+               AND ((w.access_mode = 'shared' AND t.user_id = {p_user})
+                 OR (w.access_mode = 'private'
+                   AND (w.created_by = {p_user} OR EXISTS (
+                     SELECT 1 FROM workspace_members wm
+                     WHERE wm.workspace_id = w.id AND wm.user_id = {p_user})))))) \
            AND ({p_kind} IS NULL OR f.kind = {p_kind}) \
            AND ({p_status} IS NULL OR f.analyst_status = {p_status}) \
            AND ({p_cat} IS NULL OR f.category = {p_cat}) \

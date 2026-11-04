@@ -1,5 +1,6 @@
 //! Collaboration HTTP routes — workspace members + finding comments + mentions.
 
+use crate::access::{require_workspace, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::state::SharedState;
@@ -47,6 +48,7 @@ async fn list_members(
     _user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    require_workspace(&state, &_user, &id, WorkspacePermission::Read).await?;
     let rows = secuscan_db::repo::collab::list_members(&state.db, &id).await?;
     Ok(Json(json!({
         "items": rows.iter().map(member_to_json).collect::<Vec<_>>(),
@@ -71,13 +73,7 @@ async fn add_member(
             "role must be one of owner/editor/viewer".into(),
         ));
     }
-    // Verify workspace exists and the caller is the owner or admin.
-    let ws = secuscan_db::repo::workspaces::get_workspace(&state.db, &id).await?;
-    if !user.is_admin() && ws.created_by != user.0.id {
-        return Err(ApiError::Forbidden(
-            "only the workspace owner or an admin can add members".into(),
-        ));
-    }
+    require_workspace(&state, &user, &id, WorkspacePermission::Manage).await?;
     // Verify the target user exists.
     secuscan_db::repo::users::find_by_id(&state.db, &req.user_id)
         .await?
@@ -94,12 +90,7 @@ async fn remove_member(
     Path((id, user_id)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     user.require_scanner()?;
-    let ws = secuscan_db::repo::workspaces::get_workspace(&state.db, &id).await?;
-    if !user.is_admin() && ws.created_by != user.0.id {
-        return Err(ApiError::Forbidden(
-            "only the workspace owner or an admin can remove members".into(),
-        ));
-    }
+    require_workspace(&state, &user, &id, WorkspacePermission::Manage).await?;
     secuscan_db::repo::collab::remove_member(&state.db, &id, &user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -127,6 +118,7 @@ async fn list_comments(
     _user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
+    crate::routes::findings::load_finding_for_user(&state, &_user, &id).await?;
     let rows = secuscan_db::repo::collab::list_comments(&state.db, &id).await?;
     Ok(Json(json!({
         "items": rows.iter().map(comment_to_json).collect::<Vec<_>>(),
@@ -139,13 +131,23 @@ async fn add_comment(
     Path(id): Path<String>,
     Json(req): Json<AddCommentRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
+    user.require_scanner()?;
     if req.body.trim().is_empty() || req.body.len() > 4_000 {
         return Err(ApiError::BadRequest(
             "body must be 1..=4000 characters".into(),
         ));
     }
-    // Verify the finding exists.
-    secuscan_db::repo::findings::get(&state.db, &id).await?;
+    // Verify the finding is visible, not merely present in the database.
+    let finding = crate::routes::findings::load_finding_for_user(&state, &user, &id).await?;
+    let task = secuscan_db::repo::tasks::get(&state.db, &finding.task_id).await?;
+    crate::access::require_resource(
+        &state,
+        &user,
+        task.workspace_id.as_deref(),
+        &task.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
     let row =
         secuscan_db::repo::collab::add_comment(&state.db, &id, &user.0.id, &req.body, "comment")
             .await?;
@@ -245,8 +247,19 @@ async fn mark_mention_read(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    // The mention row ID is not an authorization credential. Only its
+    // intended recipient (or an admin) may mark it read.
+    let owner: Option<(String,)> =
+        sqlx::query_as("SELECT mentioned_user_id FROM mentions WHERE id = ?")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::Internal(format!("mention lookup: {e}")))?;
+    let (recipient,) = owner.ok_or_else(|| ApiError::NotFound("not found".into()))?;
+    if !user.is_admin() && recipient != user.0.id {
+        return Err(ApiError::NotFound("not found".into()));
+    }
     secuscan_db::repo::collab::mark_mention_read(&state.db, &id).await?;
-    let _ = user; // auth required to call, but no per-user check on the mention row
     Ok(StatusCode::NO_CONTENT)
 }
 

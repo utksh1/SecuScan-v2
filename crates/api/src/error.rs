@@ -40,8 +40,17 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status();
+        // Never distinguish an absent resource ID from an existing resource
+        // concealed by membership or ownership authorization (IDOR probing).
+        let message = match &self {
+            // This guidance is produced only *after* a current task has
+            // passed access control. It does not reveal a guessed object ID.
+            ApiError::NotFound(m) if m.starts_with("no earlier completed run") => m.clone(),
+            ApiError::NotFound(_) => "not found".to_string(),
+            _ => self.to_string(),
+        };
         let body = Json(json!({
-            "error": { "code": status.as_u16(), "message": self.to_string() }
+            "error": { "code": status.as_u16(), "message": message }
         }));
         (status, body).into_response()
     }

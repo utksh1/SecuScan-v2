@@ -7,6 +7,7 @@
 //!   pipeline (waiting → in_progress → finished/failed) with artifact
 //!   downloads and optional signed webhooks.
 
+use crate::access::{require_resource, WorkspacePermission};
 use crate::auth::extractor::CurrentUser;
 use crate::error::{ApiError, ApiResult};
 use crate::report_jobs::{
@@ -114,8 +115,17 @@ async fn create_job(
             ));
         }
     }
-    // Task must exist and be visible to this user (owner or admin).
-    load_task_for_user(&state, &user, &id).await?;
+    // A viewer of a private workspace may export synchronously, but only
+    // an editor/scanner can create an asynchronous report job.
+    let task = load_task_for_user(&state, &user, &id).await?;
+    require_resource(
+        &state,
+        &user,
+        task.workspace_id.as_deref(),
+        &task.user_id,
+        WorkspacePermission::Write,
+    )
+    .await?;
 
     // Admission cap: bound how many jobs one user can have in flight.
     let active = repo::reports::count_active_for_user(&state.db, &user.0.id).await?;
@@ -282,6 +292,7 @@ async fn delete_job(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
+    user.require_scanner()?;
     let job = load_job_for_user(&state, &user, &id).await?;
     let row = repo::reports::delete(&state.db, &job.id).await?;
     if let Some(row) = row {
@@ -303,8 +314,11 @@ async fn load_job_for_user(
 ) -> ApiResult<secuscan_db::models::ReportJobRow> {
     let job = repo::reports::get(&state.db, id).await?;
     if !user.is_admin() && job.user_id != user.0.id {
-        return Err(ApiError::NotFound(format!("report job {id}")));
+        return Err(ApiError::NotFound("not found".into()));
     }
+    // Revoking workspace membership also revokes access to previously
+    // generated report artifacts, even if the requester owns the job row.
+    load_task_for_user(state, user, &job.task_id).await?;
     Ok(job)
 }
 
