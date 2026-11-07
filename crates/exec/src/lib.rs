@@ -70,7 +70,9 @@ pub async fn execute_task(
         .await;
 
     let outcome = match &manifest.engine {
-        secuscan_core::manifest::EngineSpec::Cli { .. } => {
+        secuscan_core::manifest::EngineSpec::Cli {
+            ok_exit_codes, ..
+        } => {
             let argv = match secuscan_core::template::build_argv(&manifest.engine, inputs) {
                 Ok(a) => a,
                 Err(e) => {
@@ -82,6 +84,11 @@ pub async fn execute_task(
                 runner::RunOpts {
                     timeout,
                     cancel: cancel.clone(),
+                    // Issue #11 — the plugin contract documents which
+                    // non-zero codes mean "not an error" (e.g. testssl.sh
+                    // exits 1/2 when vulnerabilities are found). Everything
+                    // else is a tool failure and must not report Completed.
+                    ok_exit_codes: ok_exit_codes.clone(),
                     ..Default::default()
                 },
                 sink,

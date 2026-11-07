@@ -110,6 +110,13 @@ pub enum EngineSpec {
         /// `text` (default) or `json_lines`.
         #[serde(default)]
         output_format: OutputFormat,
+        /// Exit codes the tool's own contract documents as non-error —
+        /// e.g. testssl.sh exits 1/2 when vulnerabilities are found. A
+        /// nonzero exit outside this list classifies the task as Failed
+        /// (issue #11) instead of silently reporting success with partial
+        /// findings. 0 is always accepted.
+        #[serde(default)]
+        ok_exit_codes: Vec<i32>,
     },
     Native {
         /// Well-known native scanner id, e.g. `port_scanner`.

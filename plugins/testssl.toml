@@ -22,6 +22,9 @@ type = "cli"
 binary = "testssl.sh"
 timeout_seconds = 3600
 output_format = "text"
+# testssl.sh documents exit codes 1-4 as "problems found" tiered by
+# severity (not errors) — issue #11 ok-exit contract.
+ok_exit_codes = [1, 2, 3, 4]
 argv = [
   "testssl.sh",
   "--quiet",

@@ -29,6 +29,7 @@ pub fn manifest_to_json(m: &PluginManifest, enabled: bool) -> Value {
             argv,
             timeout_seconds,
             output_format,
+            ok_exit_codes,
         } => json!({
             "type": "cli",
             "binary": binary,
@@ -38,6 +39,7 @@ pub fn manifest_to_json(m: &PluginManifest, enabled: bool) -> Value {
                 secuscan_core::manifest::OutputFormat::Text => "text",
                 secuscan_core::manifest::OutputFormat::JsonLines => "json_lines",
             },
+            "ok_exit_codes": ok_exit_codes,
         }),
         EngineSpec::Native {
             native,

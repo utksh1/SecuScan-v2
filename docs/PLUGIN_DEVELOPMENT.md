@@ -35,6 +35,11 @@ type = "cli"                      # cli | native
 binary = "mytool"                 # must equal argv[0]; availability-checked
 timeout_seconds = 600
 output_format = "text"            # text | json_lines
+# Optional: non-zero exit codes your tool documents as non-error
+# (grep-convention tools, severity-tiered exits like testssl.sh's 1-4).
+# Any OTHER non-zero exit classifies the task as Failed (tool failure)
+# while preserving captured output. Default: [] (only 0 is success).
+ok_exit_codes = [1, 2]
 argv = [
   "mytool",
   "-v",

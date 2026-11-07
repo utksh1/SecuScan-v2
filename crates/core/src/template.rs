@@ -181,6 +181,7 @@ mod tests {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             timeout_seconds: 60,
             output_format: OutputFormat::Text,
+            ok_exit_codes: Vec::new(),
         }
     }
 
@@ -350,6 +351,7 @@ mod tests {
             argv,
             timeout_seconds: 60,
             output_format: OutputFormat::Text,
+            ok_exit_codes: Vec::new(),
         };
         let i = inputs(&[("f", json!(true))]);
         assert!(build_argv(&e, &i).is_err());

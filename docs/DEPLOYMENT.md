@@ -143,3 +143,21 @@ unguessable 16-hex secret can hit it), correlated to the originating task via
 the per-scan marker, and automatically open a validated finding. Each handler
 stores at most 500 hits (further callbacks get HTTP 429). Reverse proxies must
 forward the OOB path unchanged and must not strip `Sec-Fetch-Dest` headers.
+
+
+## Scan process lifecycle (Max-Parity Sprint 1.3)
+
+- **Process-tree termination**: CLI tools run in their own process group.
+  Cancellation and timeout send SIGTERM to the whole group, wait up to 2 s
+  for a clean exit, then SIGKILL — no orphaned grandchildren. Full semantics
+  on Linux/macOS; on Windows only the direct child is killed.
+- **Honest terminal states**: a non-zero scanner exit classifies the task as
+  **Failed** (with its exit code and preserved output) unless the plugin's
+  manifest lists that code under `ok_exit_codes` (e.g. testssl.sh 1-4,
+  dalfox 1). Timeouts, cancellations, and signal deaths each produce their
+  own distinct outcome — none are reported as Completed.
+- **Bounded output**: scanner stdout/stderr are read in fixed chunks; a
+  single line is capped at 64 KiB (head kept + marker), total output at
+  `max_output_bytes` (default 8 MiB) with a visible truncation marker, and
+  log events at 20 000 per stream. Binary output is lossy-decoded and can
+  no longer abort capture.

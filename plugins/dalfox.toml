@@ -37,8 +37,9 @@ argv = [
   "--no-color",
   "-S",
   "-f", "jsonl",
-  # dalfox exits non-zero when it finds XSS (grep convention); the
-  # runner treats non-zero exit as completion, not failure.
+  # dalfox exits non-zero (1) when it finds XSS (grep convention); the
+  # code below documents that as non-error (issue #11) so the task still
+  # completes while any OTHER non-zero exit now fails honestly.
   "--if:only_vulnerable:then:--only-poc",
   "--if:only_vulnerable:then:v",
   "--if:param:then:-p",

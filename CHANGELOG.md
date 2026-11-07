@@ -3,6 +3,41 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.4.1 -- Max-Parity Sprint 1.3: honest executor (process trees, bounded output, exit truth)
+
+Fixes the executor-reliability trio (issues #9, #10, #11) in `runner.rs` —
+the layer every scan's result depends on.
+
+### Process trees are terminated (#9)
+
+- CLI tools now spawn in their own **process group**; cancellation and
+  timeout terminate the whole tree (SIGTERM → 2 s grace → SIGKILL) and reap
+  it — nmap NSE scripts, sqlmap workers, hydra children can no longer
+  survive a cancelled scan. Two survivor-file regression tests prove
+  grandchildren die on both cancel and timeout.
+
+### Output capture is bounded (#10)
+
+- The line reader allocated unboundedly for a line without newlines; it now
+  reads fixed 8 KiB chunks, truncates single lines at 64 KiB (head + marker),
+  caps total output at `max_output_bytes` with a visible
+  `[secuscan: output truncated]` marker, and caps log events at 20 000 per
+  stream. Invalid UTF-8 (binary output) is lossy-decoded instead of aborting
+  the pump and losing the rest of the stream. Four regression tests:
+  giant line, endless chatter, binary bytes, dual-stream ordering.
+
+### Exit codes tell the truth (#11)
+
+- A non-zero scanner exit now classifies the task as **Failed** (exit code
+  surfaced, output preserved) instead of silently Completed. Plugins declare
+  `ok_exit_codes` in their manifest for tools whose contract documents
+  non-error exits (testssl.sh 1-4 severity tiers, dalfox 1 on found XSS).
+- **Fixed a pre-existing bug found on the way**: signal-killed children were
+  mapped to exit code -1 *before* the signal check, so they were reported as
+  Completed — they now fail with a distinct signal error. Every terminal
+  category (success / non-zero / signal / timeout / cancel) is now
+  distinguishable and regression-tested.
+
 ## 4.4.0 -- Max-Parity Sprint 1.2: OOB pipeline end-to-end
 
 Second slice of the Max-Parity Phased Implementation Plan
