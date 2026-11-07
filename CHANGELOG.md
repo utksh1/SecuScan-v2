@@ -3,6 +3,60 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.5.0 -- Max-Parity Sprint 1.4: quick wins (org pivot, branding, expiry, TTL purge, rate limits)
+
+Closes the remaining Sprint 1.3 quick-win package (issue #23). Each item is
+independently shippable; all are wired end-to-end with tests.
+
+### Domain Finder: Organization pivot + redirect verification (task 3.1)
+
+The manifest always advertised three techniques; the code implemented only
+CT-subdomain search — which can never find sibling *root* domains
+(`%.target` only returns names ending in `.target`). Now:
+
+- **Org pivot**: reads the Organization (`O=`) from the target's live TLS
+  certificate (`x509-parser`), then searches crt.sh for *other* certificates
+  issued to the same organization — facebook.com → fbcdn.net territory.
+- **Redirect verification**: bounded probe (max 10 candidates) checks
+  whether a candidate's web endpoint redirects to the target — the strongest
+  ownership signal.
+- Signals stack into the certainty score (CT hits, org match, redirect,
+  trigram-overlap name similarity). `check_redirects` input field added.
+- 12 unit tests (scoring, similarity metric, registrable domains, cert-org
+  extraction via an rcgen fixture); manifest description now matches reality.
+
+### Branding actually applies to reports (task 3.2)
+
+`org_name`, brand colors, footer text and the PNG logo are stored and
+editable in Settings since v2.6.0 — and every renderer hardcoded "SecuScan
+Report". Now PDF, DOCX, HTML, Markdown and XLSX are branded (title, heading
+color, footer, CSS variables, base64 logo in HTML/PDF). The Settings claim
+is finally true. New `Branding` loader with safe defaults; `parse_hex_color`
+falls back on garbage input.
+
+### API keys can expire (task 3.3)
+
+`POST /auth/api-keys` accepts `expires_in_days` (1..=3650, validated);
+expired keys verify as rejected and are stamped `revoked_at` on first sight;
+the listing and Settings UI (never/30/90/365 selector + Expires column) show
+the state. E2E: fresh key works → backdated expiry → 401 → revoked stamp.
+
+### OOB handler TTL cleanup (task 3.5)
+
+TTL was stored at creation but nothing ever expired handlers. A daily
+maintenance pass in the scheduler purges expired handlers + their hits
+(`repo::oob::purge_expired`, DB-tested).
+
+### API rate limiting (task 3.7)
+
+Per-identity fixed-window quotas on `/api/v1`: reads (GET/HEAD/OPTIONS)
+250/min, writes 125/min — `SECUSCAN_RATE_LIMIT_GET`/`_WRITE` env-tunable,
+`0` disables. Responses carry `X-RateLimit-Limit/Remaining/Reset`; the 429
+carries `Retry-After` and a structured error body. Buckets key on credential
+hash (JWT / API-key — the raw secret never appears anywhere); the public OOB
+receiver is exempt so target callbacks are never throttled. Login keeps its
+own tighter limiter.
+
 ## 4.4.1 -- Max-Parity Sprint 1.3: honest executor (process trees, bounded output, exit truth)
 
 Fixes the executor-reliability trio (issues #9, #10, #11) in `runner.rs` —

@@ -13,6 +13,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub registry: Arc<RwLock<PluginRegistry>>,
     pub tasks: Arc<TaskManager>,
+    /// Per-identity API rate limiter (Max-Parity Sprint 1.3, task 3.7).
+    pub rate_limiter: crate::rate_limit::RateLimiter,
 }
 
 pub type SharedState = Arc<AppState>;

@@ -159,8 +159,21 @@ async fn process_one(state: &SharedState, s: &ScheduleRow, now_ts: &str) -> DueO
 /// `main`; integration tests drive `run_due` directly instead.
 pub async fn run_loop(state: SharedState, tick_secs: u64) {
     let tick = std::time::Duration::from_secs(tick_secs.max(1));
+    // Daily maintenance (Max-Parity Sprint 1.3, task 3.5): purge OOB
+    // handlers past their TTL + their hits.
+    let mut next_maintenance = tokio::time::Instant::now() + std::time::Duration::from_secs(24 * 3600);
     loop {
         tokio::time::sleep(tick).await;
         run_due(&state).await;
+        if tokio::time::Instant::now() >= next_maintenance {
+            next_maintenance = tokio::time::Instant::now() + std::time::Duration::from_secs(24 * 3600);
+            match secuscan_db::repo::oob::purge_expired(&state.db).await {
+                Ok(n) if n > 0 => {
+                    tracing::info!("OOB maintenance purged {n} expired handler/hit rows");
+                }
+                Ok(_) => {}
+                Err(e) => tracing::warn!("OOB maintenance purge failed: {e}"),
+            }
+        }
     }
 }

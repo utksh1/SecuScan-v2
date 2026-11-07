@@ -36,6 +36,7 @@ time = "0.3"
 async-trait = { workspace = true }
 uuid = { workspace = true }
 sqlx = { workspace = true }
+base64 = "0.22"
 url = "2"
 regex = { workspace = true }
 sha2 = { workspace = true }

@@ -123,7 +123,8 @@ async fn render_job(state: &SharedState, job: &ReportJobRow) -> Result<(String, 
     let filtered = reports_render::filter_min_severity(&findings, job.severity_filter.as_deref());
     let owned: Vec<_> = filtered.into_iter().cloned().collect();
 
-    let rendered = reports_render::render(&task, &owned, &job.format)?;
+    let brand = reports_render::load_branding(&state.db).await;
+    let rendered = reports_render::render(&task, &owned, &job.format, &brand)?;
 
     let dir = &state.config.reports_dir;
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create reports dir: {e}"))?;

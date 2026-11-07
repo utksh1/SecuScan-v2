@@ -265,6 +265,10 @@ async fn register(
 #[derive(Deserialize)]
 struct CreateApiKeyRequest {
     name: String,
+    /// Max-Parity Sprint 1.3 (task 3.3): optional lifetime in days
+    /// (1..=3650). Omitted/None = key never expires.
+    #[serde(default)]
+    expires_in_days: Option<u32>,
 }
 
 async fn create_api_key(
@@ -277,7 +281,15 @@ async fn create_api_key(
             "name must be 1..=100 characters".into(),
         ));
     }
-    let created = repo::api_keys::create(&state.db, &user.id, &req.name).await?;
+    if let Some(days) = req.expires_in_days {
+        if days == 0 || days > 3650 {
+            return Err(ApiError::BadRequest(
+                "expires_in_days must be between 1 and 3650".into(),
+            ));
+        }
+    }
+    let created =
+        repo::api_keys::create(&state.db, &user.id, &req.name, req.expires_in_days).await?;
     Ok((
         StatusCode::CREATED,
         Json(serde_json::json!({
@@ -286,6 +298,7 @@ async fn create_api_key(
             "prefix": created.row.prefix,
             "scope": created.row.scope,
             "created_at": created.row.created_at,
+            "expires_at": created.row.expires_at,
             // shown exactly once:
             "key": created.raw,
         })),
@@ -309,6 +322,7 @@ async fn list_api_keys(
                 "created_at": k.created_at,
                 "last_used_at": k.last_used_at,
                 "revoked_at": k.revoked_at,
+                "expires_at": k.expires_at,
             })
         })
         .collect();

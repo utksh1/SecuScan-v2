@@ -50,6 +50,9 @@ pub struct ApiKeyRow {
     pub created_at: String,
     pub last_used_at: Option<String>,
     pub revoked_at: Option<String>,
+    /// Max-Parity Sprint 1.3 (task 3.3): optional expiry (ISO 8601).
+    /// NULL = never expires; expired keys verify as rejected.
+    pub expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]

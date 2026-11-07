@@ -70,7 +70,7 @@ async fn api_key_roundtrip() {
     let u = repo::users::create(&pool, "a@b.c", "A", "h", "scanner")
         .await
         .unwrap();
-    let created = repo::api_keys::create(&pool, &u.id, "ci-key")
+    let created = repo::api_keys::create(&pool, &u.id, "ci-key", None)
         .await
         .unwrap();
     assert!(created.raw.starts_with("scsk_"));
@@ -354,4 +354,30 @@ async fn dashboard_counters() {
     assert_eq!(s.findings_critical, 1);
     assert_eq!(s.findings_new, 1);
     assert_eq!(s.users_total, 1);
+}
+
+// --- Max-Parity Sprint 1.3 (task 3.5): expired OOB handlers purge ------
+#[sqlx::test]
+async fn oob_expired_handlers_purge_with_hits(pool: sqlx::SqlitePool) {
+    use secuscan_db::repo;
+    let user = repo::users::create(&pool, "oob-purge@test.local", "Purge Fixture", "h", "scanner")
+        .await
+        .unwrap();
+    // ttl_seconds = -1 → already expired at creation.
+    let h = repo::oob::create_handler(&pool, None, &user.id, "expired-h", "http_logger", "{}", -1)
+        .await
+        .unwrap();
+    let live = repo::oob::create_handler(&pool, None, &user.id, "live-h", "http_logger", "{}", 3_600)
+        .await
+        .unwrap();
+    repo::oob::record_hit(&pool, &h.id, None, r#"{"method":"GET"}"#)
+        .await
+        .unwrap();
+
+    let purged = repo::oob::purge_expired(&pool).await.unwrap();
+    assert!(purged >= 2, "expired handler + its hit purged (got {purged})");
+
+    let remaining = repo::oob::list_handlers(&pool, None).await.unwrap();
+    assert_eq!(remaining.len(), 1, "only the live handler remains");
+    assert_eq!(remaining[0].id, live.id);
 }

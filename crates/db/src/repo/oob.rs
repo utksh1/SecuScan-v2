@@ -173,3 +173,25 @@ pub async fn clear_hits(db: &SqlitePool, handler_id: &str) -> DbResult<()> {
         .await?;
     Ok(())
 }
+
+/// Purge handlers past their TTL (and their hits). Called by the daily
+/// maintenance job (Max-Parity Sprint 1.3, task 3.5) — previously TTL was
+/// stored at creation but nothing ever expired the rows.
+pub async fn purge_expired(db: &SqlitePool) -> DbResult<u64> {
+    let cutoff = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // Hits first (child rows), then the handlers themselves.
+    let hits = sqlx::query(
+        "DELETE FROM oob_hits WHERE handler_id IN \
+         (SELECT id FROM oob_handlers WHERE expires_at < ?1)",
+    )
+    .bind(&cutoff)
+    .execute(db)
+    .await?
+    .rows_affected();
+    let handlers = sqlx::query("DELETE FROM oob_handlers WHERE expires_at < ?1")
+        .bind(&cutoff)
+        .execute(db)
+        .await?
+        .rows_affected();
+    Ok(handlers + hits)
+}

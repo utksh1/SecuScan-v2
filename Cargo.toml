@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "4.4.1"
+version = "4.5.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/utksh1/SecuScan-v2"
@@ -50,7 +50,7 @@ base64 = "0.22"
 # Report renderers (async report jobs).
 rust_xlsxwriter = "0.79"
 docx-rs = "0.4"
-genpdf = "0.2"
+genpdf = { version = "0.2", features = ["images"] }
 
 [profile.release]
 lto = "thin"

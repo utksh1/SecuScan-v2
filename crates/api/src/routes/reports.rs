@@ -70,7 +70,9 @@ async fn export_sync(
     let filtered = reports_render::filter_min_severity(&findings, q.severity.as_deref());
     let owned: Vec<_> = filtered.into_iter().cloned().collect();
 
-    let rendered = reports_render::render(&task, &owned, format).map_err(ApiError::BadRequest)?;
+    let brand = reports_render::load_branding(&state.db).await;
+    let rendered =
+        reports_render::render(&task, &owned, format, &brand).map_err(ApiError::BadRequest)?;
     Ok(text_response(
         rendered.bytes,
         rendered.content_type,

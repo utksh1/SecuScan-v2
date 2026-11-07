@@ -17,6 +17,7 @@ pub mod seed;
 pub mod sniper_engine;
 pub mod state;
 pub mod static_files;
+pub mod rate_limit;
 pub mod vpn_manager;
 
 use crate::state::SharedState;
@@ -28,10 +29,15 @@ pub fn build_app(state: SharedState) -> axum::Router {
     let mut app = axum::Router::new()
         .nest(
             "/api/v1",
-            routes::api_router().layer(axum::middleware::from_fn_with_state(
-                state.clone(),
-                mcp_key_scope::enforce,
-            )),
+            routes::api_router()
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    mcp_key_scope::enforce,
+                ))
+                .layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    rate_limit::enforce,
+                )),
         )
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024)) // 1 MiB JSON bodies
         .layer(TraceLayer::new_for_http());

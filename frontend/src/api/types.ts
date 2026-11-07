@@ -191,6 +191,8 @@ export interface ApiKey {
   created_at: string
   last_used_at?: string
   revoked_at?: string
+  expires_at?: string
+  scope?: string
 }
 
 export interface AuditEntry {

@@ -118,6 +118,7 @@ function PasswordSection() {
 function ApiKeysSection() {
   const qc = useQueryClient()
   const [creating, setCreating] = useState('')
+  const [expiryDays, setExpiryDays] = useState<string>('') // '' = never
   const [createdKey, setCreatedKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
@@ -127,11 +128,12 @@ function ApiKeysSection() {
   })
 
   const createMut = useMutation({
-    mutationFn: (name: string) =>
-      request<{ key: string }>('/auth/api-keys', { method: 'POST', body: { name } }),
+    mutationFn: (payload: { name: string; expires_in_days?: number }) =>
+      request<{ key: string }>('/auth/api-keys', { method: 'POST', body: payload }),
     onSuccess: (body) => {
       setCreatedKey(body.key)
       setCreating('')
+      setExpiryDays('')
       qc.invalidateQueries({ queryKey: ['api-keys'] })
     },
   })
@@ -155,10 +157,26 @@ function ApiKeysSection() {
           value={creating}
           onChange={(e) => setCreating(e.target.value)}
         />
+        <select
+          className="input max-w-[10rem]"
+          value={expiryDays}
+          onChange={(e) => setExpiryDays(e.target.value)}
+          title="Key lifetime"
+        >
+          <option value="">Never expires</option>
+          <option value="30">Expires in 30 days</option>
+          <option value="90">Expires in 90 days</option>
+          <option value="365">Expires in 1 year</option>
+        </select>
         <button
           className="btn-secondary whitespace-nowrap"
           disabled={!creating.trim()}
-          onClick={() => createMut.mutate(creating.trim())}
+          onClick={() =>
+            createMut.mutate({
+              name: creating.trim(),
+              ...(expiryDays ? { expires_in_days: Number(expiryDays) } : {}),
+            })
+          }
         >
           <Plus className="h-4 w-4" /> Create
         </button>
@@ -196,6 +214,7 @@ function ApiKeysSection() {
               <th className="th">Name</th>
               <th className="th">Prefix</th>
               <th className="th">Created</th>
+              <th className="th">Expires</th>
               <th className="th">Last used</th>
               <th className="th text-right">Actions</th>
             </tr>
@@ -206,6 +225,13 @@ function ApiKeysSection() {
                 <td className="td font-medium">{k.name}</td>
                 <td className="td font-mono text-xs text-slate-500">{k.prefix}…</td>
                 <td className="td text-xs text-slate-500">{formatDate(k.created_at)}</td>
+                <td className="td text-xs text-slate-500">
+                  {k.revoked_at
+                    ? 'revoked'
+                    : k.expires_at
+                      ? formatDate(k.expires_at)
+                      : 'never'}
+                </td>
                 <td className="td text-xs text-slate-500">
                   {k.revoked_at ? 'revoked' : k.last_used_at ? relativeTime(k.last_used_at) : 'never'}
                 </td>
@@ -223,7 +249,7 @@ function ApiKeysSection() {
             ))}
             {(data?.items ?? []).length === 0 && (
               <tr>
-                <td className="td text-center text-slate-400" colSpan={5}>
+                <td className="td text-center text-slate-400" colSpan={6}>
                   No API keys yet.
                 </td>
               </tr>

@@ -5,19 +5,21 @@ name = "Domain Finder"
 version = "1.1.0"
 description = "Find related domains via Certificate Transparency, BuiltWith, and reverse WHOIS"
 long_description = """
-Discovers domains owned by the same organization using three techniques with
-a rule-based certainty score:
+Discovers domains owned by the same organization using three implemented
+techniques with a rule-based certainty score:
 
-1. Certificate Transparency: searches CT logs for certificates where the
-   target appears in the CN or SAN, then uses the Organization field to find
-   other certificates issued to the same org.
-2. BuiltWith-style: flags domains sharing tracking identifiers (Google
-   Analytics IDs, Facebook Pixels), weighted by activity and duration.
-3. Reverse WHOIS: chains whois(target) → extract registrant company → reverse
-   search by company name and contact email.
+1. Certificate Transparency subdomains: searches CT logs for certificates
+   where the target appears in the CN or SAN.
+2. Organization pivot: reads the Organization (O=) from the target's live
+   TLS certificate, then searches CT logs for OTHER certificates issued to
+   the same organization — this finds sibling root domains
+   (facebook.com -> fbcdn.net) that subdomain search can never see.
+3. Redirect verification: bounded HTTP probes check whether a candidate's
+   web endpoint redirects to the target (strongest ownership signal).
 
-Each discovered domain receives a certainty score (0-100). Results chain
-directly into Subdomain Finder and Google Hacking.
+Signals stack into a 0-100 certainty score (CT hits, org-pivot match,
+redirect verification, name-similarity). Results chain directly into
+Subdomain Finder and Google Hacking. Roadmap: reverse-WHOIS chaining.
 """
 category = "recon"
 author = "SecuScan Contributors"
@@ -49,6 +51,13 @@ min = 0
 max = 100
 placeholder = "30"
 
+[[fields]]
+id = "check_redirects"
+label = "Verify candidates via redirects"
+type = "boolean"
+default = true
+help = "Bounded probe (max 10 candidates): does the candidate redirect to the target? Adds the strongest certainty signal."
+
 [safety]
 level = "safe"
 requires_consent = true
@@ -62,6 +71,7 @@ capabilities = ["network.connect", "http.request"]
 
 [presets.light]
 min_certainty = 50
+check_redirects = true
 
 [preset_meta.light]
 label = "Light"

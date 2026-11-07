@@ -111,6 +111,7 @@ async fn main() {
     // while the server was down).
     secuscan_api::vpn_manager::reconcile(&db).await;
     let state = Arc::new(AppState {
+        rate_limiter: secuscan_api::rate_limit::RateLimiter::from_env(),
         db,
         config: config.clone(),
         registry: Arc::new(tokio::sync::RwLock::new(registry)),
