@@ -393,6 +393,7 @@ mod tests {
             cancel: tokio_util::sync::CancellationToken::new(),
             timeout: std::time::Duration::from_secs(10),
             auth: None,
+            oob: None,
         };
         let inputs: BTreeMap<String, serde_json::Value> = [
             ("target".to_string(), json!("127.0.0.1")),
@@ -415,6 +416,7 @@ mod tests {
             cancel: tokio_util::sync::CancellationToken::new(),
             timeout: std::time::Duration::from_secs(5),
             auth: None,
+            oob: None,
         };
         let inputs: BTreeMap<String, serde_json::Value> = [
             ("target".to_string(), json!("127.0.0.0/24")),
@@ -434,6 +436,7 @@ mod tests {
             cancel: tokio_util::sync::CancellationToken::new(),
             timeout: std::time::Duration::from_secs(5),
             auth: None,
+            oob: None,
         };
         // TEST-NET-1 is guaranteed non-routable (RFC 5737).
         let inputs: BTreeMap<String, serde_json::Value> = [

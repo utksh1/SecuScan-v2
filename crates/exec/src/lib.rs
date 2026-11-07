@@ -16,7 +16,7 @@ pub mod runner;
 pub use events::{EventEnvelope, EventSink, StreamKind, TaskEvent};
 pub use limiter::{LimitVerdict, PluginLimiter};
 pub use native::AuthMaterial;
-pub use native::{NativeCtx, NativeScanner};
+pub use native::{NativeCtx, NativeScanner, OobCtx};
 pub use runner::{run_cli, CliOutcome};
 
 use secuscan_core::manifest::PluginManifest;
@@ -54,6 +54,7 @@ pub async fn execute_task(
     sink: &EventSink,
     cancel: tokio_util::sync::CancellationToken,
     auth: Option<AuthMaterial>,
+    oob: Option<native::OobCtx>,
 ) -> TaskOutcome {
     let started = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(match &manifest.engine {
@@ -113,6 +114,7 @@ pub async fn execute_task(
                 cancel: cancel.clone(),
                 timeout,
                 auth,
+                oob,
             };
             match tokio::time::timeout(timeout, scanner.run(inputs, &ctx)).await {
                 Err(_) => {

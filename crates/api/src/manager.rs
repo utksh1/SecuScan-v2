@@ -195,7 +195,19 @@ impl TaskManager {
                 }
             };
 
-            let outcome = execute_task(&manifest, &inputs, &sink, cancel.clone(), auth).await;
+            // Max-Parity Sprint 1.2 (2.4) — arm OOB for this task when the
+            // deployment has a public URL. Scanners embed the per-task marker
+            // in blind payloads; hits echoing it are auto-correlated back to
+            // this task by the /oob receiver and open findings.
+            let oob = secuscan_exec::native::OobCtx {
+                task_id: task.id.clone(),
+                workspace_id: task.workspace_id.clone(),
+                marker: task.oob_marker.clone(),
+                public_url: mgr.config.public_url.clone(),
+            };
+
+            let outcome =
+                execute_task(&manifest, &inputs, &sink, cancel.clone(), auth, Some(oob)).await;
             let outcome = secuscan_exec::with_duration(outcome, started);
 
             mgr.finish_task(

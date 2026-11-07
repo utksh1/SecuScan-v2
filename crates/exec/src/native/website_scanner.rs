@@ -124,7 +124,14 @@ impl NativeScanner for WebsiteScanner {
         let auth = ctx.auth.clone();
         let client = super::auth::authed_client(true, timeout, auth.as_ref())?;
         let no_follow = super::auth::authed_client(false, timeout, auth.as_ref())?;
-        let marker = format!("ptt{}", uuid_like());
+        // Max-Parity Sprint 1.2 (2.4): adopt the task's OOB marker when armed
+        // so blind callbacks correlate back to this task; fall back to a
+        // local marker for reflection-only canaries.
+        let oob = ctx.oob.clone();
+        let marker = oob
+            .as_ref()
+            .and_then(|o| o.marker.clone())
+            .unwrap_or_else(|| format!("ptt{}", uuid_like()));
         let mut findings = Vec::new();
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut queue = vec![target.clone()];
@@ -345,6 +352,42 @@ impl NativeScanner for WebsiteScanner {
             }
         }
 
+        // Max-Parity Sprint 1.2 (2.4) — blind OOB probes: when the deployment
+        // has a public URL, provision a handler for this scan and plant the
+        // marker-correlated callback where the target's server might fetch it
+        // (SSRF-prone parameters, XXE entity). Hits land at the /oob
+        // receiver, correlate to this task via the marker, and auto-open
+        // validated findings — no in-band echo required. Bounded: one SSRF
+        // round (6 params) + one XXE request.
+        let oob_url: Option<String> = match (oob.as_ref(), super::current_db_pool()) {
+            (Some(o), Some(pool)) if o.public_url.is_some() => {
+                match secuscan_db::repo::oob::create_handler(
+                    pool,
+                    o.workspace_id.as_deref(),
+                    "system",
+                    &target,
+                    "http_logger",
+                    "{}",
+                    7 * 24 * 3600,
+                )
+                .await
+                {
+                    Ok(h) => {
+                        ctx.sink
+                            .emit(crate::events::TaskEvent::Info(format!(
+                                "OOB armed: handler {} (marker {}) — blind callbacks auto-open findings",
+                                h.id,
+                                marker
+                            )))
+                            .await;
+                        o.callback_url(&h.secret)
+                    }
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        };
+
         // CORS preflight (detection only).
         if let Ok(resp) = client
             .request(reqwest::Method::OPTIONS, &target)
@@ -506,6 +549,33 @@ impl NativeScanner for WebsiteScanner {
         }
 
         findings.extend(super::dast_engine::run_active(&client, &target, &ctx.cancel).await);
+
+        // Max-Parity Sprint 1.2 (2.4) — fire the blind OOB probes once the
+        // crawl is done. Hits that come back are correlated by the receiver
+        // and open validated findings on this task; the scanner itself stays
+        // silent about them (the receiver owns the proof).
+        if let Some(url) = oob_url {
+            for param in ["url", "callback", "feed", "host", "src", "path"] {
+                let probe = append_query(&target, param, &url);
+                let _ = no_follow
+                    .get(&probe)
+                    .header("user-agent", "SecuScan-2.0 (website-scanner)")
+                    .send()
+                    .await;
+            }
+            // XXE: external entity resolves to the callback if the parser
+            // processes DOCTYPE declarations.
+            let xxe_body = format!(
+                "<?xml version=\"1.0\"?><!DOCTYPE r [<!ENTITY xxe SYSTEM \"{url}\">]><r>&xxe;</r>"
+            );
+            let _ = client
+                .post(&target)
+                .header("content-type", "application/xml")
+                .header("user-agent", "SecuScan-2.0 (website-scanner)")
+                .body(xxe_body)
+                .send()
+                .await;
+        }
 
         if findings.is_empty() {
             findings.push(issue(

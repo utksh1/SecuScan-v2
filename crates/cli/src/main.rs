@@ -241,8 +241,11 @@ fn run_scan(
         });
         let cancel = tokio_util::sync::CancellationToken::new();
         // CLI runs locally without the API's auth-profile store: always
-        // unauthenticated (Max-Parity Sprint 1.1).
-        let result = secuscan_exec::execute_task(&manifest, &inputs, &sink, cancel, None).await;
+        // unauthenticated (Max-Parity Sprint 1.1), and without the API's
+        // OOB receiver context: blind-callback tooling stays disabled
+        // (Max-Parity Sprint 1.2).
+        let result =
+            secuscan_exec::execute_task(&manifest, &inputs, &sink, cancel, None, None).await;
         // Drop the sender BEFORE awaiting the reader, otherwise the printer
         // waits forever for the channel to close (classic deadlock).
         drop(sink);

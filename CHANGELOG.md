@@ -3,6 +3,52 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.4.0 -- Max-Parity Sprint 1.2: OOB pipeline end-to-end
+
+Second slice of the Max-Parity Phased Implementation Plan
+(`docs/MAX_PARITY_PLAN.md`). The OOB (out-of-band callback) infrastructure
+existed as scaffolding — a receiver that recorded hits, a per-scan marker on
+every task, and two scanner stubs handing out dead `secuscan.local` URLs.
+Sprint 1.2 wires the whole blind-vulnerability chain: the receiver now serves
+a live browser-capture payload, callbacks that echo the task marker are
+auto-correlated and auto-open validated findings, and the website scanner
+plants marker-correlated callbacks into blind SSRF/XXE probes.
+
+### The XSS Exploiter is functional (Plan tasks 2.1-2.3)
+
+- `GET /api/v1/oob/:secret` now **serves the capture script** built from the
+  handler's config: cookies (`document.cookie`), page HTML, keystrokes
+  (buffered keydown listener, flushed every 3 s via `sendBeacon`), and an
+  optional html2canvas screenshot (CDN-loaded, degrades gracefully). The
+  script beacons back with `?t=<stream>&d=<data>` — hits are now
+  self-describing (`stream`/`data` fields) instead of requiring URL parsing.
+- **CORS**: the payload and hit responses carry
+  `Access-Control-Allow-Origin: *` (scoped to those routes only), so the
+  `fetch_eval` delivery mode works cross-origin.
+- Serve-vs-record is decided by intent, not guessing: a classic
+  `<script src>` (`Sec-Fetch-Dest: script`) or the payload snippet's
+  `Accept: application/javascript` fetch serves the script; bare callbacks
+  (curl, SSRF probes) record hits. Serving is silent — the `t=ping` beacon
+  the script fires on execution is what actually proves it ran.
+- **`SECUSCAN_PUBLIC_URL`** (env, `.env.example`, DEPLOYMENT.md) replaces the
+  hardcoded `https://secuscan.local`. Tools that need callbacks fail loudly
+  when it is unset instead of emitting dead URLs.
+
+### Marker injection + auto-findings (Plan tasks 2.4-2.5)
+
+- `execute_task` gained an `OobCtx` (task id, workspace, per-scan marker,
+  public URL) built by the manager and threaded through `NativeCtx`.
+- The **website scanner adopts the task's marker** (previously it rolled a
+  local one) and, when OOB is armed, provisions a handler and plants the
+  marker-correlated callback into **blind SSRF probes** (6 common fetch
+  parameters) and an **XXE probe** (DOCTYPE entity). Bounded: 7 requests.
+- A hit whose URL/body echoes the task's marker **automatically opens a
+  validated finding** (`Out-of-band interaction confirmed` /
+  `XSS payload executed`, kind `validated_issue`, confidence `certain`) on the
+  originating task — through the same FP-memory + dedup-group pipeline as
+  scanner findings. Repeated beacons dedup to one finding.
+- **Hit cap enforced**: 500 per handler (429 beyond). Previously unbounded.
+
 ## 4.3.0 -- Max-Parity Sprint 1.1: FP memory, authenticated scanning, encryption at rest
 
 First slice of the Max-Parity Phased Implementation Plan

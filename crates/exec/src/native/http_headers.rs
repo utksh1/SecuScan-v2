@@ -367,6 +367,7 @@ mod tests {
                 cancel: tokio_util::sync::CancellationToken::new(),
                 timeout: std::time::Duration::from_secs(10),
                 auth: None,
+                oob: None,
             },
             rx,
         )

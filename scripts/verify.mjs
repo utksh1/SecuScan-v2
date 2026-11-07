@@ -82,6 +82,9 @@ function bootServer() {
     SECUSCAN_ADDR: `127.0.0.1:${PORT}`,
     SECUSCAN_ADMIN_EMAIL: ADMIN.email,
     SECUSCAN_ADMIN_PASSWORD: ADMIN.password,
+    // Max-Parity Sprint 1.2 — arm OOB: callback URLs the scanners hand out
+    // point at this very server, closing the loop end-to-end.
+    SECUSCAN_PUBLIC_URL: `http://127.0.0.1:${PORT}`,
     RUST_LOG: "info",
   };
   const logFd = openSync("/tmp/secuscan-verify-server.log", "w");
@@ -727,6 +730,80 @@ async function main() {
       try { readFileSync(path.join(ROOT, doc)); exists = true; } catch { /* absent */ }
       ok(exists, `${doc} exists`);
     }
+  }
+
+  // --- Max-Parity Sprint 1.2: OOB pipeline end-to-end --------------------------------
+  // Provisions a handler, proves the receiver serves the capture script with
+  // CORS, proves bare callbacks record hits, and proves a marker-correlated
+  // beacon auto-opens a validated finding on the originating task.
+  section("Max-Parity Sprint 1.2 OOB pipeline (payload serving, CORS, correlation, auto-finding)");
+  {
+    const oc = await req("POST", "/oob-handlers", {
+      token,
+      body: { name: "verify-oob", kind: "http_logger", config: { capture_cookies: true } },
+    });
+    ok(oc.status === 201 && !!oc.json.secret, "OOB handler created via API");
+    const secret = oc.json.secret;
+    ok(!!oc.json.callback_url && oc.json.callback_url.includes(secret), "handler exposes callback path");
+
+    const serve = await fetch(`${BASE}/oob/${secret}`, {
+      headers: { accept: "application/javascript" },
+    });
+    ok(serve.status === 200, "payload served for Accept-javascript GET");
+    ok((serve.headers.get("content-type") || "").includes("javascript"), "payload content-type is javascript");
+    ok((serve.headers.get("access-control-allow-origin") || "") === "*", "CORS wildcard on payload response");
+    const js = await serve.text();
+    ok(js.includes("document.cookie"), "capture script reads document.cookie (capture_cookies=true)");
+    ok(js.includes("sendBeacon"), "capture script beacons captured data back");
+
+    // A bare callback (curl/SSRF style) records a hit, not the script.
+    const bare = await fetch(`${BASE}/oob/${secret}`);
+    ok(bare.status === 200 && (await bare.text()) === "", "bare callback records a hit (no script)");
+
+    // The script fetch itself must NOT count as a hit.
+    const hitsAfterServe = await req("GET", `/oob-handlers/${oc.json.id}`, { token });
+    ok(hitsAfterServe.json.hit_count === 1, `hit count 1 after bare callback (got ${hitsAfterServe.json.hit_count})`);
+
+    // Marker correlation + auto-finding: create a task (every task gets a
+    // per-scan marker), then beacon with that marker embedded.
+    const { status: ts, json: task } = await req("POST", "/tasks", {
+      token, body: { plugin_id: "port-scanner", inputs: { target: "127.0.0.1:1" }, consent_granted: true },
+    });
+    ok(ts === 201 && !!task.id, "OOB correlation task created");
+    const taskRow = (await req("GET", "/tasks", { token })).json.items.find((t) => t.id === task.id);
+    ok(!!taskRow?.oob_marker && taskRow.oob_marker.startsWith("ptt"), "task carries a per-scan OOB marker");
+
+    const marker = taskRow.oob_marker;
+    await fetch(`${BASE}/oob/${secret}?m=${marker}&t=cookies&d=sessionid%3Dleaked-value`);
+    await fetch(`${BASE}/oob/${secret}?m=${marker}&t=ping`, {
+      method: "POST", body: "beacon-body",
+    });
+
+    const hits = await req("GET", `/oob-handlers/${oc.json.id}/hits`, { token });
+    ok((hits.json.items || []).length === 3, `3 hits recorded (got ${(hits.json.items || []).length})`);
+    const correlated = (hits.json.items || []).filter((h) => h.task_id === task.id);
+    ok(correlated.length === 2, "beacons with the task marker correlate to the task");
+    ok(correlated.some((h) => h.payload?.stream === "cookies" && (h.payload?.data || "").includes("sessionid")), "cookie beacon captured data");
+
+    const tfindings = await req("GET", `/findings?task_id=${task.id}`, { token });
+    const oobFinding = (tfindings.json.items || []).find(
+      (f) => f.title === "Out-of-band interaction confirmed (blind SSRF/XXE/injection)",
+    );
+    ok(!!oobFinding, "correlated beacon auto-opened a validated finding");
+    ok(oobFinding?.kind === "validated_issue", "auto-finding is validated_issue");
+    ok(oobFinding?.confidence === "certain", "auto-finding confidence is certain");
+    ok((oobFinding?.proof || "").includes("sessionid"), "auto-finding proof carries the beacon data");
+
+    // Repeated beacons must not duplicate the finding.
+    await fetch(`${BASE}/oob/${secret}?m=${marker}&t=html&d=more`);
+    const tfindings2 = await req("GET", `/findings?task_id=${task.id}`, { token });
+    const oobCount2 = (tfindings2.json.items || []).filter(
+      (f) => f.title === "Out-of-band interaction confirmed (blind SSRF/XXE/injection)",
+    ).length;
+    ok(oobCount2 === 1, "repeat beacons do not duplicate the auto-finding");
+
+    await req("DELETE", `/tasks/${task.id}`, { token });
+    await req("DELETE", `/oob-handlers/${oc.json.id}`, { token });
   }
 
   // --- People Hunter ---------------------------------------------------------------

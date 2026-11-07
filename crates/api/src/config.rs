@@ -36,6 +36,11 @@ pub struct Config {
     /// Optional explicit at-rest encryption key; when unset a key file is
     /// generated under `data_dir` (see `secuscan_core::crypto`).
     pub enc_key: Option<String>,
+    /// Public base URL of this deployment (e.g. `https://oob.example.com`).
+    /// Required for out-of-band (OOB) blind-vulnerability detection: the
+    /// callback URLs handed to targets are built from it. When unset, tools
+    /// that need callbacks fail loudly instead of emitting dead URLs.
+    pub public_url: Option<String>,
 }
 
 fn env_or(key: &str, default: &str) -> String {
@@ -195,6 +200,10 @@ impl Config {
             enc_key: std::env::var("SECUSCAN_ENC_KEY")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            public_url: std::env::var("SECUSCAN_PUBLIC_URL")
+                .ok()
+                .map(|s| s.trim().trim_end_matches('/').to_string())
+                .filter(|s| !s.is_empty()),
         })
     }
 }

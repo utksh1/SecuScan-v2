@@ -27,6 +27,13 @@ async fn spawn_app() -> TestServer {
         include_str!("../../../plugins/port-scanner.toml"),
     )
     .unwrap();
+    // Max-Parity Sprint 1.2 — the real OOB logger manifest, used by the
+    // loud-failure test (no SECUSCAN_PUBLIC_URL → hard error).
+    std::fs::write(
+        plugins_dir.path().join("http-request-logger.toml"),
+        include_str!("../../../plugins/http-request-logger.toml"),
+    )
+    .unwrap();
     std::fs::write(
         plugins_dir.path().join("sevtest.toml"),
         r#"
@@ -231,6 +238,10 @@ max_per_hour = 0
         ai_base_url: None,
         ai_api_key: None,
         enc_key: None,
+        // Max-Parity Sprint 1.2 — arm OOB so scanner-generated callback URLs
+        // point at a reachable (if fictional) host; the receiver-level test
+        // below drives the real server directly.
+        public_url: Some("http://oob.test.local".to_string()),
     });
 
     let db = secuscan_db::open(&config.db_url).await.unwrap();
@@ -3857,4 +3868,226 @@ async fn private_workspace_membership_blocks_cross_workspace_idors_and_streams()
         .await
         .unwrap();
     assert_eq!(shared_target.status(), 201);
+}
+
+// --- Max-Parity Sprint 1.2: OOB pipeline end-to-end ---------------------------------
+// Handler → payload serving (CORS) → bare-callback hit → marker-correlated
+// beacon → auto-opened validated finding → no duplicate on repeat beacons.
+#[tokio::test]
+async fn oob_payload_serving_correlates_and_auto_opens_findings() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // 1. Create a handler with cookie capture.
+    let resp = c
+        .post(format!("{}/oob-handlers", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "e2e-oob",
+            "kind": "http_logger",
+            "config": { "capture_cookies": true },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let handler: serde_json::Value = resp.json().await.unwrap();
+    let secret = handler["secret"].as_str().unwrap().to_string();
+    let handler_id = handler["id"].as_str().unwrap().to_string();
+
+    // 2. GET with Accept: application/javascript serves the capture script.
+    let resp = c
+        .get(format!("{}/oob/{}", s.base, secret))
+        .header("accept", "application/javascript")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().unwrap()),
+        Some("*"),
+        "CORS wildcard on payload"
+    );
+    assert!(
+        resp.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("application/javascript"),
+        "payload content-type"
+    );
+    let js = resp.text().await.unwrap();
+    assert!(js.contains("document.cookie"), "cookies capture present");
+    assert!(js.contains("sendBeacon"), "beacon transport present");
+    assert!(js.contains("location.pathname"), "beacons are relative");
+
+    // 3. Bare callback records a hit (does NOT serve the script).
+    let resp = c.get(format!("{}/oob/{}", s.base, secret)).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.text().await.unwrap(), "", "bare callback has empty body");
+    let row: serde_json::Value = c
+        .get(format!("{}/oob-handlers/{}", s.base, handler_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(row["hit_count"].as_i64(), Some(1), "bare callback counted");
+
+    // 4. Create a task (every task gets a marker), beacon with the marker.
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": { "target": "127.0.0.1:1" },
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let task_id = task["id"].as_str().unwrap().to_string();
+
+    let marker: Option<String> = sqlx::query_scalar("SELECT oob_marker FROM tasks WHERE id = ?")
+        .bind(&task_id)
+        .fetch_one(&s.state.db)
+        .await
+        .unwrap();
+    let marker = marker.expect("every task gets an OOB marker");
+    assert!(marker.starts_with("ptt"));
+
+    let beacon = |q: &str| {
+        let url = format!("{}/oob/{}?m={}{}", s.base, secret, marker, q);
+        c.get(url).send()
+    };
+    let resp = beacon("&t=cookies&d=sessionid%3Dleaked-value").await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers()
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().unwrap()),
+        Some("*"),
+        "CORS wildcard on hit response"
+    );
+    beacon("&t=ping").await.unwrap();
+    let _ = c
+        .post(format!("{}/oob/{}?m={}&t=keys", s.base, secret, marker))
+        .body("captured\nkeys")
+        .send()
+        .await;
+
+    // 5. Hits recorded + correlated.
+    let hits: serde_json::Value = c
+        .get(format!("{}/oob-handlers/{}/hits", s.base, handler_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = hits["items"].as_array().unwrap();
+    assert_eq!(items.len(), 4, "bare + 2 beacons + POST recorded");
+    let correlated: Vec<_> = items
+        .iter()
+        .filter(|h| h["task_id"].as_str() == Some(task_id.as_str()))
+        .collect();
+    assert_eq!(correlated.len(), 3, "marker beacons correlate to the task");
+    assert!(
+        correlated.iter().any(|h| h["payload"]["stream"] == "cookies"
+            && h["payload"]["data"].as_str().unwrap_or("").contains("sessionid")),
+        "cookie beacon carries stream + data"
+    );
+
+    // 6. Auto-finding opened, exactly once.
+    let findings: serde_json::Value = c
+        .get(format!("{}/findings?task_id={}", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = findings["items"].as_array().unwrap();
+    let oob_findings: Vec<_> = items
+        .iter()
+        .filter(|f| f["title"] == "Out-of-band interaction confirmed (blind SSRF/XXE/injection)")
+        .collect();
+    assert_eq!(oob_findings.len(), 1, "exactly one auto-finding");
+    let f = oob_findings[0];
+    assert_eq!(f["kind"], "validated_issue");
+    assert_eq!(f["confidence"], "certain");
+    assert!(f["proof"].as_str().unwrap().contains("sessionid"), "proof carries beacon data");
+
+    // 7. Repeat beacon does NOT duplicate the finding.
+    beacon("&t=html&d=again").await.unwrap();
+    let findings: serde_json::Value = c
+        .get(format!("{}/findings?task_id={}", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let count = findings["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["title"] == "Out-of-band interaction confirmed (blind SSRF/XXE/injection)")
+        .count();
+    assert_eq!(count, 1, "repeat beacons dedup to one finding");
+
+    // 8. Hit cap enforced (500).
+    for i in 0..499 {
+        let _ = beacon(&format!("&t=cap&d={i}")).await;
+    }
+    let row: serde_json::Value = c
+        .get(format!("{}/oob-handlers/{}", s.base, handler_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(row["hit_count"].as_i64(), Some(500), "cap reached at 500");
+    let resp = beacon("&t=over").await.unwrap();
+    assert_eq!(resp.status(), 429, "hit over cap rejected");
+}
+
+// --- Max-Parity Sprint 1.2: OOB tools fail loudly without a public URL --------------
+#[tokio::test]
+async fn oob_scanner_fails_loudly_when_public_url_missing() {
+    let s = spawn_app().await;
+    // Run the scanner directly through execute_task with an unarmed OobCtx:
+    // OobCtx::default() has public_url: None → the scanner must fail loudly
+    // instead of emitting a dead secuscan.local URL.
+    let registry = secuscan_core::PluginRegistry::load_dir(&s.state.config.plugins_dir);
+    let manifest = registry
+        .get("http-request-logger")
+        .expect("http-request-logger plugin present");
+    let mut inputs = std::collections::BTreeMap::new();
+    inputs.insert("target".to_string(), serde_json::json!("oob-loud-failure"));
+    let sink = secuscan_exec::EventSink::new(uuid::Uuid::new_v4(), tokio::sync::mpsc::channel(8).0);
+    let outcome = secuscan_exec::execute_task(
+        manifest,
+        &inputs,
+        &sink,
+        tokio_util::sync::CancellationToken::new(),
+        None,
+        Some(secuscan_exec::native::OobCtx::default()),
+    )
+    .await;
+    assert_eq!(outcome.status, secuscan_core::models::TaskStatus::Failed);
+    assert!(
+        outcome.error.unwrap_or_default().contains("SECUSCAN_PUBLIC_URL"),
+        "error names the missing env var"
+    );
 }

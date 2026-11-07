@@ -128,3 +128,18 @@ frontend is served from a different origin.
   shutdown are marked failed at boot.
 - **Scaling**: this is a single-node, local-first tool by design. The task executor is
   already decoupled behind `secuscan-exec`; multi-node workers are a roadmap item.
+
+
+## Out-of-band (OOB) blind-vulnerability detection
+
+Set `SECUSCAN_PUBLIC_URL` to the base URL scan targets can reach
+(`https://oob.example.com` publicly, or the VPN-reachable address for internal
+scans). It is required by the HTTP Request Logger and XSS Exploiter and arms
+the website scanner's blind SSRF/XXE probes — without it those tools fail
+loudly instead of emitting dead callbacks.
+
+OOB hits are recorded at `/api/v1oob/:secret` (no auth; anyone with the
+unguessable 16-hex secret can hit it), correlated to the originating task via
+the per-scan marker, and automatically open a validated finding. Each handler
+stores at most 500 hits (further callbacks get HTTP 429). Reverse proxies must
+forward the OOB path unchanged and must not strip `Sec-Fetch-Dest` headers.
