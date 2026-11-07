@@ -17,7 +17,7 @@ use secuscan_core::policy::{evaluate_target, PolicyAuditEntry, TargetVerdict};
 use secuscan_core::validate::normalize_inputs;
 use secuscan_db::models::TaskRow;
 use secuscan_db::repo;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -50,6 +50,26 @@ pub struct StartTaskRequest {
     /// v2.6.0 — auth profile to attach (web scans inject cookies/headers).
     #[serde(default)]
     pub auth_profile_id: Option<String>,
+    /// Sprint 2.1 (#24): push-notification on scan completion — the server
+    /// POSTs a signed webhook (same HMAC machinery as notification rules)
+    /// instead of the client polling. Formats:
+    ///   raw_status — compact {task_id, status, findings summary}
+    ///   raw_json   — full task + findings JSON
+    ///   pdf_report — {..raw_status.., report_b64: <PDF artifact>}
+    #[serde(default)]
+    pub report_callback: Option<ReportCallback>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ReportCallback {
+    pub url: String,
+    /// raw_status (default) | raw_json | pdf_report
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Optional shared secret: body is HMAC-SHA256-signed into
+    /// `X-SecuScan-Signature` (same scheme as notification webhooks).
+    #[serde(default)]
+    pub secret: Option<String>,
 }
 
 /// Result of admitting a request through the validation pipeline (no DB
@@ -244,6 +264,7 @@ pub async fn validate_and_create_task(
             options_json: &json!({
                 "preset": req.preset,
                 "consent_granted": req.consent_granted,
+                "report_callback": req.report_callback,
             })
             .to_string(),
             workflow_run_id,
@@ -499,6 +520,7 @@ async fn retry(
     let options: Value = serde_json::from_str(&original.options_json).unwrap_or(json!({}));
     let req = StartTaskRequest {
         plugin_id: original.plugin_id.clone(),
+        report_callback: None,
         inputs,
         preset: options
             .get("preset")

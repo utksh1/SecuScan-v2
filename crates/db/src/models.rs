@@ -115,7 +115,7 @@ pub struct TaskEventRow {
     pub payload_json: String,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Default, Serialize, sqlx::FromRow)]
 pub struct FindingRow {
     pub id: String,
     pub task_id: String,
@@ -131,6 +131,15 @@ pub struct FindingRow {
     pub url: Option<String>,
     pub metadata_json: String,
     pub created_at: String,
+    // Max-Parity Sprint 2.1 (issue #24): analyst triage surface
+    // (nullable — scanner rows start unoverridden).
+    pub severity_override: Option<String>,
+    pub severity_original: Option<String>,
+    pub risk_level: Option<String>,
+    pub verified: Option<i64>,
+    pub triage_reason: Option<String>,
+    pub triage_by: Option<String>,
+    pub triage_at: Option<String>,
     // v3.0.0 — dedup + enrichment (nullable for backward compat)
     pub group_id: Option<String>,
     pub cve: Option<String>,

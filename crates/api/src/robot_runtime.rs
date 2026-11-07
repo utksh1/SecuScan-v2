@@ -519,6 +519,7 @@ async fn run_tool(
             preset: node.preset.clone(),
             consent_granted: true,
             auth_profile_id: None,
+        report_callback: None,
             workspace_id: workspace_id.map(str::to_string),
         };
         let (task, manifest, normalized) = validate_and_create_task(state, user, &req, None, None)

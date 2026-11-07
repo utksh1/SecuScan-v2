@@ -132,6 +132,24 @@ export interface Finding {
   /** FP-memory audit trail (present on GET /findings/:id and triage
    * responses when the finding is remembered as a false positive). */
   fp_memory?: FpMemory
+  // --- Sprint 2.1 triage surface ---
+  severity_override?: Severity | null
+  severity_original?: Severity | null
+  risk_level?: Severity | null
+  verified?: boolean | null
+  triage_reason?: string | null
+  triage_by?: string | null
+  triage_at?: string | null
+  /** v3.0.0 enrichment (all optional; rendered by reports and the UI) */
+  cve?: string | null
+  cvss_v3?: number | null
+  cvss_vector?: string | null
+  cwe?: string | null
+  owasp?: string | null
+  epss_score?: number | null
+  epss_percentile?: number | null
+  cisa_kev?: boolean
+  confidence?: 'certain' | 'uncertain' | null
 }
 
 export interface DashboardSummary {

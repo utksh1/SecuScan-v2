@@ -315,6 +315,7 @@ mod tests {
             cwe: None,
             owasp: None,
             confidence: None,
+            ..Default::default()
         }
     }
 

@@ -342,6 +342,7 @@ pub async fn run_chain(
             consent_granted: true,
             workspace_id: workspace_id.map(str::to_string),
             auth_profile_id: None,
+            report_callback: None,
         };
         let (task, manifest, normalized) =
             match validate_and_create_task(state, user, &req, None, None).await {

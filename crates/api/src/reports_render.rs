@@ -77,6 +77,23 @@ pub async fn load_branding(db: &sqlx::SqlitePool) -> Branding {
     }
 }
 
+/// Sprint 2.1: findings the analyst triaged away (false-positive /
+/// accepted-risk) are excluded from reports unless explicitly re-included.
+/// `fixed` stays visible — "it was found, later fixed" is reportable.
+pub fn filter_report_visible(
+    findings: &[&FindingRow],
+    include_ignored: bool,
+) -> Vec<FindingRow> {
+    if include_ignored {
+        return findings.iter().map(|f| (*f).clone()).collect();
+    }
+    findings
+        .iter()
+        .filter(|f| f.analyst_status != "false_positive" && f.analyst_status != "accepted_risk")
+        .map(|f| (*f).clone())
+        .collect()
+}
+
 /// Keep findings at or above the given minimum severity.
 /// `info`/`None` keep everything, so the filter is a no-op for them.
 pub fn filter_min_severity<'a>(
@@ -192,7 +209,7 @@ fn markdown_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) ->
     for f in findings {
         md.push_str(&format!(
             "| {} | {} | {} | {} |\n",
-            f.severity,
+            secuscan_db::repo::findings::effective_severity(f),
             escape_md(&f.title),
             escape_md(&f.category),
             f.analyst_status,
@@ -228,11 +245,11 @@ fn markdown_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) ->
 
 fn csv_report(findings: &[FindingRow]) -> String {
     let mut csv = String::from(
-        "severity,kind,analyst_status,category,title,description,remediation,proof,url\n",
+        "severity,kind,analyst_status,category,title,description,remediation,proof,url,cve,cvss_v3,cvss_vector,cwe,owasp,epss_score,cisa_kev\n",
     );
     for f in findings {
         let mut row = vec![
-            f.severity.clone(),
+            secuscan_db::repo::findings::effective_severity(f).to_string(),
             f.kind.clone(),
             f.analyst_status.clone(),
             f.category.clone(),
@@ -241,6 +258,13 @@ fn csv_report(findings: &[FindingRow]) -> String {
             f.remediation.clone(),
             f.proof.clone(),
             f.url.clone().unwrap_or_default(),
+            f.cve.clone().unwrap_or_default(),
+            f.cvss_v3.map(|v| v.to_string()).unwrap_or_default(),
+            f.cvss_vector.clone().unwrap_or_default(),
+            f.cwe.clone().unwrap_or_default(),
+            f.owasp.clone().unwrap_or_default(),
+            f.epss_score.map(|v| v.to_string()).unwrap_or_default(),
+            if f.cisa_kev != 0 { "true".into() } else { String::new() },
         ];
         for cell in &mut row {
             *cell = csv_escape(cell);
@@ -295,12 +319,47 @@ fn html_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Str
             format!(
                 "<tr><td><span class=\"badge\" style=\"background:{color}\">{sev}</span></td>\
                  <td>{title}</td><td>{cat}</td><td>{status}</td></tr>\n\
-                 <tr class=\"detail\"><td colspan=\"4\"><b>Evidence:</b> <code>{proof}</code><br/>{desc}<br/><b>Fix:</b> {rem}</td></tr>",
-                color = sev_color(&f.severity),
-                sev = html_escape(&f.severity),
+                 <tr class=\"detail\"><td colspan=\"4\"><b>Evidence:</b> <code>{proof}</code><br/>{desc}<br/><b>Fix:</b> {rem}{enrichment_html}</td></tr>",
+                color = sev_color(secuscan_db::repo::findings::effective_severity(f)),
+                sev = html_escape(secuscan_db::repo::findings::effective_severity(f)),
                 title = html_escape(&f.title),
                 cat = html_escape(&f.category),
                 status = html_escape(&f.analyst_status),
+                enrichment_html = {
+                    let mut parts = Vec::new();
+                    if let Some(cve) = &f.cve {
+                        parts.push(format!(
+                            " <b>CVE:</b> {}{}",
+                            html_escape(cve),
+                            if f.cisa_kev != 0 {
+                                " <span style=\"background:#b91c1c;color:#fff;border-radius:4px;padding:0 .3rem;font-size:.7rem\">KEV</span>"
+                            } else { "" }
+                        ));
+                    }
+                    if let Some(v) = f.cvss_v3 {
+                        parts.push(format!(
+                            " <b>CVSS:</b> {v:.1}{vec}",
+                            vec = f.cvss_vector.as_deref().map(|x| format!(" ({})", html_escape(x))).unwrap_or_default()
+                        ));
+                    }
+                    if let Some(cwe) = &f.cwe {
+                        parts.push(format!(" <b>CWE:</b> {}", html_escape(cwe)));
+                    }
+                    if let Some(owasp) = &f.owasp {
+                        parts.push(format!(" <b>OWASP:</b> {}", html_escape(owasp)));
+                    }
+                    if let Some(e) = f.epss_score {
+                        parts.push(format!(" <b>EPSS:</b> {e:.1}%{}", f.epss_percentile.map(|p| format!(" (p{:.0})", p * 100.0)).unwrap_or_default()));
+                    }
+                    if f.severity_override.is_some() {
+                        parts.push(format!(
+                            " <b>Severity:</b> {} (scanner: {})",
+                            html_escape(secuscan_db::repo::findings::effective_severity(f)),
+                            html_escape(&f.severity)
+                        ));
+                    }
+                    if parts.is_empty() { String::new() } else { format!("<br/>{}", parts.join(" · ")) }
+                },
                 proof = html_escape(&f.proof),
                 desc = html_escape(&f.description),
                 rem = html_escape(&f.remediation),
@@ -370,11 +429,20 @@ fn sarif_report(task: &TaskRow, findings: &[FindingRow]) -> String {
                     }
                 }],
                 "properties": {
-                    "severity": f.severity,
+                    "severity": secuscan_db::repo::findings::effective_severity(f),
                     "kind": f.kind,
                     "analyst_status": f.analyst_status,
                     "proof": f.proof,
                     "remediation": f.remediation,
+                    "cve": f.cve,
+                    "cvss_v3": f.cvss_v3,
+                    "cvss_vector": f.cvss_vector,
+                    "cwe": f.cwe,
+                    "owasp": f.owasp,
+                    "epss_score": f.epss_score,
+                    "epss_percentile": f.epss_percentile,
+                    "cisa_kev": f.cisa_kev != 0,
+                    "severity_override": f.severity_override,
                 }
             })
         })
@@ -559,14 +627,54 @@ fn pdf_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Resu
         if i > 0 {
             doc.push(Break::new(0.8));
         }
+        let eff = secuscan_db::repo::findings::effective_severity(f);
         let heading = Paragraph::new(format!(
             "{}. [{sev}] {title}",
             i + 1,
-            sev = pdf_safe(&f.severity.to_uppercase()),
+            sev = pdf_safe(&eff.to_uppercase()),
             title = pdf_safe(&f.title)
         ))
-        .styled(Style::new().bold().with_color(severity_color(&f.severity)));
+        .styled(Style::new().bold().with_color(severity_color(eff)));
         doc.push(heading);
+        // Enrichment line (Sprint 2.1): CVE/CVSS/CWE/OWASP/EPSS/KEV.
+        {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(cve) = &f.cve {
+                let mut p = format!("CVE: {}", pdf_safe(cve));
+                if f.cisa_kev != 0 {
+                    p.push_str(" [CISA KEV]");
+                }
+                parts.push(p);
+            }
+            if let Some(v) = f.cvss_v3 {
+                parts.push(format!(
+                    "CVSS {v:.1}{}",
+                    f.cvss_vector.as_deref().map(|x| format!(" ({})", pdf_safe(x))).unwrap_or_default()
+                ));
+            }
+            if let Some(cwe) = &f.cwe {
+                parts.push(format!("CWE: {}", pdf_safe(cwe)));
+            }
+            if let Some(owasp) = &f.owasp {
+                parts.push(format!("OWASP: {}", pdf_safe(owasp)));
+            }
+            if let Some(e) = f.epss_score {
+                parts.push(format!("EPSS {e:.1}%"));
+            }
+            if f.severity_override.is_some() {
+                parts.push(format!(
+                    "Severity override: {} (scanner: {})",
+                    pdf_safe(eff),
+                    pdf_safe(&f.severity)
+                ));
+            }
+            if !parts.is_empty() {
+                doc.push(
+                    Paragraph::new(pdf_safe(&parts.join(" · ")))
+                        .styled(Style::new().with_font_size(8)),
+                );
+            }
+        }
         if !f.description.is_empty() {
             doc.push(Paragraph::new(pdf_safe(&f.description)));
         }
@@ -705,19 +813,48 @@ fn docx_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Res
     docx = docx
         .add_paragraph(Paragraph::new().add_run(Run::new().add_text("Details").bold().size(h2)));
     for (i, f) in findings.iter().enumerate() {
+        let eff = secuscan_db::repo::findings::effective_severity(f);
         docx = docx.add_paragraph(
             Paragraph::new().add_run(
                 Run::new()
                     .add_text(format!(
                         "{}. [{}] {}",
                         i + 1,
-                        f.severity.to_uppercase(),
+                        eff.to_uppercase(),
                         f.title
                     ))
                     .bold()
                     .size(body + 2),
             ),
         );
+        {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(cve) = &f.cve {
+                let mut p = format!("CVE: {cve}");
+                if f.cisa_kev != 0 {
+                    p.push_str(" [CISA KEV]");
+                }
+                parts.push(p);
+            }
+            if let Some(v) = f.cvss_v3 {
+                parts.push(format!("CVSS {v:.1}"));
+            }
+            if let Some(cwe) = &f.cwe {
+                parts.push(format!("CWE: {cwe}"));
+            }
+            if let Some(owasp) = &f.owasp {
+                parts.push(format!("OWASP: {owasp}"));
+            }
+            if let Some(e) = f.epss_score {
+                parts.push(format!("EPSS {e:.1}%"));
+            }
+            if f.severity_override.is_some() {
+                parts.push(format!("Severity override: {eff} (scanner: {})", f.severity));
+            }
+            if !parts.is_empty() {
+                docx = docx.add_paragraph(labelled_run("Enrichment: ", &parts.join(" · "), body));
+            }
+        }
         if !f.description.is_empty() {
             docx = docx.add_paragraph(
                 Paragraph::new().add_run(Run::new().add_text(f.description.clone()).size(body)),
@@ -817,6 +954,14 @@ fn xlsx_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Res
         "Evidence",
         "URL",
         "Created",
+        "CVE",
+        "CVSS",
+        "CVSS Vector",
+        "CWE",
+        "OWASP",
+        "EPSS",
+        "CISA KEV",
+        "Severity Override",
     ];
     for (col, h) in headers.iter().enumerate() {
         sheet
@@ -825,9 +970,14 @@ fn xlsx_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Res
     }
     for (row, f) in findings.iter().enumerate() {
         let r = (row + 1) as u32;
-        let sev_cell_fmt = sev_fmt(&format!("#{}", severity_hex(&f.severity)));
-        let values: [(&str, Option<&Format>); 10] = [
-            (&f.severity, Some(&sev_cell_fmt)),
+        let eff = secuscan_db::repo::findings::effective_severity(f);
+        let sev_cell_fmt = sev_fmt(&format!("#{}", severity_hex(eff)));
+        let static_strings: Vec<String> = vec![
+            f.cvss_v3.map(|v| format!("{v:.1}")).unwrap_or_default(),
+            f.epss_score.map(|v| format!("{v:.3}")).unwrap_or_default(),
+        ];
+        let values: [(&str, Option<&Format>); 18] = [
+            (eff, Some(&sev_cell_fmt)),
             (&f.kind, None),
             (&f.analyst_status, None),
             (&f.category, None),
@@ -837,6 +987,14 @@ fn xlsx_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Res
             (&f.proof, None),
             (f.url.as_deref().unwrap_or(""), None),
             (&f.created_at, None),
+            (f.cve.as_deref().unwrap_or(""), None),
+            (&static_strings[0], None),
+            (f.cvss_vector.as_deref().unwrap_or(""), None),
+            (f.cwe.as_deref().unwrap_or(""), None),
+            (f.owasp.as_deref().unwrap_or(""), None),
+            (&static_strings[1], None),
+            (if f.cisa_kev != 0 { "true" } else { "" }, None),
+            (f.severity_override.as_deref().unwrap_or(""), None),
         ];
         for (col, (v, fmt)) in values.iter().enumerate() {
             match *fmt {
@@ -985,6 +1143,7 @@ mod tests {
             owasp: None,
             confidence: None,
             created_at: "2025-01-01T00:00:00Z".into(),
+            ..Default::default()
         };
         vec![
             mk("critical", "RCE in service", "proof=1"),
@@ -1083,6 +1242,7 @@ mod tests {
             owasp: None,
             confidence: None,
             created_at: "2025-01-01T00:00:00Z".into(),
+            ..Default::default()
         });
         for fmt in ["pdf", "docx", "xlsx", "md", "csv", "html", "sarif", "json"] {
             let r = render(&t, &f, fmt, &Branding::default_instance()).expect(fmt);

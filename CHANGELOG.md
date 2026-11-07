@@ -3,6 +3,66 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.6.0 -- Max-Parity Sprint 2.1: analyst-grade findings surface
+
+Closes issue #24 — the findings/report work package: enrichment rendering,
+severity override, richer triage, bulk operations, manual findings, keyset
+pagination and scan-completion callbacks.
+
+### Enrichment is now visible everywhere
+
+`cve / cvss_v3 / cvss_vector / cwe / owasp / epss_score / epss_percentile /
+cisa_kev` sat in the DB since v3.0.0 and appeared in NO output. Now rendered
+in CSV (6 new columns), XLSX (6 new columns), HTML (badge chips incl. KEV),
+PDF + DOCX (enrichment line per finding detail), SARIF properties, Markdown
+and the Findings UI.
+
+### Severity override (analyst wins, resettable)
+
+`severity_override` + `severity_original` columns; the PATCH accepts
+`severity_override` ("" resets). Original severity is frozen on first
+override and survives reset. Effective severity (override wins) drives all
+renderers, CSV/XLSX columns, Markdown table and the UI badge. Overrides
+**survive re-scans**: a regenerated finding joins the dedup group and
+inherits the group's override/risk/verified (deliberately NOT analyst
+status — FP-memory forgetting semantics stay intact, per the Sprint 1.1
+contract).
+
+### Richer triage + bulk operations
+
+`PATCH /findings/:id/triage` accepts optional `analyst_status`,
+`severity_override`, `risk_level`, `verified`, `reason` (≤1000 chars,
+recorded with acting user + timestamp). New `PATCH /findings/bulk` updates
+1..=1000 findings in one statement, propagates to dedup groups and
+remembers FP-memory per unique tuple. The Findings page grew checkbox
+selection, a bulk toolbar, per-row severity override select and
+enrichment badges.
+
+### Manual findings + scan-completion callbacks
+
+`POST /findings` creates analyst findings anchored to a task (template
+pre-fill via `from_template`). `POST /tasks` accepts
+`report_callback {url, format, secret}`: on task finish the server POSTs a
+signed payload (`raw_status` | `raw_json` | `pdf_report` — base64 branded
+PDF) with the same HMAC-SHA256 scheme as notification webhooks and behind
+the same SSRF guard, which gained `SECUSCAN_WEBHOOK_ALLOW_PRIVATE` for
+local-first deployments (default-deny unchanged).
+
+### Cursor pagination
+
+`GET /findings` supports `?cursor=` keyset pagination over the exact sort
+tuple (severity rank, created_at, id) — stable under concurrent writes;
+`next_cursor` in responses; offset mode unchanged. The UI gained Load-more.
+
+### Test-infrastructure fixes found on the way
+
+- The login rate limiter is process-global keyed by (ip, email) — parallel
+  tests sharing one admin email exhausted the 30/min bucket. Tests now use
+  unique admin emails per server.
+- `login_rate_limit_kicks_in` gained window-reset headroom.
+- api_test 33 (+3), reports_render 8 (+1 branding already), frontend 75 +
+  tsc clean, verify.mjs 202/202 (+17 Sprint 2.1 checks).
+
 ## 4.5.0 -- Max-Parity Sprint 1.4: quick wins (org pivot, branding, expiry, TTL purge, rate limits)
 
 Closes the remaining Sprint 1.3 quick-win package (issue #23). Each item is

@@ -251,7 +251,16 @@ async fn dispatch(
 }
 
 /// Block server-side requests to loopback, link-local, and RFC1918.
+/// Default-deny wrapper: private/loopback destinations are rejected unless
+/// `SECUSCAN_WEBHOOK_ALLOW_PRIVATE=true` (local-first deployments, CI on the
+/// same host). Sprint 2.1 scan-completion callbacks share this policy.
 pub fn webhook_url_allowed(url: &str) -> Result<(), String> {
+    let allow_private =
+        std::env::var("SECUSCAN_WEBHOOK_ALLOW_PRIVATE").ok().as_deref() == Some("true");
+    webhook_url_allowed_with(url, allow_private)
+}
+
+pub fn webhook_url_allowed_with(url: &str, allow_private: bool) -> Result<(), String> {
     let parsed = url::Url::parse(url).map_err(|_| "webhook URL is not valid".to_string())?;
     if parsed.scheme() != "https" && parsed.scheme() != "http" {
         return Err("webhook URL must be http or https".into());
@@ -265,7 +274,7 @@ pub fn webhook_url_allowed(url: &str) -> Result<(), String> {
         return Err("webhook URL host is not allowed".into());
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if !ip_is_public(ip) {
+        if !ip_is_public(ip) && !allow_private {
             return Err("webhook URL must not target a private or loopback address".into());
         }
     }
@@ -298,7 +307,7 @@ fn sev_rank(label: &str) -> usize {
     }
 }
 
-fn hmac_sha256_hex(key: &str, msg: &str) -> String {
+pub fn hmac_sha256_hex(key: &str, msg: &str) -> String {
     use sha2::{Digest, Sha256};
     // Simple HMAC-SHA256 implementation (avoids pulling in the hmac crate).
     let block_size = 64;

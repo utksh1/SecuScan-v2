@@ -2656,6 +2656,7 @@ dependencies = [
 name = "secuscan-db"
 version = "4.5.0"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
  "hex",
  "rand 0.8.8",

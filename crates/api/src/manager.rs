@@ -299,6 +299,15 @@ impl TaskManager {
                         .bind(row_id)
                         .execute(&self.pool)
                         .await;
+                    // Sprint 2.1 (#24): a regenerated finding inherits the
+                    // group's analyst decisions (status/override/risk/
+                    // verified) so overrides survive re-scans.
+                    if status != "false_positive" {
+                        let _ = secuscan_db::repo::findings::inherit_group_triage(
+                            &self.pool, &group.id, row_id,
+                        )
+                        .await;
+                    }
                     if status == "false_positive" {
                         let _ = sqlx::query(
                             "UPDATE findings SET analyst_status = 'false_positive' WHERE id = ?",
@@ -327,6 +336,31 @@ impl TaskManager {
             crate::notifications_engine::fire_for_task(&self.pool, task, o.findings).await
         {
             tracing::warn!("notification dispatch for task {} failed: {e}", task.id);
+        }
+
+        // Sprint 2.1 (#24): scan-completion callback (push instead of poll).
+        // Configured at launch via `report_callback`; delivered with the
+        // same HMAC-signing + SSRF guard as notification webhooks.
+        if let Ok(opts) =
+            serde_json::from_str::<serde_json::Value>(&task.options_json)
+        {
+            if let Some(cb) = opts.get("report_callback").filter(|v| !v.is_null()) {
+                let pool = self.pool.clone();
+                let cb = cb.clone();
+                let task_id = task.id.clone();
+                tokio::spawn(async move {
+                    // Findings are already persisted at this point — load the
+                    // rows so the callback carries DB truth (incl. triage).
+                    let findings = secuscan_db::repo::findings::list_all_for_task(&pool, &task_id)
+                        .await
+                        .unwrap_or_default();
+                    if let Err(e) =
+                        crate::report_callback::deliver(&pool, &task_id, &cb, &findings).await
+                    {
+                        tracing::warn!("report_callback for task {task_id} failed: {e}");
+                    }
+                });
+            }
         }
 
         if let Err(e) = repo::tasks::finish(

@@ -121,7 +121,9 @@ async fn render_job(state: &SharedState, job: &ReportJobRow) -> Result<(String, 
         .await
         .map_err(|e| format!("cannot load findings: {e}"))?;
     let filtered = reports_render::filter_min_severity(&findings, job.severity_filter.as_deref());
-    let owned: Vec<_> = filtered.into_iter().cloned().collect();
+    let owned: Vec<_> = reports_render::filter_report_visible(&filtered, false)
+        .into_iter()
+        .collect();
 
     let brand = reports_render::load_branding(&state.db).await;
     let rendered = reports_render::render(&task, &owned, &job.format, &brand)?;

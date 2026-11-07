@@ -45,6 +45,10 @@ pub fn router() -> axum::Router<SharedState> {
 struct ExportQuery {
     /// Minimum severity to include (low|medium|high|critical).
     severity: Option<String>,
+    /// Sprint 2.1: re-include findings the analyst triaged as
+    /// false-positive / accepted-risk (excluded by default).
+    #[serde(default)]
+    include_ignored: Option<bool>,
 }
 
 async fn export_sync(
@@ -67,8 +71,9 @@ async fn export_sync(
         },
     )
     .await?;
+    let include_ignored = q.include_ignored.unwrap_or(false);
     let filtered = reports_render::filter_min_severity(&findings, q.severity.as_deref());
-    let owned: Vec<_> = filtered.into_iter().cloned().collect();
+    let owned: Vec<_> = reports_render::filter_report_visible(&filtered, include_ignored);
 
     let brand = reports_render::load_branding(&state.db).await;
     let rendered =

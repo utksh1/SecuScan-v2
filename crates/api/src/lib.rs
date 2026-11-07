@@ -18,6 +18,7 @@ pub mod sniper_engine;
 pub mod state;
 pub mod static_files;
 pub mod rate_limit;
+pub mod report_callback;
 pub mod vpn_manager;
 
 use crate::state::SharedState;

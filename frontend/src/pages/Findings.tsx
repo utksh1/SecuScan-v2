@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { Search, ChevronRight, Zap, Ban } from 'lucide-react'
@@ -23,6 +23,10 @@ export function FindingsPage() {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const { user } = useAuth()
+  // Sprint 2.1: bulk selection + keyset-paginated accumulation.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [accumulated, setAccumulated] = useState<Finding[]>([])
+  const [cursor, setCursor] = useState<string | null>(null)
   const severity = params.getAll('severity')
   const status = params.get('analyst_status') ?? ''
   const kind = params.get('kind') ?? ''
@@ -36,24 +40,52 @@ export function FindingsPage() {
   qs.set('workspace_id', scopeParam)
   qs.set('limit', '200')
 
+  if (cursor) qs.set('cursor', cursor)
+
   const { data, isLoading, error } = useQuery({
     queryKey: ['findings', qs.toString()],
-    queryFn: () => request<{ items: Finding[]; total: number }>(`/findings?${qs.toString()}`),
+    queryFn: () =>
+      request<{ items: Finding[]; total: number; next_cursor?: string | null }>(
+        `/findings?${qs.toString()}`,
+      ),
   })
+
+  // Accumulate pages when loading more; reset when the filter set changes.
+  const filterKey = `${severity.join(',')}|${status}|${kind}|${search}|${scopeParam}`
+  useEffect(() => {
+    setAccumulated([])
+    setCursor(null)
+    setSelected(new Set())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKey])
+  useEffect(() => {
+    if (!data) return
+    setAccumulated((prev) => {
+      const seen = new Set(prev.map((p) => p.id))
+      return [...prev, ...data.items.filter((i) => !seen.has(i.id))]
+    })
+    setCursor(data.next_cursor ?? null)
+  }, [data])
 
   const triageMut = useMutation({
     mutationFn: ({
       id,
       status,
       reason,
+      severityOverride,
     }: {
       id: string
-      status: AnalystStatus
+      status?: AnalystStatus
       reason?: string
+      severityOverride?: string | ''
     }) =>
       request(`/findings/${id}/triage`, {
         method: 'PATCH',
-        body: { analyst_status: status, ...(reason ? { reason } : {}) },
+        body: {
+          ...(status ? { analyst_status: status } : {}),
+          ...(reason ? { reason } : {}),
+          ...(severityOverride !== undefined ? { severity_override: severityOverride } : {}),
+        },
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['findings'] }),
   })
@@ -68,6 +100,15 @@ export function FindingsPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sniper-runs'] })
       navigate('/sniper')
+    },
+  })
+
+  const bulkMut = useMutation({
+    mutationFn: (payload: { ids: string[]; analyst_status: AnalystStatus; reason?: string }) =>
+      request<{ updated: number }>('/findings/bulk', { method: 'PATCH', body: payload }),
+    onSuccess: () => {
+      setSelected(new Set())
+      qc.invalidateQueries({ queryKey: ['findings'] })
     },
   })
 
@@ -88,10 +129,57 @@ export function FindingsPage() {
   if (isLoading) return <Spinner label="Loading findings…" />
   if (error) return <ErrorNote message={error instanceof Error ? error.message : 'Failed to load'} />
 
-  const items = data?.items ?? []
+  const items = accumulated.length > 0 ? accumulated : (data?.items ?? [])
+  const nextCursor = data?.next_cursor ?? null
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   return (
     <div className="space-y-4">
+      {selected.size > 0 && (
+        <div
+          className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm text-white"
+          data-testid="bulk-toolbar"
+        >
+          <span className="font-medium">{selected.size} selected</span>
+          <select
+            className="rounded-md bg-slate-800 px-2 py-1 text-xs ring-1 ring-slate-600"
+            defaultValue=""
+            aria-label="Bulk triage status"
+            onChange={(e) => {
+              const st = e.target.value as AnalystStatus
+              if (!st) return
+              bulkMut.mutate({ ids: [...selected], analyst_status: st })
+              e.target.value = ''
+            }}
+          >
+            <option value="">Set triage status…</option>
+            {TRIAGE.map((t) => (
+              <option key={t} value={t}>
+                {ANALYST_STATUS_LABEL[t]}
+              </option>
+            ))}
+          </select>
+          {bulkMut.error && (
+            <span className="text-xs text-rose-300">
+              {bulkMut.error instanceof Error ? bulkMut.error.message : 'bulk triage failed'}
+            </span>
+          )}
+          <button
+            className="ml-auto rounded-md px-2 py-1 text-xs text-slate-300 hover:bg-slate-800"
+            onClick={() => setSelected(new Set())}
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -157,6 +245,18 @@ export function FindingsPage() {
           <table className="w-full min-w-[860px]">
             <thead className="border-b border-slate-100 bg-slate-50/60">
               <tr>
+                <th className="th w-8">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-slate-500"
+                    checked={items.length > 0 && items.every((i) => selected.has(i.id))}
+                    onChange={() => {
+                      if (items.every((i) => selected.has(i.id))) setSelected(new Set())
+                      else setSelected(new Set(items.map((i) => i.id)))
+                    }}
+                    aria-label="Select all findings on this page"
+                  />
+                </th>
                 <th className="th">Severity</th>
                 <th className="th">Finding</th>
                 <th className="th">Type</th>
@@ -185,10 +285,30 @@ export function FindingsPage() {
                     })
                   }
                   onTriage={(s, reason) => triageMut.mutate({ id: f.id, status: s, reason })}
+                  selected={selected.has(f.id)}
+                  onSelect={() => toggleSelect(f.id)}
+                  onOverride={(sev) =>
+                    triageMut.mutate({
+                      id: f.id,
+                      status: f.analyst_status,
+                      severityOverride: sev,
+                    })
+                  }
                 />
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {nextCursor && items.length > 0 && (
+        <div className="text-center">
+          <button
+            className="btn-secondary"
+            onClick={() => setCursor(nextCursor)}
+            data-testid="load-more"
+          >
+            Load more ({(data?.total ?? 0) - items.length} remaining)
+          </button>
         </div>
       )}
     </div>
@@ -203,6 +323,9 @@ function FindingTableEntry({
   sniperError,
   onSnipe,
   onTriage,
+  selected,
+  onSelect,
+  onOverride,
 }: {
   finding: Finding
   canTriage: boolean
@@ -211,6 +334,9 @@ function FindingTableEntry({
   sniperError: string | null
   onSnipe: () => void
   onTriage: (status: AnalystStatus, reason?: string) => void
+  selected: boolean
+  onSelect: () => void
+  onOverride: (severity: string | '') => void
 }) {
   const [open, setOpen] = useState(false)
   // Max-Parity Sprint 1.1 — false-positive marking collects an optional
@@ -242,8 +368,20 @@ function FindingTableEntry({
         className={cn('cursor-pointer transition-colors hover:bg-slate-50', open && 'bg-slate-50')}
         onClick={() => setOpen((o) => !o)}
       >
+        <td className="td" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-slate-500"
+            checked={selected}
+            onChange={onSelect}
+            aria-label={`Select ${f.title}`}
+          />
+        </td>
         <td className="td">
-          <SeverityBadge severity={f.severity} />
+          <SeverityBadge severity={f.severity_override ?? f.severity} />
+          {f.severity_override && (
+            <div className="mt-0.5 text-[10px] text-slate-400">scanner: {f.severity}</div>
+          )}
         </td>
         <td className="td max-w-[420px]">
           <div className="truncate font-medium text-slate-700">{f.title}</div>
@@ -341,7 +479,7 @@ function FindingTableEntry({
       </tr>
       {open && (
         <tr className="bg-slate-50/70">
-          <td colSpan={5} className="px-4 py-4">
+          <td colSpan={6} className="px-4 py-4">
             {f.analyst_status === 'false_positive' && fp && (
               <div
                 className="mb-3 rounded-md bg-slate-100 px-3 py-2 text-xs text-slate-600 ring-1 ring-slate-200"
@@ -352,6 +490,42 @@ function FindingTableEntry({
                 {new Date(fp.decided_at).toLocaleString()}
                 {fp.reason ? ` — “${fp.reason}”` : ''}. Re-scans of this target will
                 auto-suppress this finding until it is re-triaged.
+              </div>
+            )}
+            {(f.cve || f.cvss_v3 || f.cwe || f.owasp || f.epss_score || f.cisa_kev) && (
+              <div className="mb-3 flex flex-wrap gap-1.5 text-xs" data-testid="enrichment-badges">
+                {f.cve && (
+                  <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-white">
+                    {f.cve}
+                    {f.cisa_kev && (
+                      <span className="ml-1 rounded bg-red-600 px-1">KEV</span>
+                    )}
+                  </span>
+                )}
+                {f.cvss_v3 !== null && f.cvss_v3 !== undefined && (
+                  <span className="rounded bg-orange-100 px-2 py-0.5 text-orange-800 ring-1 ring-orange-200">
+                    CVSS {f.cvss_v3.toFixed(1)}
+                    {f.cvss_vector ? ` (${f.cvss_vector})` : ''}
+                  </span>
+                )}
+                {f.cwe && (
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700 ring-1 ring-slate-200">
+                    {f.cwe}
+                  </span>
+                )}
+                {f.owasp && (
+                  <span className="rounded bg-violet-100 px-2 py-0.5 text-violet-800 ring-1 ring-violet-200">
+                    {f.owasp}
+                  </span>
+                )}
+                {f.epss_score !== null && f.epss_score !== undefined && (
+                  <span className="rounded bg-sky-100 px-2 py-0.5 text-sky-800 ring-1 ring-sky-200">
+                    EPSS {(f.epss_score * 100).toFixed(1)}%
+                    {f.epss_percentile
+                      ? ` (p${Math.round(f.epss_percentile * 100)})`
+                      : ''}
+                  </span>
+                )}
               </div>
             )}
             <div className="grid gap-4 md:grid-cols-3">
@@ -366,6 +540,37 @@ function FindingTableEntry({
             {f.url && (
               <div className="mt-2 text-xs text-slate-500">
                 URL: <span className="font-mono">{f.url}</span>
+              </div>
+            )}
+            {canTriage && (
+              <div className="mt-3 flex items-center gap-2 text-xs">
+                <span className="text-slate-500">Severity override:</span>
+                <select
+                  className="input w-auto px-2 py-1"
+                  value={f.severity_override ?? ''}
+                  onChange={(e) => onOverride(e.target.value)}
+                  aria-label="Severity override"
+                  data-testid="severity-override"
+                >
+                  <option value="">— scanner value —</option>
+                  {SEVERITIES.map((sv) => (
+                    <option key={sv} value={sv}>
+                      {sv}
+                    </option>
+                  ))}
+                </select>
+                {f.severity_original && f.severity_override && (
+                  <span className="text-slate-400">
+                    scanner reported {f.severity_original}
+                  </span>
+                )}
+                {f.triage_by && f.triage_at && (
+                  <span className="text-slate-400">
+                    last triage by {f.triage_by} at{' '}
+                    {new Date(f.triage_at).toLocaleString()}
+                    {f.triage_reason ? ` — “${f.triage_reason}”` : ''}
+                  </span>
+                )}
               </div>
             )}
           </td>

@@ -151,6 +151,16 @@ pub async fn list_wordlists(
     }
 }
 
+/// Fetch one finding template by id (used by manual-finding creation,
+/// Sprint 2.1).
+pub async fn get_finding_template(db: &SqlitePool, id: &str) -> DbResult<FindingTemplateRow> {
+    sqlx::query_as::<_, FindingTemplateRow>("SELECT * FROM finding_templates WHERE id = ?")
+        .bind(id)
+        .fetch_one(db)
+        .await
+        .map_err(Into::into)
+}
+
 pub async fn get_wordlist(db: &SqlitePool, id: &str) -> DbResult<WordlistRow> {
     sqlx::query_as::<_, WordlistRow>("SELECT * FROM wordlists WHERE id = ?")
         .bind(id)

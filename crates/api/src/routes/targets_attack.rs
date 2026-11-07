@@ -285,6 +285,7 @@ async fn attack_target(
             consent_granted: true,
             workspace_id: Some(target.workspace_id.clone()),
             auth_profile_id: None,
+        report_callback: None,
         };
         match validate_and_create_task(&state, &user, &task_req, None, None).await {
             Ok((row, manifest, inputs)) => {

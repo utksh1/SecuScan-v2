@@ -77,6 +77,7 @@ async fn create(
         preset: req.preset.clone(),
         consent_granted: req.consent_granted,
         auth_profile_id: None,
+        report_callback: None,
         workspace_id: req.workspace_id.clone(),
     };
     let admitted = admit_request(&state, &user, &task_req).await?;
@@ -262,6 +263,7 @@ async fn update(
                 // admission pipeline only checks the flag, not its provenance.
                 consent_granted: true,
                 auth_profile_id: None,
+        report_callback: None,
                 workspace_id: workspace_id.clone(),
             };
             let admitted = admit_request(&state, &user, &task_req).await?;
@@ -350,6 +352,7 @@ async fn run_now(
         preset: s.preset.clone(),
         consent_granted: true,
         auth_profile_id: None,
+        report_callback: None,
         workspace_id: s.workspace_id.clone(),
     };
     let (task, manifest, inputs) =

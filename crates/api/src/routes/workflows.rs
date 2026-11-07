@@ -276,6 +276,7 @@ async fn run_workflow(
             consent_granted: true,
             workspace_id: workspace_id.map(str::to_string),
             auth_profile_id: None,
+            report_callback: None,
         };
         let (task, manifest, inputs) =
             validate_and_create_task(state, user, &req, Some(run_id), None)

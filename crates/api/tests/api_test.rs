@@ -227,7 +227,10 @@ max_per_hour = 0
         frontend_dir: db_dir.path().join("no-such-frontend"), // API-only mode
         data_dir: db_dir.path().to_path_buf(),
         reports_dir: db_dir.path().join("reports"),
-        admin_email: "admin@test.local".to_string(),
+        // Unique per server: the login rate limiter is process-global keyed by
+        // (ip, email) — parallel tests sharing one email exhaust the 30/min
+        // bucket and 429 each other's logins.
+        admin_email: format!("admin-{}@test.local", uuid::Uuid::new_v4().simple()),
         admin_password: Some("admin-password-123".to_string()),
         denied_capabilities: vec![],
         allow_register: false,
@@ -281,7 +284,7 @@ async fn login(s: &TestServer) -> (reqwest::Client, String) {
     let resp = c
         .post(format!("{}/auth/login", s.base))
         .json(&serde_json::json!({
-            "email": "admin@test.local",
+            "email": s.state.config.admin_email,
             "password": "admin-password-123",
         }))
         .send()
@@ -312,7 +315,7 @@ async fn health_and_auth_flow() {
     // wrong password
     let resp = c
         .post(format!("{}/auth/login", s.base))
-        .json(&serde_json::json!({"email": "admin@test.local", "password": "wrong"}))
+        .json(&serde_json::json!({"email": s.state.config.admin_email, "password": "wrong"}))
         .send()
         .await
         .unwrap();
@@ -321,7 +324,7 @@ async fn health_and_auth_flow() {
     // login works and sets a refresh cookie
     let resp = c
         .post(format!("{}/auth/login", s.base))
-        .json(&serde_json::json!({"email": "admin@test.local", "password": "admin-password-123"}))
+        .json(&serde_json::json!({"email": s.state.config.admin_email, "password": "admin-password-123"}))
         .send()
         .await
         .unwrap();
@@ -347,7 +350,7 @@ async fn health_and_auth_flow() {
         .unwrap();
     assert_eq!(resp.status(), 200);
     let me: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(me["email"], "admin@test.local");
+    assert_eq!(me["email"], s.state.config.admin_email);
 
     // register is disabled by default
     let resp = c
@@ -675,7 +678,10 @@ async fn fp_memory_triage_audit_and_rescan_suppression() {
         updated["fp_memory"]["reason"], "not exploitable in our context",
         "{updated:?}"
     );
-    assert_eq!(updated["fp_memory"]["decided_by_email"], "admin@test.local");
+    assert_eq!(
+        updated["fp_memory"]["decided_by_email"],
+        s.state.config.admin_email
+    );
 
     // Audit trail also surfaces on GET /findings/:id.
     let one: serde_json::Value = auth(c.get(format!("{}/findings/{high_id}", s.base)))
@@ -4168,5 +4174,295 @@ async fn api_keys_expire_and_then_reject() {
     assert!(
         expired["revoked_at"].as_str().is_some(),
         "expired key stamped revoked on verify attempt"
+    );
+}
+
+// --- Max-Parity Sprint 2.1 (#24): findings surface -----------------------------------
+// Severity override (set/reset/original-freeze), bulk triage with FP memory,
+// manual finding creation, cursor pagination, scan-completion callback.
+#[tokio::test]
+async fn findings_triage_surface_end_to_end() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // Produce findings via the deterministic sevtest plugin (exits 0).
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest", "inputs": {"target": "triage-surface.test"},
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    let task: serde_json::Value = resp.json().await.unwrap();
+    let done = wait_task_terminal(&s, task["id"].as_str().unwrap()).await;
+    let task_id = task["id"].as_str().unwrap().to_string();
+    let findings: serde_json::Value = c
+        .get(format!("{}/findings?task_id={}", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = findings["items"].as_array().unwrap().clone();
+    assert!(items.len() >= 3, "sevtest emits 3 findings");
+    let critical_id = items
+        .iter()
+        .find(|f| f["severity"] == "critical")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // 1. Severity override: critical -> medium; original frozen; audit set.
+    let resp = c
+        .patch(format!("{}/findings/{}/triage", s.base, critical_id))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "severity_override": "medium",
+            "risk_level": "low",
+            "verified": true,
+            "reason": "sandboxed target",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["severity_override"], "medium");
+    assert_eq!(body["severity_original"], "critical");
+    assert_eq!(body["risk_level"], "low");
+    assert_eq!(body["verified"], true);
+    assert_eq!(body["triage_reason"], "sandboxed target");
+    assert!(body["triage_at"].as_str().is_some());
+
+    // Effective severity wins in reports (CSV column + HTML badge).
+    let csv = c
+        .get(format!("{}/tasks/{}/report/csv", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        csv.contains("cve,cvss_v3"),
+        "CSV carries enrichment header"
+    );
+    let html = c
+        .get(format!("{}/tasks/{}/report/html", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        html.contains("scanner:") && html.contains("Severity:"),
+        "HTML shows the override (got {html})",
+    );
+
+    // 2. Reset the override -> effective severity returns to scanner value.
+    let resp = c
+        .patch(format!("{}/findings/{}/triage", s.base, critical_id))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "severity_override": "" }))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["severity_override"], serde_json::Value::Null);
+    assert_eq!(body["severity_original"], "critical", "original preserved");
+
+    // 3. Bulk triage: mark all as false_positive with one call.
+    let ids: Vec<String> = items.iter().map(|f| f["id"].as_str().unwrap().to_string()).collect();
+    let resp = c
+        .patch(format!("{}/findings/bulk", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "ids": ids, "analyst_status": "false_positive", "reason": "bulk test target",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["updated"], ids.len() as i64);
+    let after: serde_json::Value = c
+        .get(format!("{}/findings?task_id={}", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        after["items"].as_array().unwrap().iter().all(|f| f["analyst_status"] == "false_positive"),
+        "bulk applied to all"
+    );
+
+    // 4. Reports exclude FP/accepted-risk by default (all are FP now).
+    let csv = c
+        .get(format!("{}/tasks/{}/report/csv", s.base, task_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert_eq!(csv.lines().count(), 1, "only the CSV header remains");
+    let csv_all = c
+        .get(format!(
+            "{}/tasks/{}/report/csv?include_ignored=true",
+            s.base, task_id
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(csv_all.lines().count() >= 4, "include_ignored restores rows");
+
+    // 5. Manual finding creation (from template data in-body).
+    let resp = c
+        .post(format!("{}/findings", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "task_id": task_id,
+            "title": "Analyst-confirmed misconfiguration",
+            "severity": "high",
+            "category": "Manual Review",
+            "description": "Created during triage review.",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let manual: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(manual["metadata"]["manual"], true);
+
+    // 6. Cursor pagination: page size 2 over >=4 findings; no dupes/misses.
+    let mut seen = std::collections::BTreeSet::new();
+    let mut pages = 0;
+    let mut cursor: Option<String> = None;
+    loop {
+        let url = match &cursor {
+            Some(c) => format!(
+                "{}/findings?task_id={}&limit=2&cursor={}",
+                s.base, task_id, c
+            ),
+            None => format!("{}/findings?task_id={}&limit=2", s.base, task_id),
+        };
+        let page: serde_json::Value = c.get(&url).bearer_auth(&token).send().await.unwrap().json().await.unwrap();
+        for f in page["items"].as_array().unwrap() {
+            seen.insert(f["id"].as_str().unwrap().to_string());
+        }
+        pages += 1;
+        match page["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+        assert!(pages < 20, "pagination terminated");
+    }
+    let expected_total = after["items"].as_array().unwrap().len() + 1; // + manual
+    assert_eq!(seen.len(), expected_total, "cursor pages cover every finding exactly once");
+    assert!(pages >= 2, "pagination actually paginated");
+}
+
+// --- Max-Parity Sprint 2.1 (#24): scan-completion callback ---------------------------
+#[tokio::test]
+async fn report_callback_delivers_signed_payload_on_finish() {
+    use axum::routing::post as post_route;
+    // Local-first: allow the loopback receiver for this test (the default
+    // deny policy is covered by the notifications-engine SSRF tests).
+    std::env::set_var("SECUSCAN_WEBHOOK_ALLOW_PRIVATE", "true");
+
+    // Local webhook receiver.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, Option<String>)>(8);
+    let app = axum::Router::new().route(
+        "/cb",
+        post_route(move |headers: axum::http::HeaderMap, body: String| {
+            let tx = tx.clone();
+            async move {
+                let sig = headers
+                    .get("x-secuscan-signature")
+                    .and_then(|v| v.to_str().ok())
+                    .map(String::from);
+                let _ = tx.send((body, sig)).await;
+                "ok"
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "sevtest", "inputs": {"target": "callback.test"},
+            "consent_granted": true,
+            "report_callback": {
+                "url": format!("http://{addr}/cb"),
+                "format": "raw_status",
+                "secret": "shared-secret-1",
+            },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task: serde_json::Value = resp.json().await.unwrap();
+    wait_task_terminal(&s, task["id"].as_str().unwrap()).await;
+
+    // The callback must arrive with a valid HMAC signature (bounded wait —
+    // delivery is spawned and best-effort; a hang means it never fired).
+    let (body, sig) = tokio::time::timeout(std::time::Duration::from_secs(15), rx.recv())
+        .await
+        .expect("callback delivered within 15s")
+        .expect("callback channel open");
+    let payload: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(payload["event"], "task.finished");
+    assert_eq!(payload["status"], "completed");
+    assert!(payload["severity_counts"]["critical"].as_i64().unwrap() >= 1);
+    assert!(
+        payload["report_b64"].is_null(),
+        "raw_status carries no artifact"
+    );
+    // HMAC-SHA256("shared-secret-1", body) hex — recomputed via the API's own helper.
+    let expected = {
+        use sha2::{Digest, Sha256};
+        // HMAC construction (block size 64) matching notifications_engine.
+        let key = b"shared-secret-1";
+        let msg = body.as_bytes();
+        let ipad: Vec<u8> = key.iter().map(|b| b ^ 0x36).chain(std::iter::repeat(0x36).take(64 - key.len())).collect();
+        let opad: Vec<u8> = key.iter().map(|b| b ^ 0x5c).chain(std::iter::repeat(0x5c).take(64 - key.len())).collect();
+        let mut inner = Sha256::new();
+        inner.update(&ipad);
+        inner.update(msg);
+        let inner_digest = inner.finalize();
+        let mut outer = Sha256::new();
+        outer.update(&opad);
+        outer.update(inner_digest);
+        hex::encode(outer.finalize())
+    };
+    assert_eq!(
+        sig.as_deref(),
+        Some(format!("sha256={expected}").as_str()),
+        "signature is a valid HMAC of the body"
     );
 }

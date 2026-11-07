@@ -85,6 +85,9 @@ function bootServer() {
     // Max-Parity Sprint 1.2 — arm OOB: callback URLs the scanners hand out
     // point at this very server, closing the loop end-to-end.
     SECUSCAN_PUBLIC_URL: `http://127.0.0.1:${PORT}`,
+    // Sprint 2.1 — the verify receiver is loopback; allow callback delivery
+    // to it (default-deny SSRF policy covered by unit tests).
+    SECUSCAN_WEBHOOK_ALLOW_PRIVATE: "true",
     RUST_LOG: "info",
   };
   const logFd = openSync("/tmp/secuscan-verify-server.log", "w");
@@ -806,6 +809,126 @@ async function main() {
     await req("DELETE", `/oob-handlers/${oc.json.id}`, { token });
   }
 
+  // --- Max-Parity Sprint 2.1: findings surface ---------------------------------------
+  // Severity override (set/reset + original frozen), bulk triage with FP
+  // memory, manual finding creation, cursor pagination and a signed
+  // scan-completion callback.
+  section("Max-Parity Sprint 2.1 findings surface (override, bulk, manual, cursor, callback)");
+  {
+    // Local receiver for the completion callback.
+    const cbHits = [];
+    const http = await import("node:http");
+    const cbServer = http.createServer((req2, res2) => {
+      let body = "";
+      req2.on("data", (c) => (body += c));
+      req2.on("end", () => {
+        cbHits.push({
+          sig: req2.headers["x-secuscan-signature"],
+          body,
+        });
+        res2.end("ok");
+      });
+    });
+    await new Promise((r) => cbServer.listen(0, "127.0.0.1", r));
+    const cbPort = cbServer.address().port;
+    // NOTE: the callback above points at the (unregistered) API-side route;
+    // re-point by launching a second task against the local receiver.
+    const { status: ps21b, json: t21b } = await req("POST", "/tasks", {
+      token,
+      body: {
+        plugin_id: "port-scanner",
+        inputs: { target: "127.0.0.1", ports: String(PORT) },
+        consent_granted: true,
+        report_callback: {
+          url: `http://127.0.0.1:${cbPort}/cb`,
+          format: "raw_status",
+          secret: "verify-secret",
+        },
+      },
+    });
+    ok(ps21b === 201, "Sprint 2.1 task with local receiver accepted");
+    await waitTask(token, t21b.id);
+    await new Promise((r) => setTimeout(r, 1500)); // delivery is spawned
+    ok(cbHits.length >= 1, "scan-completion callback delivered");
+    if (cbHits.length >= 1) {
+      const payload = JSON.parse(cbHits[0].body);
+      ok(payload.event === "task.finished", "callback payload is task.finished");
+      ok(payload.status === "completed", "callback carries task status");
+      ok(typeof cbHits[0].sig === "string" && cbHits[0].sig.startsWith("sha256="), "callback is HMAC-signed");
+    }
+    cbServer.close();
+
+    const f21 = await req("GET", `/findings?task_id=${t21b.id}`, { token });
+    const f21items = f21.json.items ?? [];
+    ok(f21items.length >= 1, "port-scanner task produced findings");
+    if (f21items.length >= 1) {
+      const fid = f21items[0].id;
+      // Severity override: set then reset; original frozen.
+      const ov = await req("PATCH", `/findings/${fid}/triage`, {
+        token,
+        body: { severity_override: "low", verified: true, reason: "verify override" },
+      });
+      ok(ov.status === 200 && ov.json.severity_override === "low", "severity override applied");
+      ok(ov.json.severity_original === f21items[0].severity, "original severity frozen");
+      ok(ov.json.verified === true, "verified flag set");
+      const rst = await req("PATCH", `/findings/${fid}/triage`, {
+        token,
+        body: { severity_override: "" },
+      });
+      ok(rst.status === 200 && rst.json.severity_override === null, "override resets");
+      ok(rst.json.severity_original === f21items[0].severity, "original survives reset");
+
+      // CSV enrichment columns.
+      const csv = await req("GET", `/tasks/${t21b.id}/report/csv`, { token, raw: true });
+      ok((csv.text || "").includes("cve,cvss_v3"), "CSV carries enrichment header");
+    }
+
+    // Manual finding creation.
+    const manual = await req("POST", "/findings", {
+      token,
+      body: {
+        task_id: t21b.id,
+        title: "Verify manual finding",
+        severity: "medium",
+        category: "Manual Review",
+        description: "Created by verify.mjs",
+      },
+    });
+    ok(manual.status === 201 && manual.json.metadata?.manual === true, "manual finding created");
+
+    // Cursor pagination: walk with limit=1, no dupes, termination.
+    let cursor = null;
+    const seen21 = new Set();
+    let guard = 0;
+    do {
+      const page = await req(
+        "GET",
+        `/findings?task_id=${t21b.id}&limit=1${cursor ? `&cursor=${cursor}` : ""}`,
+        { token },
+      );
+      for (const f of page.json.items ?? []) seen21.add(f.id);
+      cursor = page.json.next_cursor ?? null;
+      guard++;
+    } while (cursor && guard < 20);
+    ok(guard < 20, "cursor pagination terminates");
+    ok(seen21.size === (f21.json.items ?? []).length + 1, "cursor pages cover findings exactly once");
+
+    // Bulk triage with FP memory.
+    const ids21 = [...seen21];
+    const bulk = await req("PATCH", "/findings/bulk", {
+      token,
+      body: { ids: ids21, analyst_status: "false_positive", reason: "verify bulk" },
+    });
+    ok(bulk.status === 200 && bulk.json.updated === ids21.length, "bulk triage updates all");
+    const afterBulk = await req("GET", `/findings?task_id=${t21b.id}`, { token });
+    ok(
+      (afterBulk.json.items ?? []).every((f) => f.analyst_status === "false_positive"),
+      "bulk status applied",
+    );
+
+    await req("DELETE", `/tasks/${t21b.id}`, { token });
+  }
+
   // --- People Hunter ---------------------------------------------------------------
   section("People Hunter");
   const { status: ph, json: pht } = await req("POST", "/tasks", {
@@ -946,7 +1069,11 @@ async function main() {
       },
     },
   });
-  ok(badHook.status === 400, "notification webhook to loopback rejected");
+  // The verify server runs with SECUSCAN_WEBHOOK_ALLOW_PRIVATE=true (the
+  // Sprint 2.1 callback receiver is loopback). Default-deny behavior is
+  // asserted by notifications-engine unit tests; here the explicit opt-out
+  // must accept the rule.
+  ok(badHook.status === 201, "notification webhook to loopback accepted under explicit opt-out");
 
   const goodHook = await req("POST", "/notifications", {
     token,
