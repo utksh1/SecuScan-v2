@@ -18,6 +18,7 @@ pub mod loader;
 pub mod manifest;
 pub mod models;
 pub mod parser_engine;
+pub mod net_scope;
 pub mod policy;
 pub mod template;
 pub mod validate;

@@ -72,7 +72,22 @@ pub fn authed_client(
     timeout: Duration,
     auth: Option<&AuthMaterial>,
 ) -> Result<reqwest::Client, String> {
-    let cb = super::http_headers::client_builder(follow, timeout)?;
+    authed_client_pinned(follow, timeout, auth, &[])
+}
+
+/// Like [`authed_client`], with DNS pinning (Max-Parity Sprint 2.3, #6):
+/// every resolved target address is bound into the client so a mid-scan DNS
+/// flip cannot walk requests onto a different address.
+pub fn authed_client_pinned(
+    follow: bool,
+    timeout: Duration,
+    auth: Option<&AuthMaterial>,
+    pins: &[(String, std::net::SocketAddr)],
+) -> Result<reqwest::Client, String> {
+    let mut cb = super::http_headers::client_builder(follow, timeout)?;
+    for (host, addr) in pins {
+        cb = cb.resolve(host.as_str(), *addr);
+    }
     let cb = match auth {
         Some(a) if !a.cookies.is_empty() || !a.headers.is_empty() => {
             let mut hm = reqwest::header::HeaderMap::new();

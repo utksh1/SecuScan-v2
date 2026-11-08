@@ -161,3 +161,18 @@ forward the OOB path unchanged and must not strip `Sec-Fetch-Dest` headers.
   `max_output_bytes` (default 8 MiB) with a visible truncation marker, and
   log events at 20 000 per stream. Binary output is lossy-decoded and can
   no longer abort capture.
+
+
+## Outbound destination policy (Sprint 2.3)
+
+| Env | Default | Effect |
+|-----|---------|--------|
+| `SECUSCAN_OUTBOUND_ALLOW_PRIVATE` | `false` | Allow loopback/private/link-local scan + webhook destinations |
+| `SECUSCAN_OUTBOUND_ALLOWED_CIDRS` | empty | Comma-separated CIDR allow-list overriding the private block |
+| `SECUSCAN_OUTBOUND_STRICT` | `false` | Hostname targets must resolve to global addresses |
+| `SECUSCAN_WEBHOOK_ALLOW_PRIVATE` | `false` | Webhook receivers may be loopback/private (local-first) |
+| `SECUSCAN_PREFLIGHT_REACHABILITY` | `false` | 4 s URL probe at scan admission |
+
+Local-first defaults keep loopback/private scanning working (the product's
+own verify suite scans `127.0.0.1`); cloud metadata endpoints are always
+refused. See SECURITY.md for the enforcement model.

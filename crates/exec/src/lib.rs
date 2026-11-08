@@ -79,6 +79,24 @@ pub async fn execute_task(
     sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Running))
         .await;
 
+    // Sprint 2.3 (#6) — connect-time destination guard: resolve the target
+    // and validate every DNS answer before any scan traffic leaves. Metadata
+    // endpoints are always refused; strict mode (env) additionally blocks
+    // private resolutions for hostname targets.
+    if let Some(target) = inputs.get("target").and_then(|v| v.as_str()) {
+        match native::net_guard::check_target_scope(target).await {
+            Ok(scope) if !scope.pinned.is_empty() => {
+                // Resolved IPs recorded for diagnostics; per-client pinning
+                // happens in the web scanners' client builders.
+            }
+            Ok(_) => {}
+            Err(e) => {
+                sink.emit(TaskEvent::Error(e.clone())).await;
+                return failure(sink, e, started).await;
+            }
+        }
+    }
+
     let outcome = match &manifest.engine {
         secuscan_core::manifest::EngineSpec::Cli {
             ok_exit_codes, ..

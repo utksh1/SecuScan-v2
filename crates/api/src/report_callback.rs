@@ -72,8 +72,23 @@ pub async fn deliver(
     }
 
     let payload_json = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
+    // Sprint 2.3 (#8): connect-time destination check + no redirects.
+    if let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)) {
+        let mut policy = secuscan_core::net_scope::OutboundPolicy::from_env();
+        if std::env::var("SECUSCAN_WEBHOOK_ALLOW_PRIVATE").ok().as_deref() == Some("true") {
+            policy.allow_private = true;
+        }
+        let h = host.clone();
+        let checked = tokio::task::spawn_blocking(move || policy.resolve_and_check(&h))
+            .await
+            .map_err(|e| e.to_string())?;
+        if let Err(e) = checked {
+            return Err(format!("callback destination rejected: {e}"));
+        }
+    }
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|e| e.to_string())?;
     let mut req = client
@@ -87,6 +102,15 @@ pub async fn deliver(
     let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("callback receiver returned {}", resp.status()));
+    }
+    // Bounded response read: a hostile receiver cannot make us buffer
+    // gigabytes acking a callback.
+    if let Some(len) = resp.content_length() {
+        if len > 1024 * 1024 {
+            return Err(format!(
+                "callback receiver response too large ({len} bytes)"
+            ));
+        }
     }
     tracing::info!("report_callback delivered for task {task_id} (format {format})");
     Ok(())

@@ -22,6 +22,7 @@ pub mod js_analyzer;
 pub mod param_finder;
 pub mod password_audit;
 pub mod people_hunter;
+pub mod net_guard;
 pub mod port_scanner;
 pub mod reverse_dns;
 pub mod subdomain_finder;

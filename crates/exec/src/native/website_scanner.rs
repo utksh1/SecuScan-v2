@@ -122,8 +122,26 @@ impl NativeScanner for WebsiteScanner {
         // discovery, active probes, DAST engine) via client-level default
         // headers, so the scan sees the authenticated surface.
         let auth = ctx.auth.clone();
-        let client = super::auth::authed_client(true, timeout, auth.as_ref())?;
-        let no_follow = super::auth::authed_client(false, timeout, auth.as_ref())?;
+        // Sprint 2.3 (#6): resolve + validate the target, then pin every
+        // validated address into the HTTP clients — a mid-scan DNS flip
+        // cannot walk the crawl onto a different address.
+        let scope = super::net_guard::check_target_scope(&target).await?;
+        let pins: Vec<(String, std::net::SocketAddr)> = scope
+            .pinned
+            .iter()
+            .map(|ip| {
+                let port = url::Url::parse(&target)
+                    .ok()
+                    .and_then(|u| u.port_or_known_default())
+                    .unwrap_or(80);
+                (
+                    scope.host.clone(),
+                    std::net::SocketAddr::new(*ip, port),
+                )
+            })
+            .collect();
+        let client = super::auth::authed_client_pinned(true, timeout, auth.as_ref(), &pins)?;
+        let no_follow = super::auth::authed_client_pinned(false, timeout, auth.as_ref(), &pins)?;
         // Max-Parity Sprint 1.2 (2.4): adopt the task's OOB marker when armed
         // so blind callbacks correlate back to this task; fall back to a
         // local marker for reflection-only canaries.

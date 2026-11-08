@@ -4652,3 +4652,57 @@ async fn schedules_support_named_frequencies() {
         .unwrap();
     assert_eq!(resp.status(), 400);
 }
+
+// --- Max-Parity Sprint 2.3 (#6): connect-time destination guard ----------------------
+#[tokio::test]
+async fn metadata_targets_are_refused_at_scan_start() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // The cloud metadata endpoint is refused at ADMISSION (global deny
+    // layer, `169.254.*.*`); the scan-start net_guard is the second layer
+    // for hostname targets whose DNS answers to a metadata address.
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": { "target": "169.254.169.254" },
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403, "metadata literal denied at admission");
+    let denied: serde_json::Value = resp.json().await.unwrap();
+    assert!(
+        denied["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("allowed targets"),
+        "denied by the plugin's target policy"
+    );
+
+    // Loopback targets keep working (local-first product).
+    let resp = c
+        .post(format!("{}/tasks", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "plugin_id": "port-scanner",
+            "inputs": { "target": "127.0.0.1:1" },
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let task2: serde_json::Value = resp.json().await.unwrap();
+    let done2 = wait_task_terminal(&s, task2["id"].as_str().unwrap()).await;
+    // The guard must NOT be the reason: a closed port fails the scanner's
+    // own way ("nothing to scan"), not with a destination-policy error.
+    let err = done2.error.unwrap_or_default();
+    assert!(
+        !err.contains("metadata") && !err.contains("outbound"),
+        "loopback scanning keeps working by default: {err}"
+    );
+}

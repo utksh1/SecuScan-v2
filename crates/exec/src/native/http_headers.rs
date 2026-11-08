@@ -278,7 +278,15 @@ pub(crate) fn client_builder(
             if attempt.previous().len() >= 5 {
                 attempt.error("too many redirects")
             } else if let Some(original) = attempt.previous().first() {
-                if attempt.url().host_str() == original.host_str() {
+                // Sprint 2.3 (#6): case-insensitive, trailing-dot-normalized
+                // same-host comparison (net_scope::same_host).
+                let same = match (attempt.url().host_str(), original.host_str()) {
+                    (Some(to), Some(from)) => {
+                        secuscan_core::net_scope::same_host(from, to)
+                    }
+                    _ => false,
+                };
+                if same {
                     attempt.follow()
                 } else {
                     attempt.stop()

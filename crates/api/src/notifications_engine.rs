@@ -192,8 +192,11 @@ async fn dispatch(
     payload: &Value,
     task_id: &str,
 ) -> Result<(), String> {
+    // Sprint 2.3 (#8): webhooks never follow redirects — a redirect target
+    // is not re-validated and could walk the delivery to another host.
     let client = reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap();
     let payload_json = serde_json::to_string(payload).unwrap_or_default();
@@ -201,32 +204,73 @@ async fn dispatch(
         "webhook" => {
             let url = action.get("url").and_then(|v| v.as_str()).unwrap_or("");
             webhook_url_allowed(url)?;
-            let secret = action.get("secret").and_then(|v| v.as_str()).unwrap_or("");
-            let mut req = client
-                .post(url)
-                .header("content-type", "application/json")
-                .body(payload_json.clone());
-            if !secret.is_empty() {
-                let sig = hmac_sha256_hex(secret, &payload_json);
-                req = req.header("X-SecuScan-Signature", format!("sha256={sig}"));
-            }
-            // Issue #25 — a failed SEND (DNS, timeout, refused) is a failed
-            // delivery and must be logged, not silently dropped: the `?`
-            // here previously skipped log_delivery entirely, so unreachable
-            // receivers left no trace in the delivery log.
-            match req.send().await {
-                Ok(resp) => {
-                    let code = resp.status().as_u16() as i64;
-                    let ok = resp.status().is_success();
-                    let body = resp.text().await.unwrap_or_default();
-                    (
-                        if ok { "sent" } else { "failed" },
-                        Some(code),
-                        if ok { None } else { Some(body) },
-                    )
+            // Sprint 2.3 (#8): connect-time check — the hostname must not
+            // resolve to a private/loopback/metadata address (rebinding
+            // defense), and webhooks do not follow redirects. The
+            // webhook-specific opt-out (SECUSCAN_WEBHOOK_ALLOW_PRIVATE,
+            // local-first receivers) joins the general outbound policy. A
+            // rejection here is a FAILED DELIVERY and must be logged.
+            let dest_failure: Option<String> =
+                if let Some(host) = url::Url::parse(url).ok().and_then(|u| u.host_str().map(str::to_string)) {
+                    let mut policy = secuscan_core::net_scope::OutboundPolicy::from_env();
+                    if std::env::var("SECUSCAN_WEBHOOK_ALLOW_PRIVATE").ok().as_deref()
+                        == Some("true")
+                    {
+                        policy.allow_private = true;
+                    }
+                    let h = host.clone();
+                    match tokio::task::spawn_blocking(move || policy.resolve_and_check(&h))
+                        .await
+                        .map_err(|e| e.to_string())
+                    {
+                        Ok(Ok(_)) => None,
+                        Ok(Err(e)) => Some(format!("webhook destination rejected: {e}")),
+                        Err(e) => return Err(e),
+                    }
+                } else {
+                    None
+                };
+            let send_result = if let Some(msg) = dest_failure {
+                ("failed", None, Some(msg))
+            } else {
+                let secret = action.get("secret").and_then(|v| v.as_str()).unwrap_or("");
+                let mut req = client
+                    .post(url)
+                    .header("content-type", "application/json")
+                    .body(payload_json.clone());
+                if !secret.is_empty() {
+                    let sig = hmac_sha256_hex(secret, &payload_json);
+                    req = req.header("X-SecuScan-Signature", format!("sha256={sig}"));
                 }
-                Err(e) => ("failed", None, Some(e.to_string())),
-            }
+                // Issue #25 — a failed SEND (DNS, timeout, refused) is a failed
+                // delivery and must be logged, not silently dropped: the `?`
+                // here previously skipped log_delivery entirely, so unreachable
+                // receivers left no trace in the delivery log.
+                match req.send().await {
+                    Ok(resp) => {
+                        let code = resp.status().as_u16() as i64;
+                        let ok = resp.status().is_success();
+                        // Bounded read (#8): cap captured error bodies at 4 KiB.
+                        let body = if let Some(len) = resp.content_length() {
+                            if len > 4096 {
+                                format!("[{len} bytes truncated]").into_bytes()
+                            } else {
+                                resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default()
+                            }
+                        } else {
+                            resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default()
+                        };
+                        let body = String::from_utf8_lossy(&body).to_string();
+                        (
+                            if ok { "sent" } else { "failed" },
+                            Some(code),
+                            if ok { None } else { Some(body) },
+                        )
+                    }
+                    Err(e) => ("failed", None, Some(e.to_string())),
+                }
+            };
+            send_result
         }
         "slack" | "teams" | "discord" => {
             let url = action

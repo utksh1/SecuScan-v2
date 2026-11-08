@@ -107,3 +107,31 @@ access as an additional layer.
 Please open a private security advisory on the repository, or contact the maintainers
 directly. Include reproduction steps and affected versions. We aim to respond within
 72 hours. Do not test against systems you do not own while researching a report.
+
+
+## Outbound destination policy (Sprint 2.3)
+
+Scan-time and webhook egress is enforced at **connect time**, not just at
+admission:
+
+- Cloud metadata endpoints (169.254.169.254 and the NAT64-translated form)
+  are refused for every scan target and webhook destination, always.
+- Scanner HTTP clients **pin** the target's validated DNS answers, so a
+  mid-scan rebinding cannot walk a scan onto a different address. Redirects
+  are restricted to the original target host (case-insensitive).
+- Webhook deliveries (notifications + scan-completion callbacks) resolve the
+  destination at send time and refuse loopback/private/metadata answers
+  under the default policy, never follow redirects, and cap captured
+  response bodies (4 KiB for delivery-log errors, 1 MiB for callbacks).
+
+Deployment policy knobs:
+
+| Env | Default | Effect |
+|-----|---------|--------|
+| `SECUSCAN_OUTBOUND_ALLOW_PRIVATE` | `false` | Allow loopback/private/link-local destinations for hostname targets (authorized lab scanning) |
+| `SECUSCAN_OUTBOUND_ALLOWED_CIDRS` | empty | Explicit CIDR allow-list that overrides the private block (e.g. `10.0.0.0/8,192.168.1.0/24`) |
+| `SECUSCAN_OUTBOUND_STRICT` | `false` | Hard mode: hostname targets must resolve to global addresses (private/metadata refused) unless covered by the two knobs above |
+| `SECUSCAN_WEBHOOK_ALLOW_PRIVATE` | `false` | Webhook deliveries only: accept loopback/private receivers (local-first setups; the connect-time resolve check honors it too) |
+
+DNS rebinding is additionally bounded by scan-start resolution pinning: the
+addresses validated at scan start are the ones the HTTP clients use.

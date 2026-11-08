@@ -3,6 +3,42 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.8.0 -- Max-Parity Sprint 2.3: connect-time destination enforcement
+
+Closes the SSRF pair (issues #6 and #8): destination checks now run at
+**connection time**, not only at admission.
+
+### #6 — DNS rebinding + redirect escapes closed
+
+- New `secuscan_core::net_scope`: full address taxonomy (v4-mapped unwrap,
+  NAT64 form, ULA, link-local, **cloud metadata**, documentation, loopback,
+  private, unspecified, global) + a deployment-configurable
+  `OutboundPolicy` (`SECUSCAN_OUTBOUND_ALLOW_PRIVATE`,
+  `SECUSCAN_OUTBOUND_ALLOWED_CIDRS`, `SECUSCAN_OUTBOUND_STRICT`).
+- `check_target_scope` runs at scan start for every task: resolves the
+  target, validates **every** DNS answer, refuses metadata endpoints
+  always, and hands the validated addresses to the scanners.
+- Website-scanner HTTP clients **pin** the validated addresses
+  (`reqwest::resolve`) — a mid-scan DNS flip cannot walk the crawl onto a
+  different address. Same-host redirect comparison is case-insensitive and
+  trailing-dot-normalized.
+- Local-first defaults preserved: loopback/private scanning keeps working
+  (the product's own verify suite scans 127.0.0.1); strict mode is opt-in.
+
+### #8 — webhook egress hardening
+
+- Webhook deliveries (notification rules + scan-completion callbacks)
+  resolve the destination at **send time** and refuse loopback/private/
+  metadata answers (rebinding defense on top of the hostname deny-list).
+- Webhook clients **never follow redirects**; captured error bodies are
+  capped (4 KiB delivery log, 1 MiB callback ack) — a hostile receiver
+  cannot make the server buffer arbitrary bytes.
+
+### Tests
+core 68 (+5 net_scope matrix: v4-mapped, NAT64, ULA, CIDR v4/v6, policy
+overrides), exec 121 (+2 net_guard), api_test 36 (+1: metadata refusal at
+admission + loopback preserved), frontend 75, verify.mjs 208/208.
+
 ## 4.7.0 -- Max-Parity Sprint 2.2: monitoring loop + honest lifecycle
 
 Closes issue #25 — the scheduler/lifecycle work package: the auto-diff
