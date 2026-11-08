@@ -335,6 +335,10 @@ function ScheduleForm({
   const [intervalSeconds, setIntervalSeconds] = useState(
     schedule?.interval_seconds ?? 24 * 3600,
   )
+  // Sprint 2.2 (#25): named frequencies override the raw interval.
+  const [frequency, setFrequency] = useState<string>(schedule?.frequency ?? '')
+  const [anchorTime, setAnchorTime] = useState<string>(schedule?.anchor_time ?? '09:00')
+  const [tz, setTz] = useState<string>(schedule?.tz ?? 'UTC')
   const [customMinutes, setCustomMinutes] = useState<string>(() =>
     // Editing a schedule with a non-preset interval: prefill the custom
     // minutes so saving unchanged round-trips the same value (otherwise
@@ -401,10 +405,18 @@ function ScheduleForm({
         } else inputs[k] = v
       }
       const seconds = isCustom ? Math.round(Number(customMinutes) * 60) : intervalSeconds
-      if (!Number.isFinite(seconds) || seconds < 300) {
+      if (frequency === '' && (!Number.isFinite(seconds) || seconds < 300)) {
         setError('Interval must be at least 5 minutes.')
         return
       }
+      const cadence = frequency
+        ? {
+            frequency,
+            anchor_time: anchorTime,
+            tz,
+          }
+        : {}
+      void cadence
       if (schedule) {
         await scheduleApi.update(schedule.id, {
           name: name.trim(),
@@ -412,6 +424,7 @@ function ScheduleForm({
           preset: schedule.preset ?? null,
           interval_seconds: seconds,
           workspace_id: workspaceId || null,
+          ...(frequency ? { frequency, anchor_time: anchorTime, tz } : {}),
         })
       } else {
         await scheduleApi.create({
@@ -421,6 +434,7 @@ function ScheduleForm({
           interval_seconds: seconds,
           consent_granted: consent,
           ...(workspaceId ? { workspace_id: workspaceId } : {}),
+          ...(frequency ? { frequency, anchor_time: anchorTime, tz } : {}),
         })
       }
       onDone()
@@ -482,12 +496,55 @@ function ScheduleForm({
           )}
         </div>
         <div>
+          <label className="label" htmlFor="sched-frequency">
+            Cadence
+          </label>
+          <select
+            id="sched-frequency"
+            className="input"
+            value={frequency}
+            onChange={(e) => setFrequency(e.target.value)}
+          >
+            <option value="">Custom interval (below)</option>
+            <option value="hourly">Hourly</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="quarterly">Quarterly</option>
+            <option value="once">Once (then disabled)</option>
+          </select>
+          {frequency !== '' && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <input
+                className="input"
+                type="time"
+                value={anchorTime}
+                onChange={(e) => setAnchorTime(e.target.value)}
+                aria-label="Anchor time"
+              />
+              <input
+                className="input"
+                value={tz}
+                onChange={(e) => setTz(e.target.value)}
+                aria-label="Timezone (IANA)"
+                placeholder="UTC"
+              />
+            </div>
+          )}
+          {frequency !== '' && (
+            <p className="mt-1 text-xs text-slate-400">
+              Runs at {anchorTime} ({tz}) with the chosen cadence. Monthly runs
+              clamp to the month&apos;s last day.
+            </p>
+          )}
+        </div>
+        <div>
           <label className="label" htmlFor="sched-interval">
-            Interval <span className="text-rose-500">*</span>
+            Interval {frequency === '' && <span className="text-rose-500">*</span>}
           </label>
           <select
             id="sched-interval"
-            className="input"
+            className={cn('input', frequency !== '' && 'opacity-50 pointer-events-none')}
             value={isCustom ? 'custom' : String(intervalSeconds)}
             onChange={(e) => {
               if (e.target.value !== 'custom') setIntervalSeconds(Number(e.target.value))

@@ -158,6 +158,7 @@ async fn task_and_findings_flow() {
             stats_json: stats,
             output: "raw output here",
             output_truncated: false,
+            status_detail: None,
         },
     )
     .await

@@ -1114,6 +1114,7 @@ mod tests {
             created_at: "2025-01-01T00:00:00Z".into(),
             started_at: None,
             finished_at: Some("2025-01-01T00:00:01Z".into()),
+            status_detail: None,
         }
     }
 

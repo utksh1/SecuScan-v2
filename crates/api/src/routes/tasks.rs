@@ -50,6 +50,11 @@ pub struct StartTaskRequest {
     /// v2.6.0 — auth profile to attach (web scans inject cookies/headers).
     #[serde(default)]
     pub auth_profile_id: Option<String>,
+    /// Sprint 2.2 (#25): user-set per-scan soft cap in minutes (1..=1440).
+    /// When it fires the scan ends Completed with partial findings
+    /// (reporting-friendly) instead of Failed.
+    #[serde(default)]
+    pub max_scan_time_minutes: Option<i64>,
     /// Sprint 2.1 (#24): push-notification on scan completion — the server
     /// POSTs a signed webhook (same HMAC machinery as notification rules)
     /// instead of the client polling. Formats:
@@ -265,6 +270,7 @@ pub async fn validate_and_create_task(
                 "preset": req.preset,
                 "consent_granted": req.consent_granted,
                 "report_callback": req.report_callback,
+                "max_scan_time_minutes": req.max_scan_time_minutes,
             })
             .to_string(),
             workflow_run_id,
@@ -287,6 +293,43 @@ pub async fn validate_and_create_task(
             .bind(&row.id)
             .execute(&state.db)
             .await;
+    }
+
+    if let Some(m) = req.max_scan_time_minutes {
+        if !(1..=1440).contains(&m) {
+            return Err(ApiError::BadRequest(
+                "max_scan_time_minutes must be between 1 and 1440".into(),
+            ));
+        }
+    }
+
+    // Sprint 2.2 (#25) — pre-flight reachability probe (config-gated,
+    // default off): URL-targeted scans fail fast with a clear error instead
+    // of burning a full scan against an unreachable host.
+    if state.config.preflight_reachability {
+        if let Some(target) = &admitted.target {
+            if target.starts_with("http://") || target.starts_with("https://") {
+                let client = reqwest::Client::builder()
+                    .timeout(std::time::Duration::from_secs(4))
+                    .build()
+                    .ok();
+                let reachable = match client {
+                    Some(c) => c
+                        .get(target)
+                        .send()
+                        .await
+                        .map(|r| r.status().as_u16())
+                        .unwrap_or(0),
+                    None => 0,
+                };
+                if reachable == 0 {
+                    return Err(ApiError::BadRequest(format!(
+                        "pre-flight check failed: {target} did not respond within 4s — \
+                         fix the target or disable SECUSCAN_PREFLIGHT_REACHABILITY"
+                    )));
+                }
+            }
+        }
     }
 
     // v3.0.0 — assign a per-scan OOB marker for blind-vuln correlation.
@@ -331,6 +374,7 @@ pub fn task_to_json(t: &TaskRow, include_output: bool) -> Value {
         "plugin_name": t.plugin_name,
         "target": t.target,
         "status": t.status,
+        "status_detail": t.status_detail,
         "inputs": serde_json::from_str::<Value>(&t.inputs_json).unwrap_or(json!({})),
         "options": serde_json::from_str::<Value>(&t.options_json).unwrap_or(json!({})),
         "exit_code": t.exit_code,
@@ -529,6 +573,7 @@ async fn retry(
         consent_granted: true, // consent was granted for the original task
         workspace_id: original.workspace_id.clone(), // keep the workspace
         auth_profile_id: original.auth_profile_id.clone(),
+            max_scan_time_minutes: None,
     };
     let (row, manifest, inputs) =
         validate_and_create_task(&state, &user, &req, None, original.schedule_id.as_deref())

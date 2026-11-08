@@ -55,9 +55,14 @@ pub async fn execute_task(
     cancel: tokio_util::sync::CancellationToken,
     auth: Option<AuthMaterial>,
     oob: Option<native::OobCtx>,
+    // User-set per-scan cap in seconds (issue #25): when it fires the run
+    // ends Completed with partial findings — reporting-friendly, unlike the
+    // hard manifest timeout. Capped at the manifest timeout so a plugin's
+    // safety bound still applies.
+    max_scan_time_secs: Option<u64>,
 ) -> TaskOutcome {
     let started = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(match &manifest.engine {
+    let hard_timeout = std::time::Duration::from_secs(match &manifest.engine {
         secuscan_core::manifest::EngineSpec::Cli {
             timeout_seconds, ..
         } => *timeout_seconds,
@@ -65,6 +70,11 @@ pub async fn execute_task(
             timeout_seconds, ..
         } => *timeout_seconds,
     });
+    let timeout = hard_timeout;
+    // Soft cap (max_scan_time) = min(user cap, hard timeout); the runner
+    // maps its expiry to Completed-with-partials.
+    let soft_timeout = max_scan_time_secs
+        .map(|secs| std::time::Duration::from_secs(secs).min(hard_timeout));
 
     sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Running))
         .await;
@@ -89,13 +99,15 @@ pub async fn execute_task(
                     // exits 1/2 when vulnerabilities are found). Everything
                     // else is a tool failure and must not report Completed.
                     ok_exit_codes: ok_exit_codes.clone(),
+                    soft_timeout,
                     ..Default::default()
                 },
                 sink,
             )
             .await;
-            sink.emit(TaskEvent::Phase(secuscan_core::models::Phase::Parsing))
-                .await;
+            // Issue #25 — partial findings on cancel/max_scan_time: the
+            // captured output is parsed regardless of terminal status so a
+            // stopped or time-capped scan keeps everything it found.
             let findings = match secuscan_core::parser_engine::parse_output(
                 &manifest.parser,
                 &manifest.static_rules,
@@ -106,6 +118,31 @@ pub async fn execute_task(
                     return failure(sink, format!("parser error: {e}"), started).await;
                 }
             };
+            if cli.status == TaskStatus::Cancelled {
+                sink.emit(TaskEvent::Warn(format!(
+                    "cancelled — preserving {} partial finding(s) captured before the stop",
+                    findings.len()
+                )))
+                .await;
+                return TaskOutcome {
+                    status: TaskStatus::Cancelled,
+                    exit_code: cli.exit_code,
+                    output: cli.output,
+                    output_truncated: cli.truncated,
+                    findings,
+                    error: None,
+                    duration_ms: started.elapsed().as_millis(),
+                    tool_exit_nonzero: false,
+                };
+            }
+            if cli.timeout_fired {
+                sink.emit(TaskEvent::Info(format!(
+                    "reached max scan time ({}s) — completing with {} partial finding(s)",
+                    soft_timeout.map(|d| d.as_secs()).unwrap_or(0),
+                    findings.len()
+                )))
+                .await;
+            }
             complete(cli, findings, manifest, sink).await
         }
         secuscan_core::manifest::EngineSpec::Native { native, .. } => {
@@ -139,8 +176,20 @@ pub async fn execute_task(
                         findings.len()
                     )))
                     .await;
+                    // Issue #25 — a cancelled native scanner that returns its
+                    // partials must NOT be reported as Completed.
+                    let status = if cancel.is_cancelled() {
+                        sink.emit(TaskEvent::Warn(format!(
+                            "cancelled — preserving {} partial finding(s)",
+                            findings.len()
+                        )))
+                        .await;
+                        TaskStatus::Cancelled
+                    } else {
+                        TaskStatus::Completed
+                    };
                     TaskOutcome {
-                        status: TaskStatus::Completed,
+                        status,
                         exit_code: Some(0),
                         output: String::new(),
                         output_truncated: false,

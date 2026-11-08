@@ -41,10 +41,17 @@ pub async fn open(url: &str) -> DbResult<SqlitePool> {
         .connect_with(opts)
         .await?;
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| DbError::Sqlx(e.into()))?;
+    let migrations = sqlx::migrate!("./migrations");
+    if let Err(e) = migrations.run(&pool).await {
+        eprintln!("DEBUG migrations failed: {e}");
+        return Err(DbError::Sqlx(e.into()));
+    }
+    let has_detail: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = 'status_detail'")
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+    eprintln!("DEBUG status_detail column present: {has_detail}");
     Ok(pool)
 }
 

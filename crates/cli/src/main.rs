@@ -245,7 +245,7 @@ fn run_scan(
         // OOB receiver context: blind-callback tooling stays disabled
         // (Max-Parity Sprint 1.2).
         let result =
-            secuscan_exec::execute_task(&manifest, &inputs, &sink, cancel, None, None).await;
+            secuscan_exec::execute_task(&manifest, &inputs, &sink, cancel, None, None, None).await;
         // Drop the sender BEFORE awaiting the reader, otherwise the printer
         // waits forever for the channel to close (classic deadlock).
         drop(sink);

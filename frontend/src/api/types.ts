@@ -369,6 +369,9 @@ export interface Schedule {
   preset?: string
   target?: string
   interval_seconds: number
+  frequency?: string | null
+  anchor_time?: string | null
+  tz?: string | null
   enabled: boolean
   next_run_at: string
   last_run_at?: string

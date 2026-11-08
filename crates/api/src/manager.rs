@@ -32,6 +32,8 @@ struct FinishOutcome<'a> {
     output: &'a str,
     output_truncated: bool,
     stats_json: String,
+    /// Sprint 2.2 (#25): precise terminal reason; None for plain outcomes.
+    status_detail: Option<&'a str>,
 }
 
 pub struct TaskManager {
@@ -55,6 +57,7 @@ impl<'a> FinishOutcome<'a> {
             output: "",
             output_truncated: false,
             stats_json: String::new(),
+            status_detail: Some("cancelled"),
         }
     }
 }
@@ -151,6 +154,7 @@ impl TaskManager {
                             output_truncated: false,
                             exit_code: None,
                             stats_json: String::new(),
+                            status_detail: None,
                         },
                     )
                     .await;
@@ -187,6 +191,7 @@ impl TaskManager {
                             output_truncated: false,
                             exit_code: None,
                             stats_json: String::new(),
+                            status_detail: Some("auth_failed"),
                         },
                     )
                     .await;
@@ -206,10 +211,35 @@ impl TaskManager {
                 public_url: mgr.config.public_url.clone(),
             };
 
-            let outcome =
-                execute_task(&manifest, &inputs, &sink, cancel.clone(), auth, Some(oob)).await;
+            // Sprint 2.2 (#25): user-set per-scan soft cap (minutes ->
+            // seconds) — ends Completed with partial findings.
+            let max_scan_time_secs: Option<u64> = serde_json::from_str::<serde_json::Value>(
+                &task.options_json,
+            )
+            .ok()
+            .and_then(|o| o.get("max_scan_time_minutes").and_then(|v| v.as_i64()))
+            .filter(|m| (1..=1440).contains(m))
+            .map(|m| (m * 60) as u64);
+
+            let outcome = execute_task(
+                &manifest,
+                &inputs,
+                &sink,
+                cancel.clone(),
+                auth,
+                Some(oob),
+                max_scan_time_secs,
+            )
+            .await;
             let outcome = secuscan_exec::with_duration(outcome, started);
 
+            // Sprint 2.2 (#25): honest terminal detail — the runner's
+            // "timed out" error maps to the timed_out detail.
+            let status_detail: Option<&str> = outcome
+                .error
+                .as_deref()
+                .filter(|e| e.starts_with("timed out"))
+                .map(|_| "timed_out");
             mgr.finish_task(
                 &task,
                 FinishOutcome {
@@ -225,6 +255,7 @@ impl TaskManager {
                         "tool_exit_nonzero": outcome.tool_exit_nonzero,
                     })
                     .to_string(),
+                    status_detail,
                 },
             )
             .await;
@@ -331,6 +362,49 @@ impl TaskManager {
         )
         .await;
 
+        // Sprint 2.2 (#25) — auto-diff for scheduled runs: the killer
+        // monitoring loop. A scheduled occurrence that completed diffs
+        // itself against the previous completed run of the same
+        // plugin+target; the summary rides the task events and feeds the
+        // (previously dead) "diff" notification trigger, which fires only
+        // when something actually changed (new or regressed findings).
+        let mut diff_summary: Option<serde_json::Value> = None;
+        if task.schedule_id.is_some() && o.status == TaskStatus::Completed {
+            match crate::routes::diff::compute_scheduled_diff(&self.pool, task).await {
+                Some((baseline, summary)) => {
+                    let new_n = summary["new"].as_i64().unwrap_or(0);
+                    let reg_n = summary["regressed"].as_i64().unwrap_or(0);
+                    tracing::info!(
+                        "scheduled run {} diff vs {}: {} new, {} fixed, {} regressed, {} improved",
+                        task.id,
+                        baseline.id,
+                        new_n,
+                        summary["fixed"].as_i64().unwrap_or(0),
+                        reg_n,
+                        summary["improved"].as_i64().unwrap_or(0),
+                    );
+                    if new_n > 0 || reg_n > 0 {
+                        if let Err(e) = crate::notifications_engine::fire_diff_rules(
+                            &self.pool,
+                            task,
+                            &summary,
+                        )
+                        .await
+                        {
+                            tracing::warn!("diff notification dispatch failed: {e}");
+                        }
+                    }
+                    diff_summary = Some(summary);
+                }
+                None => {
+                    tracing::info!(
+                        "scheduled run {}: no baseline yet — this run becomes the baseline",
+                        task.id
+                    );
+                }
+            }
+        }
+
         // v3.0.0 — fire notification rules for this task + its findings.
         if let Err(e) =
             crate::notifications_engine::fire_for_task(&self.pool, task, o.findings).await
@@ -373,6 +447,7 @@ impl TaskManager {
                 stats_json: &o.stats_json,
                 output: o.output,
                 output_truncated: o.output_truncated,
+                status_detail: o.status_detail,
             },
         )
         .await

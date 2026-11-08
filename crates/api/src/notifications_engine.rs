@@ -29,6 +29,54 @@ use std::time::Duration;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Sprint 2.2 (#25): fire notification rules whose trigger kind is "diff" —
+/// the previously dead stub now wired from the scheduler's auto-diff path.
+/// Called only when a scheduled run's diff shows new or regressed findings.
+pub async fn fire_diff_rules(
+    db: &SqlitePool,
+    task: &TaskRow,
+    diff_summary: &Value,
+) -> Result<(), String> {
+    let rules = repo::notifications::list_rules_for_workspace(db, task.workspace_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    for rule in rules {
+        let rule_def: Value = serde_json::from_str(&rule.rules_json).unwrap_or(Value::Null);
+        let triggers = rule_def
+            .get("triggers")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        eprintln!(
+            "DEBUG fire_diff_rules: rule {} enabled={} triggers={:?}",
+            rule.id, rule.enabled, triggers
+        );
+        if !triggers.iter().any(|t| t.get("kind").and_then(|k| k.as_str()) == Some("diff")) {
+            continue;
+        }
+        let actions = rule_def
+            .get("actions")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let payload = json!({
+            "event": "scan.diff",
+            "task_id": task.id,
+            "plugin_id": task.plugin_id,
+            "target": task.target,
+            "schedule_id": task.schedule_id,
+            "diff": diff_summary,
+        });
+        for action in &actions {
+            let kind = action.get("kind").and_then(Value::as_str).unwrap_or("");
+            if let Err(e) = dispatch(db, &rule, kind, action, &payload, &task.id).await {
+                tracing::warn!("diff rule {} action {kind} failed: {e}", rule.id);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn fire_for_task(
     db: &SqlitePool,
     task: &TaskRow,
@@ -162,15 +210,23 @@ async fn dispatch(
                 let sig = hmac_sha256_hex(secret, &payload_json);
                 req = req.header("X-SecuScan-Signature", format!("sha256={sig}"));
             }
-            let resp = req.send().await.map_err(|e| e.to_string())?;
-            let code = resp.status().as_u16() as i64;
-            let ok = resp.status().is_success();
-            let body = resp.text().await.unwrap_or_default();
-            (
-                if ok { "sent" } else { "failed" },
-                Some(code),
-                if ok { None } else { Some(body) },
-            )
+            // Issue #25 — a failed SEND (DNS, timeout, refused) is a failed
+            // delivery and must be logged, not silently dropped: the `?`
+            // here previously skipped log_delivery entirely, so unreachable
+            // receivers left no trace in the delivery log.
+            match req.send().await {
+                Ok(resp) => {
+                    let code = resp.status().as_u16() as i64;
+                    let ok = resp.status().is_success();
+                    let body = resp.text().await.unwrap_or_default();
+                    (
+                        if ok { "sent" } else { "failed" },
+                        Some(code),
+                        if ok { None } else { Some(body) },
+                    )
+                }
+                Err(e) => ("failed", None, Some(e.to_string())),
+            }
         }
         "slack" | "teams" | "discord" => {
             let url = action

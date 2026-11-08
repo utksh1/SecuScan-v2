@@ -32,6 +32,11 @@ pub struct RunOpts {
     /// Non-zero exit codes the tool's contract documents as non-error
     /// (issue #11). Empty by default: any non-zero exit is a failure.
     pub ok_exit_codes: Vec<i32>,
+    /// Reporting-friendly soft cap (issue #25): when `soft_timeout` fires
+    /// before `timeout`, the run ends **Completed** with partial output
+    /// (parsed for findings) and `CliOutcome::timeout_fired` set — the
+    /// user-set `max_scan_time` semantics. None = no soft cap.
+    pub soft_timeout: Option<Duration>,
 }
 
 impl Default for RunOpts {
@@ -42,6 +47,7 @@ impl Default for RunOpts {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
             env: Vec::new(),
             ok_exit_codes: Vec::new(),
+            soft_timeout: None,
         }
     }
 }
@@ -53,6 +59,9 @@ pub struct CliOutcome {
     pub output: String,
     pub truncated: bool,
     pub error: Option<String>,
+    /// Set when the soft timeout (`max_scan_time`) terminated the run —
+    /// the caller maps it to a reporting-friendly Completed-with-partials.
+    pub timeout_fired: bool,
 }
 
 /// Run a command and stream its output as events.
@@ -64,6 +73,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
             output: String::new(),
             truncated: false,
             error: Some("empty argv".into()),
+            timeout_fired: false,
         };
     }
 
@@ -76,6 +86,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
                 output: String::new(),
                 truncated: false,
                 error: Some(format!("cannot create task working dir: {e}")),
+                timeout_fired: false,
             }
         }
     };
@@ -123,6 +134,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
                     "failed to spawn `{}`: {e} (is the tool installed and on PATH?)",
                     argv[0]
                 )),
+                timeout_fired: false,
             }
         }
     };
@@ -155,6 +167,15 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
         _ = opts.cancel.cancelled() => {
             terminate_tree(&mut child).await;
             WaitResult::Cancelled
+        }
+        _ = async {
+            match opts.soft_timeout {
+                Some(soft) => tokio::time::sleep(soft).await,
+                None => std::future::pending().await,
+            }
+        } => {
+            terminate_tree(&mut child).await;
+            WaitResult::SoftTimeout
         }
         _ = tokio::time::sleep(opts.timeout) => {
             terminate_tree(&mut child).await;
@@ -198,6 +219,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
                     output,
                     truncated,
                     error: Some("process terminated by a signal (crash or OOM kill)".into()),
+                    timeout_fired: false,
                 };
             }
             let code = code.expect("checked above");
@@ -215,6 +237,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
                     error: Some(format!(
                         "scanner exited non-zero ({code}) — tool failure; captured findings may be partial"
                     )),
+                    timeout_fired: false,
                 };
             }
             CliOutcome {
@@ -223,6 +246,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
                 output,
                 truncated,
                 error: None,
+                timeout_fired: false,
             }
         }
         WaitResult::Timeout => CliOutcome {
@@ -234,6 +258,15 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
                 "timed out after {}s and the process was killed",
                 opts.timeout.as_secs().max(1)
             )),
+            timeout_fired: false,
+        },
+        WaitResult::SoftTimeout => CliOutcome {
+            status: TaskStatus::Completed,
+            exit_code: Some(0),
+            output,
+            truncated,
+            error: None,
+            timeout_fired: true,
         },
         WaitResult::Cancelled => CliOutcome {
             status: TaskStatus::Cancelled,
@@ -241,6 +274,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
             output,
             truncated,
             error: None,
+            timeout_fired: false,
         },
         WaitResult::SpawnErr(e) => CliOutcome {
             status: TaskStatus::Failed,
@@ -248,6 +282,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
             output,
             truncated,
             error: Some(format!("wait failed: {e}")),
+            timeout_fired: false,
         },
     }
 }
@@ -255,6 +290,7 @@ pub async fn run_cli(argv: &[String], opts: RunOpts, sink: &EventSink) -> CliOut
 enum WaitResult {
     Exited(Option<i32>),
     Timeout,
+    SoftTimeout,
     Cancelled,
     SpawnErr(std::io::Error),
 }

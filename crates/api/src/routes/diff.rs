@@ -15,9 +15,9 @@ use crate::routes::tasks::load_task_for_user;
 use crate::state::SharedState;
 use axum::extract::{Path, RawQuery, State};
 use axum::Json;
+use serde_json::{json, Value};
 use secuscan_db::models::{FindingRow, TaskRow};
 use secuscan_db::repo;
-use serde_json::{json, Value};
 use std::collections::HashMap;
 
 pub fn router() -> axum::Router<SharedState> {
@@ -62,15 +62,57 @@ impl DiffStatus {
     }
 }
 
-struct DiffItem {
-    status: DiffStatus,
+pub(crate) struct DiffItem {
+    pub status: DiffStatus,
     /// Finding as seen in the current task (None for `fixed`).
     current: Option<FindingRow>,
     /// Finding as seen in the baseline task (None for `new`).
     previous: Option<FindingRow>,
 }
 
-fn compute_diff(current: &[FindingRow], previous: &[FindingRow]) -> Vec<DiffItem> {
+/// Compute the diff summary for a *just-completed scheduled run* against
+/// the previous completed run of the same plugin+target (issue #25). Returns
+/// None when there is no baseline yet (first run — nothing to diff).
+pub async fn compute_scheduled_diff(
+    pool: &sqlx::SqlitePool,
+    task: &TaskRow,
+) -> Option<(TaskRow, Value)> {
+    let baseline = repo::tasks::find_previous_run(
+        pool,
+        Some(task.user_id.as_str()),
+        &task.plugin_id,
+        task.target.as_deref(),
+        &task.created_at,
+        &task.id,
+        task.workspace_id.as_deref(),
+    )
+    .await
+    .ok()
+    .flatten()?;
+    let current = repo::findings::list_all_for_task(pool, &task.id)
+        .await
+        .ok()?;
+    let previous = repo::findings::list_all_for_task(pool, &baseline.id)
+        .await
+        .ok()?;
+    let items = compute_diff(&current, &previous);
+    let count = |label: &str| items.iter().filter(|i| i.status.label() == label).count();
+    let summary = json!({
+        "baseline_task_id": baseline.id,
+        "new": count("new"),
+        "fixed": count("fixed"),
+        "regressed": count("regressed"),
+        "improved": count("improved"),
+        "unchanged": count("unchanged"),
+        "items": items.iter().map(diff_item_to_json).collect::<Vec<_>>(),
+    });
+    Some((baseline, summary))
+}
+
+pub(crate) fn compute_diff(
+    current: &[FindingRow],
+    previous: &[FindingRow],
+) -> Vec<DiffItem> {
     let prev_map: HashMap<String, &FindingRow> =
         previous.iter().map(|f| (fingerprint(f), f)).collect();
     let cur_map: HashMap<String, &FindingRow> =

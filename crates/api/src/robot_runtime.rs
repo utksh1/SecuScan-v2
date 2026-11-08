@@ -521,7 +521,8 @@ async fn run_tool(
             auth_profile_id: None,
         report_callback: None,
             workspace_id: workspace_id.map(str::to_string),
-        };
+            max_scan_time_minutes: None,
+};
         let (task, manifest, normalized) = validate_and_create_task(state, user, &req, None, None)
             .await
             .map_err(|e| format!("task rejected for target `{target}`: {e}"))?;

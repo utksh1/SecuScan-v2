@@ -91,6 +91,9 @@ pub struct TaskRow {
     pub auth_profile_id: Option<String>,
     /// v3.0.0 — OOB callback marker (appended to payloads; correlates blind callbacks).
     pub oob_marker: Option<String>,
+    /// Sprint 2.2 (#25): precise terminal reason (timed_out | auth_failed |
+    /// max_scan_time_reached | ...); NULL for plain outcomes.
+    pub status_detail: Option<String>,
     /// v3.1.1 — VPN profile whose tunnel guaranteed this task's route.
     pub vpn_profile_id: Option<String>,
     /// v3.1.0 — Sniper exploit chain that launched this task (NULL otherwise).
@@ -265,6 +268,12 @@ pub struct ScheduleRow {
     /// Denormalized display target derived from the normalized inputs.
     pub target: Option<String>,
     pub interval_seconds: i64,
+    /// Sprint 2.2 (#25): named frequency; NULL = legacy interval behavior.
+    pub frequency: Option<String>,
+    /// 'HH:MM' wall-clock anchor in `tz`.
+    pub anchor_time: Option<String>,
+    /// IANA timezone name (default UTC when frequency is set).
+    pub tz: Option<String>,
     pub enabled: bool,
     pub next_run_at: String,
     pub last_run_at: Option<String>,

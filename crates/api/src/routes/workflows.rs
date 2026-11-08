@@ -277,7 +277,8 @@ async fn run_workflow(
             workspace_id: workspace_id.map(str::to_string),
             auth_profile_id: None,
             report_callback: None,
-        };
+            max_scan_time_minutes: None,
+};
         let (task, manifest, inputs) =
             validate_and_create_task(state, user, &req, Some(run_id), None)
                 .await

@@ -36,6 +36,10 @@ pub struct Config {
     /// Optional explicit at-rest encryption key; when unset a key file is
     /// generated under `data_dir` (see `secuscan_core::crypto`).
     pub enc_key: Option<String>,
+    /// When true, URL-targeted web scans run a 4 s reachability probe at
+    /// admission and reject unreachable targets with a clear error
+    /// (Sprint 2.2, issue #25). Default: off (zero added latency).
+    pub preflight_reachability: bool,
     /// Public base URL of this deployment (e.g. `https://oob.example.com`).
     /// Required for out-of-band (OOB) blind-vulnerability detection: the
     /// callback URLs handed to targets are built from it. When unset, tools
@@ -200,6 +204,7 @@ impl Config {
             enc_key: std::env::var("SECUSCAN_ENC_KEY")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            preflight_reachability: env_or("SECUSCAN_PREFLIGHT_REACHABILITY", "false") == "true",
             public_url: std::env::var("SECUSCAN_PUBLIC_URL")
                 .ok()
                 .map(|s| s.trim().trim_end_matches('/').to_string())

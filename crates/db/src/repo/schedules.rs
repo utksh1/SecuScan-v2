@@ -29,6 +29,11 @@ pub struct NewSchedule<'a> {
     pub preset: Option<&'a str>,
     pub target: Option<&'a str>,
     pub interval_seconds: i64,
+    /// Sprint 2.2 (#25): named frequency (hourly|daily|weekly|monthly|
+    /// quarterly|once); None = legacy interval_seconds behavior.
+    pub frequency: Option<&'a str>,
+    pub anchor_time: Option<&'a str>,
+    pub tz: Option<&'a str>,
 }
 
 /// Create a schedule. `next_run_at` is anchored to `now + interval` — the
@@ -36,6 +41,37 @@ pub struct NewSchedule<'a> {
 /// run-now endpoint for an immediate execution.
 pub async fn create(pool: &SqlitePool, s: NewSchedule<'_>) -> DbResult<ScheduleRow> {
     validate_interval(s.interval_seconds)?;
+    // Named frequency: the first anchor is the next occurrence of the
+    // anchor time; legacy interval: now + interval (issue #25).
+    let (next_run_at, frequency, anchor_time, tz) = match s.frequency {
+        Some(f) => {
+            let tz = s.tz.unwrap_or("UTC");
+            let anchor = s.anchor_time.unwrap_or("00:00");
+            let first = secuscan_core::models::compute_next_named_anchor(
+                f,
+                anchor,
+                tz,
+                &now(),
+            )
+            .ok_or_else(|| {
+                DbError::Invalid(format!(
+                    "invalid frequency/anchor/tz: {f} {anchor} {tz}"
+                ))
+            })?;
+            (
+                first,
+                Some(f.to_string()),
+                Some(anchor.to_string()),
+                Some(tz.to_string()),
+            )
+        }
+        None => (
+            secuscan_core::models::add_seconds_iso(&now(), s.interval_seconds),
+            None,
+            None,
+            None,
+        ),
+    };
     let row = ScheduleRow {
         id: new_id(),
         user_id: s.user_id.to_string(),
@@ -46,8 +82,11 @@ pub async fn create(pool: &SqlitePool, s: NewSchedule<'_>) -> DbResult<ScheduleR
         preset: s.preset.map(str::to_string),
         target: s.target.map(str::to_string),
         interval_seconds: s.interval_seconds,
+        frequency,
+        anchor_time,
+        tz,
         enabled: true,
-        next_run_at: secuscan_core::models::add_seconds_iso(&now(), s.interval_seconds),
+        next_run_at,
         last_run_at: None,
         last_task_id: None,
         last_error: None,
@@ -56,8 +95,8 @@ pub async fn create(pool: &SqlitePool, s: NewSchedule<'_>) -> DbResult<ScheduleR
     };
     sqlx::query(
         "INSERT INTO schedules (id, user_id, workspace_id, name, plugin_id, inputs_json, \
-         preset, target, interval_seconds, enabled, next_run_at, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)",
+         preset, target, interval_seconds, frequency, anchor_time, tz, enabled, next_run_at, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 1, ?13, ?14)",
     )
     .bind(&row.id)
     .bind(&row.user_id)
@@ -68,6 +107,9 @@ pub async fn create(pool: &SqlitePool, s: NewSchedule<'_>) -> DbResult<ScheduleR
     .bind(&row.preset)
     .bind(&row.target)
     .bind(row.interval_seconds)
+    .bind(&row.frequency)
+    .bind(&row.anchor_time)
+    .bind(&row.tz)
     .bind(&row.next_run_at)
     .bind(&row.created_at)
     .execute(pool)
@@ -156,18 +198,25 @@ pub struct ScheduleUpdate<'a> {
     /// Final anchor. The API layer re-anchors on interval change or
     /// re-enable; other edits keep the stored value.
     pub next_run_at: &'a str,
+    /// Sprint 2.2 (#25): named frequency fields (None = legacy interval).
+    pub frequency: Option<&'a str>,
+    pub anchor_time: Option<&'a str>,
+    pub tz: Option<&'a str>,
 }
 
 /// Full write of the mutable fields. The API layer merges the patch into
 /// the loaded row first, so `None`-able columns (preset, target, workspace)
 /// can genuinely be *cleared*, unlike a COALESCE-based partial update.
 pub async fn update(pool: &SqlitePool, id: &str, u: ScheduleUpdate<'_>) -> DbResult<ScheduleRow> {
-    validate_interval(u.interval_seconds)?;
+    if u.frequency.is_none() {
+        validate_interval(u.interval_seconds)?;
+    }
     let res = sqlx::query(
         "UPDATE schedules SET \
          name = ?1, inputs_json = ?2, preset = ?3, target = ?4, interval_seconds = ?5, \
-         enabled = ?6, workspace_id = ?7, next_run_at = ?8, updated_at = ?9 \
-         WHERE id = ?10",
+         enabled = ?6, workspace_id = ?7, next_run_at = ?8, updated_at = ?9, \
+         frequency = ?10, anchor_time = ?11, tz = ?12 \
+         WHERE id = ?13",
     )
     .bind(u.name)
     .bind(u.inputs_json)
@@ -178,6 +227,9 @@ pub async fn update(pool: &SqlitePool, id: &str, u: ScheduleUpdate<'_>) -> DbRes
     .bind(u.workspace_id)
     .bind(u.next_run_at)
     .bind(now())
+    .bind(u.frequency)
+    .bind(u.anchor_time)
+    .bind(u.tz)
     .bind(id)
     .execute(pool)
     .await?;

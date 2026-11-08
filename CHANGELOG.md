@@ -3,6 +3,69 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.7.0 -- Max-Parity Sprint 2.2: monitoring loop + honest lifecycle
+
+Closes issue #25 — the scheduler/lifecycle work package: the auto-diff
+monitoring loop, partial-findings preservation, max_scan_time, a richer
+terminal-state vocabulary, named schedule frequencies and a gated
+pre-flight probe.
+
+### Auto-diff on scheduled runs (the monitoring loop)
+
+A scheduled run that completes now **diffs itself against the previous
+completed run** of the same plugin+target (`compute_scheduled_diff`, reusing
+the 5-way diff engine with a workspace/user-scoped baseline). The summary
+(new / fixed / regressed / improved / unchanged) is logged on the task and —
+when anything actually changed — fires the previously-dead **"diff"
+notification trigger**: rules with `{ "kind": "diff" }` now receive a
+`scan.diff` webhook payload carrying the classified diff. Unchanged runs and
+first runs (no baseline) stay silent. E2E: three scheduled runs prove
+baseline→silent→silent→fire with new=1/regressed=1.
+
+### Partial findings survive cancel and time caps
+
+- Cancelling a scan now **persists the partial findings** captured before
+  the stop (CLI output is parsed regardless of terminal status; native
+  scanners returning partials on cancel are recorded as Cancelled-with-
+  findings instead of silently Completed).
+- New `max_scan_time_minutes` (1..=1440) on `POST /tasks`: a soft cap that
+  ends the run **Completed** with partial findings (reporting-friendly),
+  distinct from the hard manifest timeout which still fails.
+
+### Honest terminal states via `status_detail`
+
+`tasks.status_detail` (migration 0014) carries the precise terminal reason —
+`timed_out`, `max_scan_time_reached` (plumbed), `auth_failed` (auth-profile
+resolution failure), `cancelled` — without rebuilding the tasks CHECK
+constraint. Exposed via the task JSON. ConnectionError auto-stop and
+workflow `Skipped` remain roadmap (documented on the issue).
+
+### Named schedule frequencies
+
+`frequency` (hourly | daily | weekly | monthly | quarterly | once) +
+`anchor_time` ('HH:MM') + `tz` (IANA) on schedules; `compute_next_named_anchor`
+(chrono-tz) computes the next occurrence after each run — monthly/quarterly
+clamp to the month's last day (documented day-drift after a clamp); `once`
+schedules disable themselves after firing. Legacy `interval_seconds`
+schedules are untouched. Schedule UI: cadence select + time/timezone inputs.
+
+### Gated pre-flight reachability
+
+`SECUSCAN_PREFLIGHT_REACHABILITY=true` (default off) runs a 4 s probe
+against URL targets at admission and rejects unreachable hosts with a clear
+error instead of burning a full scan.
+
+### Webhook failure logging (found on the way)
+
+A webhook whose **send** failed (DNS, timeout, refused) previously skipped
+the delivery log entirely — unreachable receivers left no trace. Failed
+sends are now logged as failed deliveries.
+
+### Tests
+api_test 35 (+2: auto-diff monitoring loop, named frequencies), core 63
+(+5 anchor math incl. DST + month-end clamp), frontend 75, verify.mjs
+208/208 (+6 Sprint 2.2 checks).
+
 ## 4.6.0 -- Max-Parity Sprint 2.1: analyst-grade findings surface
 
 Closes issue #24 — the findings/report work package: enrichment rendering,

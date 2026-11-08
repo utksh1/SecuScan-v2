@@ -70,7 +70,22 @@ pub async fn run_due(state: &SharedState) -> Vec<DueOutcome> {
 }
 
 async fn process_one(state: &SharedState, s: &ScheduleRow, now_ts: &str) -> DueOutcome {
-    let next_anchor = add_seconds_iso(now_ts, s.interval_seconds);
+    // Sprint 2.2 (#25): named frequencies re-anchor to the next occurrence
+    // of (anchor_time, tz); legacy schedules use now + interval. `once`
+    // schedules are disabled after firing (next anchor irrelevant).
+    let next_anchor = match (&s.frequency, &s.anchor_time, &s.tz) {
+        (Some(f), anchor, tz) => {
+            secuscan_core::models::compute_next_named_anchor(
+                f.as_str(),
+                anchor.as_deref().unwrap_or("00:00"),
+                tz.as_deref().unwrap_or("UTC"),
+                now_ts,
+            )
+            .unwrap_or_else(|| add_seconds_iso(now_ts, s.interval_seconds))
+        }
+        (None, _, _) => add_seconds_iso(now_ts, s.interval_seconds),
+    };
+    let is_once = s.frequency.as_deref() == Some("once");
 
     // Overlap guard: never run two instances of the same schedule at once.
     match repo::tasks::schedule_has_active_task(&state.db, &s.id).await {
@@ -106,6 +121,9 @@ async fn process_one(state: &SharedState, s: &ScheduleRow, now_ts: &str) -> DueO
                     enabled: false,
                     workspace_id: s.workspace_id.as_deref(),
                     next_run_at: &next_anchor,
+                    frequency: s.frequency.as_deref(),
+                    anchor_time: s.anchor_time.as_deref(),
+                    tz: s.tz.as_deref(),
                 },
             )
             .await;
@@ -128,7 +146,8 @@ async fn process_one(state: &SharedState, s: &ScheduleRow, now_ts: &str) -> DueO
         workspace_id: s.workspace_id.clone(),
         auth_profile_id: None,
         report_callback: None,
-    };
+        max_scan_time_minutes: None,
+};
 
     match validate_and_create_task(state, &user, &req, None, Some(&s.id)).await {
         Ok((task, manifest, inputs)) => {
@@ -138,6 +157,26 @@ async fn process_one(state: &SharedState, s: &ScheduleRow, now_ts: &str) -> DueO
                     .await
             {
                 tracing::error!("scheduler: failed to record run for {}: {e}", s.id);
+            }
+            if is_once {
+                let _ = repo::schedules::update(
+                    &state.db,
+                    &s.id,
+                    repo::schedules::ScheduleUpdate {
+                        name: &s.name,
+                        inputs_json: &s.inputs_json,
+                        preset: s.preset.as_deref(),
+                        target: s.target.as_deref(),
+                        interval_seconds: s.interval_seconds,
+                        enabled: false,
+                        workspace_id: s.workspace_id.as_deref(),
+                        next_run_at: &next_anchor,
+                        frequency: s.frequency.as_deref(),
+                        anchor_time: s.anchor_time.as_deref(),
+                        tz: s.tz.as_deref(),
+                    },
+                )
+                .await;
             }
             DueOutcome::Launched(s.id.clone(), task.id.clone())
         }

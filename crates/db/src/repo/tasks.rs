@@ -41,6 +41,7 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
         robot_run_id: None,
         auth_profile_id: None,
         oob_marker: None,
+        status_detail: None,
         sniper_run_id: None,
         vpn_profile_id: None,
         created_at: now(),
@@ -107,7 +108,7 @@ pub async fn list(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<Vec<TaskRo
     let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail \
          FROM tasks \
          WHERE (?1 IS NULL
            OR (workspace_id IS NULL AND user_id = ?1)
@@ -189,12 +190,15 @@ pub struct FinishTask<'a> {
     pub stats_json: &'a str,
     pub output: &'a str,
     pub output_truncated: bool,
+    /// Sprint 2.2 (#25): precise terminal reason (timed_out | auth_failed |
+    /// max_scan_time_reached | ...); None for plain outcomes.
+    pub status_detail: Option<&'a str>,
 }
 
 pub async fn finish(pool: &SqlitePool, id: &str, f: FinishTask<'_>) -> DbResult<()> {
     let res = sqlx::query(
         "UPDATE tasks SET status = ?1, exit_code = ?2, error = ?3, stats_json = ?4, \
-         output = ?5, output_truncated = ?6, finished_at = ?7 WHERE id = ?8",
+         output = ?5, output_truncated = ?6, finished_at = ?7, status_detail = ?8 WHERE id = ?9",
     )
     .bind(f.status.label())
     .bind(f.exit_code)
@@ -203,6 +207,7 @@ pub async fn finish(pool: &SqlitePool, id: &str, f: FinishTask<'_>) -> DbResult<
     .bind(f.output)
     .bind(f.output_truncated)
     .bind(now())
+    .bind(f.status_detail)
     .bind(id)
     .execute(pool)
     .await?;
@@ -258,7 +263,7 @@ pub async fn recent_scoped(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
          workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, \
-         created_at, started_at, finished_at \
+         created_at, started_at, finished_at, status_detail \
          FROM tasks WHERE (?1 IS NULL OR
            (user_id = ?1 AND (workspace_id IS NULL OR EXISTS (
              SELECT 1 FROM workspaces w WHERE w.id = workspace_id
@@ -311,7 +316,7 @@ pub async fn find_previous_run(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail \
          FROM tasks t \
          WHERE t.plugin_id = ?1 AND t.target IS ?2 AND t.status = 'completed' \
            AND t.id != ?3 AND t.created_at <= ?4 AND t.workspace_id IS ?6 \
@@ -345,7 +350,7 @@ pub async fn list_for_schedule(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail \
          FROM tasks WHERE schedule_id = ?1 \
          ORDER BY created_at DESC LIMIT ?2",
     )

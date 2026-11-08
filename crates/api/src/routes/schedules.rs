@@ -40,8 +40,20 @@ pub struct CreateScheduleRequest {
     pub inputs: BTreeMap<String, Value>,
     #[serde(default)]
     pub preset: Option<String>,
-    /// Seconds between automated runs (300..=31_536_000).
+    /// Seconds between automated runs (300..=31_536_000). Ignored when
+    /// `frequency` is set.
     pub interval_seconds: i64,
+    /// Sprint 2.2 (#25): named frequency — hourly|daily|weekly|monthly|
+    /// quarterly|once. When set, `anchor_time`+`tz` define the cadence and
+    /// `interval_seconds` is ignored.
+    #[serde(default)]
+    pub frequency: Option<String>,
+    /// 'HH:MM' wall-clock anchor in `tz` (default "00:00").
+    #[serde(default)]
+    pub anchor_time: Option<String>,
+    /// IANA timezone name (default "UTC").
+    #[serde(default)]
+    pub tz: Option<String>,
     /// Consent captured once at creation; every automated run re-checks
     /// policy but not the checkbox.
     #[serde(default)]
@@ -66,7 +78,19 @@ async fn create(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     user.require_scanner()?;
     validate_name(&req.name)?;
-    repo::schedules::validate_interval(req.interval_seconds).map_err(ApiError::from)?;
+    const VALID_FREQUENCIES: &[&str] = &[
+        "hourly", "daily", "weekly", "monthly", "quarterly", "once",
+    ];
+    if let Some(f) = &req.frequency {
+        if !VALID_FREQUENCIES.contains(&f.as_str()) {
+            return Err(ApiError::BadRequest(format!(
+                "frequency must be one of {}",
+                VALID_FREQUENCIES.join("|")
+            )));
+        }
+    } else {
+        repo::schedules::validate_interval(req.interval_seconds).map_err(ApiError::from)?;
+    }
 
     // Full admission pipeline (plugin/policy/consent) without persisting a
     // task — a schedule may only be created for a request that would be
@@ -79,7 +103,8 @@ async fn create(
         auth_profile_id: None,
         report_callback: None,
         workspace_id: req.workspace_id.clone(),
-    };
+        max_scan_time_minutes: None,
+};
     let admitted = admit_request(&state, &user, &task_req).await?;
 
     let row = repo::schedules::create(
@@ -94,6 +119,9 @@ async fn create(
             preset: req.preset.as_deref(),
             target: admitted.target.as_deref(),
             interval_seconds: req.interval_seconds,
+            frequency: req.frequency.as_deref(),
+            anchor_time: req.anchor_time.as_deref(),
+            tz: req.tz.as_deref(),
         },
     )
     .await?;
@@ -111,6 +139,9 @@ pub fn schedule_to_json(s: &ScheduleRow) -> Value {
         "preset": s.preset,
         "target": s.target,
         "interval_seconds": s.interval_seconds,
+        "frequency": s.frequency,
+        "anchor_time": s.anchor_time,
+        "tz": s.tz,
         "enabled": s.enabled,
         "next_run_at": s.next_run_at,
         "last_run_at": s.last_run_at,
@@ -201,6 +232,12 @@ struct UpdateScheduleRequest {
     #[serde(default)]
     interval_seconds: Option<i64>,
     #[serde(default)]
+    frequency: Option<Option<String>>,
+    #[serde(default)]
+    anchor_time: Option<Option<String>>,
+    #[serde(default)]
+    tz: Option<Option<String>>,
+    #[serde(default)]
     enabled: Option<bool>,
     #[serde(default, deserialize_with = "double_option")]
     workspace_id: Option<Option<String>>,
@@ -265,7 +302,8 @@ async fn update(
                 auth_profile_id: None,
         report_callback: None,
                 workspace_id: workspace_id.clone(),
-            };
+                max_scan_time_minutes: None,
+};
             let admitted = admit_request(&state, &user, &task_req).await?;
             (
                 serde_json::to_string(&admitted.normalized).unwrap_or_else(|_| "{}".into()),
@@ -280,15 +318,48 @@ async fn update(
             )
         };
 
+    let frequency = match &req.frequency {
+        Some(f) => f.clone(),
+        None => existing.frequency.clone(),
+    };
+    let anchor_time = match &req.anchor_time {
+        Some(a) => a.clone(),
+        None => existing.anchor_time.clone(),
+    };
+    let tz = match &req.tz {
+        Some(t) => t.clone(),
+        None => existing.tz.clone(),
+    };
     let interval = req.interval_seconds.unwrap_or(existing.interval_seconds);
     let enabled = req.enabled.unwrap_or(existing.enabled);
 
-    // Re-anchor when the cadence restarts: a changed interval, or a
-    // disabled -> enabled transition. Other edits keep the stored anchor.
+    // Re-anchor when the cadence restarts: a changed interval/frequency/
+    // anchor/tz, or a disabled -> enabled transition. Other edits keep the
+    // stored anchor. Named frequencies compute the next occurrence from the
+    // anchor; legacy schedules use now + interval.
     let interval_changed = req.interval_seconds.is_some() && interval != existing.interval_seconds;
+    let cadence_changed = req.frequency.is_some()
+        || req.anchor_time.is_some()
+        || req.tz.is_some()
+        || frequency != existing.frequency;
     let re_enabled = req.enabled == Some(true) && !existing.enabled;
-    let next_run_at = if interval_changed || re_enabled {
-        add_seconds_iso(&secuscan_db::now(), interval)
+    let next_run_at = if interval_changed || cadence_changed || re_enabled {
+        match &frequency {
+            Some(f) => {
+                let anchor = anchor_time.as_deref().unwrap_or("00:00");
+                let zone = tz.as_deref().unwrap_or("UTC");
+                secuscan_core::models::compute_next_named_anchor(
+                    f,
+                    anchor,
+                    zone,
+                    &secuscan_db::now(),
+                )
+                .ok_or_else(|| {
+                    ApiError::BadRequest(format!("invalid frequency/anchor/tz: {f} {anchor} {zone}"))
+                })?
+            }
+            None => add_seconds_iso(&secuscan_db::now(), interval),
+        }
     } else {
         existing.next_run_at.clone()
     };
@@ -305,6 +376,9 @@ async fn update(
             enabled,
             workspace_id: workspace_id.as_deref(),
             next_run_at: &next_run_at,
+            frequency: frequency.as_deref(),
+            anchor_time: anchor_time.as_deref(),
+            tz: tz.as_deref(),
         },
     )
     .await?;
@@ -354,7 +428,8 @@ async fn run_now(
         auth_profile_id: None,
         report_callback: None,
         workspace_id: s.workspace_id.clone(),
-    };
+        max_scan_time_minutes: None,
+};
     let (task, manifest, inputs) =
         crate::routes::tasks::validate_and_create_task(&state, &user, &task_req, None, Some(&s.id))
             .await?;

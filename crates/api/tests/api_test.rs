@@ -241,6 +241,7 @@ max_per_hour = 0
         ai_base_url: None,
         ai_api_key: None,
         enc_key: None,
+        preflight_reachability: false,
         // Max-Parity Sprint 1.2 — arm OOB so scanner-generated callback URLs
         // point at a reachable (if fictional) host; the receiver-level test
         // below drives the real server directly.
@@ -4091,6 +4092,7 @@ async fn oob_scanner_fails_loudly_when_public_url_missing() {
         tokio_util::sync::CancellationToken::new(),
         None,
         Some(secuscan_exec::native::OobCtx::default()),
+        None,
     )
     .await;
     assert_eq!(outcome.status, secuscan_core::models::TaskStatus::Failed);
@@ -4465,4 +4467,188 @@ async fn report_callback_delivers_signed_payload_on_finish() {
         Some(format!("sha256={expected}").as_str()),
         "signature is a valid HMAC of the body"
     );
+}
+
+// --- Max-Parity Sprint 2.2 (#25): scheduler + lifecycle ------------------------------
+// Auto-diff on scheduled runs (the monitoring loop): two scheduled runs of
+// the deterministic difftest plugin produce a diff summary, fire the
+// previously-dead "diff" notification trigger, and record run 1 as baseline.
+#[tokio::test]
+async fn scheduled_runs_auto_diff_and_fire_diff_notifications() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // A diff notification rule: fires when a scheduled run's diff shows
+    // new or regressed findings.
+    let resp = c
+        .post(format!("{}/notifications", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "diff-watcher",
+            "rules": {
+                "triggers": [{ "kind": "diff" }],
+                "actions": [{ "kind": "webhook", "url": "http://diff-receiver.test/hook", "secret": "d" }],
+            },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201, "diff rule created");
+
+    // Schedule difftest (run1 findings: A crit, B high, D low, E crit).
+    let resp = c
+        .post(format!("{}/schedules", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "nightly-diff",
+            "plugin_id": "difftest",
+            "inputs": { "target": "diff-target.test", "mode": "run1" },
+            "interval_seconds": 3600,
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let schedule: serde_json::Value = resp.json().await.unwrap();
+    let sched_id = schedule["id"].as_str().unwrap().to_string();
+
+    // Run 1: no baseline — becomes the baseline, no diff notification.
+    backdate_schedule(&s, &sched_id).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    assert!(matches!(outcomes[0], secuscan_api::scheduler::DueOutcome::Launched(_, _)));
+    let secuscan_api::scheduler::DueOutcome::Launched(_, task1_id) = &outcomes[0] else { unreachable!() };
+    let task1_id = task1_id.clone();
+    let t1 = wait_task_terminal(&s, &task1_id).await;
+    assert_eq!(t1.status, "completed");
+    // (Run 1 has no baseline — nothing fires; asserted via the per-rule log
+    // at the end when we can address it by id.)
+
+    // Run 2 (mode stays run1 in the stored inputs — the second occurrence
+    // re-runs run1 → all unchanged → no notification).
+    backdate_schedule(&s, &sched_id).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    let secuscan_api::scheduler::DueOutcome::Launched(_, task2_id) = &outcomes[0] else { unreachable!() };
+    wait_task_terminal(&s, task2_id).await;
+
+    // Run 3: patch the schedule inputs to run2 (B critical, C medium, D low,
+    // E low) → B regressed + C new vs run1's baseline → diff notification.
+    let resp = c
+        .patch(format!("{}/schedules/{}", s.base, sched_id))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "inputs": { "target": "diff-target.test", "mode": "run2" },
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    backdate_schedule(&s, &sched_id).await;
+    let outcomes = secuscan_api::scheduler::run_due(&s.state).await;
+    let secuscan_api::scheduler::DueOutcome::Launched(_, task3_id) = &outcomes[0] else { unreachable!() };
+    let task3_id = task3_id.clone();
+    let t3 = wait_task_terminal(&s, &task3_id).await;
+    assert_eq!(t3.status, "completed");
+
+    // Fetch the diff-watcher rule's delivery log: both the runtime auto-diff
+    // fire and any manual probing land here (webhook to diff-receiver.test
+    // fails DNS — the failure itself is the logged delivery).
+    let rules: serde_json::Value = c
+        .get(format!("{}/notifications", s.base))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let rule_id = rules["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "diff-watcher")
+        .expect("diff-watcher rule exists")["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let log: serde_json::Value = c
+        .get(format!("{}/notifications/{}/log", s.base, rule_id))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let diff_events: Vec<_> = log["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["task_id"] == task3_id && e["payload"]["event"] == "scan.diff")
+        .collect();
+    assert!(
+        !diff_events.is_empty(),
+        "diff notification fired for changed scheduled run"
+    );
+    // The payload carries the diff summary with the classified changes.
+    let payload = &diff_events[0]["payload"];
+    assert_eq!(payload["diff"]["new"], 1, "one new finding (C)");
+    assert_eq!(payload["diff"]["regressed"], 1, "B regressed high->critical");
+    // Runs 1 (no baseline) and 2 (unchanged) fired nothing.
+    let earlier = log["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["task_id"].as_str().map(|t| t == task1_id || t == task2_id).unwrap_or(false))
+        .count();
+    assert_eq!(earlier, 0, "unchanged runs do not fire diff notifications");
+}
+
+// Named schedule frequencies: daily+anchor+tZ produces a computed anchor.
+#[tokio::test]
+async fn schedules_support_named_frequencies() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    let resp = c
+        .post(format!("{}/schedules", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "daily-2300",
+            "plugin_id": "port-scanner",
+            "inputs": { "target": "127.0.0.1:1" },
+            "interval_seconds": 3600, // ignored when frequency is set
+            "frequency": "daily",
+            "anchor_time": "23:59",
+            "tz": "UTC",
+            "consent_granted": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let sched: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(sched["frequency"], "daily");
+    assert_eq!(sched["anchor_time"], "23:59");
+    let next = sched["next_run_at"].as_str().unwrap();
+    assert!(
+        next.contains("T23:59:00"),
+        "next anchor is the next 23:59Z occurrence: {next}"
+    );
+
+    // Invalid frequency rejected.
+    let resp = c
+        .post(format!("{}/schedules", s.base))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "name": "bad",
+            "plugin_id": "port-scanner",
+            "inputs": { "target": "127.0.0.1:1" },
+            "interval_seconds": 3600,
+            "frequency": "whenever",
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
 }

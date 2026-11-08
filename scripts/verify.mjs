@@ -929,6 +929,72 @@ async function main() {
     await req("DELETE", `/tasks/${t21b.id}`, { token });
   }
 
+  // --- Max-Parity Sprint 2.2: scheduler + lifecycle -----------------------------------
+  section("Max-Parity Sprint 2.2 scheduler (named frequencies, max_scan_time, status_detail)");
+  {
+    const nf = await req("POST", "/schedules", {
+      token,
+      body: {
+        name: "verify-daily",
+        plugin_id: "port-scanner",
+        inputs: { target: "127.0.0.1:1" },
+        interval_seconds: 3600, // ignored when frequency is set
+        frequency: "daily",
+        anchor_time: "23:59",
+        tz: "UTC",
+        consent_granted: true,
+      },
+    });
+    ok(nf.status === 201 && nf.json.frequency === "daily", "named-frequency schedule created");
+    ok(
+      (nf.json.next_run_at || "").includes("T23:59:00"),
+      `next anchor is the next 23:59Z occurrence (got ${nf.json.next_run_at})`,
+    );
+    const badFreq = await req("POST", "/schedules", {
+      token,
+      body: {
+        name: "verify-bad-freq",
+        plugin_id: "port-scanner",
+        inputs: { target: "127.0.0.1:1" },
+        interval_seconds: 3600,
+        frequency: "whenever",
+        consent_granted: true,
+      },
+    });
+    ok(badFreq.status === 400, "unknown frequency rejected");
+    await req("DELETE", `/schedules/${nf.json.id}`, { token });
+
+    // max_scan_time validation + the field rides to options.
+    const badCap = await req("POST", "/tasks", {
+      token,
+      body: {
+        plugin_id: "port-scanner",
+        inputs: { target: "127.0.0.1:1" },
+        consent_granted: true,
+        max_scan_time_minutes: 5000,
+      },
+    });
+    ok(badCap.status === 400, "max_scan_time_minutes out of range rejected");
+    const capped = await req("POST", "/tasks", {
+      token,
+      body: {
+        plugin_id: "port-scanner",
+        inputs: { target: "127.0.0.1:1" },
+        consent_granted: true,
+        max_scan_time_minutes: 60,
+      },
+    });
+    ok(capped.status === 201, "max_scan_time_minutes accepted");
+    const cappedTask = (await req("GET", "/tasks", { token })).json.items.find(
+      (t) => t.id === capped.json.id,
+    );
+    ok(
+      cappedTask?.options?.max_scan_time_minutes === 60,
+      "cap recorded on the task options",
+    );
+    await req("DELETE", `/tasks/${capped.json.id}`, { token });
+  }
+
   // --- People Hunter ---------------------------------------------------------------
   section("People Hunter");
   const { status: ph, json: pht } = await req("POST", "/tasks", {
