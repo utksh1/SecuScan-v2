@@ -53,6 +53,44 @@ db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
 dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
 exec 121, mcp 7, frontend 75), verify.mjs 214/214.
 
+## 4.17.0 -- DNS OOB receiver: blind-vulnerability detection via DNS callbacks
+
+The last P2 issue (issue #36): a lightweight DNS server (`secuscan-oob-dns`)
+receives out-of-band callback queries for blind-vulnerability detection
+(Log4Shell JNDI, MySQL UNC, SSRF via DNS subdomain).
+
+### How it works
+
+The server listens on UDP (configurable port, default 5353 for
+non-privileged; point NS delegation at a port-forward to 53). Every DNS
+query that reaches it is:
+
+1. Parsed (qname, query type, source IP)
+2. The OOB task marker is extracted from the qname labels
+3. Correlated to the originating scan task via the marker → task lookup
+4. Recorded as an OOB hit in the same `oob_hits` table as HTTP callbacks
+5. A validated finding is auto-opened on the originating task
+
+### Configuration
+
+| Env | Default | Effect |
+|-----|---------|--------|
+| `SECUSCAN_OOB_DNS_PORT` | `5353` | UDP port to listen on |
+| `SECUSCAN_OOB_DNS_DOMAIN` | `oob.secuscan.local` | Delegation domain |
+| `SECUSCAN_OOB_DNS_A_RECORD` | `127.0.0.1` | A record response address |
+| `SECUSCAN_OOB_DNS_TXT_RECORD` | `secuscan-oob-receiver` | TXT record response content |
+
+### Deployment
+
+Docker Compose service included (`oob-dns`, port 5353/udp). DEPLOYMENT.md
+documents NS delegation for a real domain (create NS records pointing
+`*.oob.example.com` at the server). TTL purge applies to DNS handler hits
+through the same daily maintenance pass as HTTP handlers.
+
+### Tests
+Workspace green (api lib 90, api_test 37, core 80, exec 140, mcp 7,
+oob_dns builds, frontend 75).
+
 ## 4.16.0 -- Recon depth: subdomain permutations, CT resolution, record harvest
 
 Completes the recon-depth items (issue #30, the last Phase 2 scanner-depth

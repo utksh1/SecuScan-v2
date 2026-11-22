@@ -210,3 +210,28 @@ SECUSCAN_WORKER_IDLE_EXIT=300 ./target/release/secuscan-worker
   the severity threshold exist or the task fails.
 - Cross-host fleets (Redis-backed queue) remain roadmap; this round ships
   shared-DB multi-process execution on one host.
+
+
+## DNS OOB receiver (Sprint 4.3, issue #36)
+
+A lightweight DNS server receives out-of-band callback queries for blind
+vulnerability detection (Log4Shell JNDI lookups, MySQL UNC paths, SSRF via
+DNS subdomain). It listens on a configurable UDP port (default 5353 — point
+NS delegation at a port-forward to 53).
+
+```bash
+SECUSCAN_DB_URL=sqlite://./data/secuscan.db \
+SECUSCAN_OOB_DNS_PORT=5353 \
+SECUSCAN_OOB_DNS_DOMAIN=oob.example.com \
+SECUSCAN_OOB_DNS_A_RECORD=<public-ip> \
+./target/release/secuscan-oob-dns
+```
+
+To delegate: create NS records in your DNS zone pointing
+`*.oob.example.com` at the server running `secuscan-oob-dns`. Every query
+that reaches the server is recorded as an OOB hit, correlated to the
+scan task via the embedded marker, and auto-opens a validated finding.
+
+Docker Compose: add the service with `ports: ["5353:5353/udp"]` and the
+same `SECUSCAN_DB_URL`. TTL purge applies to DNS handler hits through the
+same daily maintenance pass as HTTP handlers.

@@ -22,3 +22,18 @@ services:
 
 volumes:
   secuscan-data:
+
+  oob-dns:
+    image: secuscan-server:latest
+    entrypoint: ["/usr/local/bin/secuscan-oob-dns"]
+    environment:
+      - SECUSCAN_DB_URL=sqlite:///data/secuscan.db?mode=rwc
+      - SECUSCAN_OOB_DNS_PORT=5353
+      - SECUSCAN_OOB_DNS_DOMAIN=oob.example.com
+      - SECUSCAN_OOB_DNS_A_RECORD=${SECUSCAN_PUBLIC_IP:-127.0.0.1}
+    ports:
+      - "5353:5353/udp"
+    volumes:
+      - secuscan-data:/data
+    depends_on:
+      - secuscan

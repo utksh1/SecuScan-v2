@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/oob_dns",
     "crates/worker",
     "crates/core",
     "crates/exec",
