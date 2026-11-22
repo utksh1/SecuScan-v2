@@ -151,6 +151,8 @@ impl NativeScanner for WebsiteScanner {
             .and_then(|o| o.marker.clone())
             .unwrap_or_else(|| format!("ptt{}", uuid_like()));
         let mut findings = Vec::new();
+        // Sprint 3.2 (#31): soft-404 classifier skip counter for the summary.
+        let mut soft404_skipped = 0usize;
         let mut visited: BTreeSet<String> = BTreeSet::new();
         let mut queue = vec![target.clone()];
         let mut forms: Vec<(String, String, Vec<String>)> = Vec::new();
@@ -305,10 +307,19 @@ impl NativeScanner for WebsiteScanner {
                 continue;
             }
             let body = resp.text().await.unwrap_or_default();
-            if is_soft_404(&body) {
+            // Sprint 3.2 (#31): feature-based soft-404 classification with
+            // probability + label, replacing the 4-line keyword heuristic.
+            // Partial keeps the finding but demotes it (uncertain).
+            let s404 = secuscan_core::soft404::classify_body(&body, Some(&path));
+            if s404.label == secuscan_core::soft404::Soft404Label::Hit {
+                soft404_skipped += 1;
                 continue;
             }
-            let sev = if path.contains(".env") || path.contains(".git") || path.contains("phpinfo")
+            let sev = if s404.label == secuscan_core::soft404::Soft404Label::Partial {
+                // Ambiguous page: keep the finding but demote to Info so an
+                // uncertain classification cannot cry wolf.
+                Severity::Info
+            } else if path.contains(".env") || path.contains(".git") || path.contains("phpinfo")
             {
                 Severity::High
             } else {
@@ -566,6 +577,14 @@ impl NativeScanner for WebsiteScanner {
             }
         }
 
+        if soft404_skipped > 0 {
+            ctx.sink
+                .emit(crate::events::TaskEvent::Info(format!(
+                    "soft-404 classifier skipped {soft404_skipped} noise page(s) during discovery"
+                )))
+                .await;
+        }
+
         findings.extend(super::dast_engine::run_active(&client, &target, &ctx.cancel).await);
 
         // Max-Parity Sprint 1.2 (2.4) — fire the blind OOB probes once the
@@ -782,9 +801,11 @@ pub fn append_query(url: &str, key: &str, value: &str) -> String {
     }
 }
 
+/// Legacy heuristic kept for compatibility; the feature-based classifier
+/// (Sprint 3.2, #31) now owns the decision at the call site. This predicate
+/// delegates to it so any remaining caller upgrades transparently.
 pub fn is_soft_404(body: &str) -> bool {
-    let l = body.to_ascii_lowercase();
-    l.contains("not found") && body.len() < 800 && !l.contains("<form")
+    secuscan_core::soft404::is_likely_soft_404(body, None)
 }
 
 pub fn looks_like_sql_error(body: &str) -> bool {

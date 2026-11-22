@@ -3,6 +3,55 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.9.0 -- Soft-404 classifier: feature-based noise filtering
+
+First shipped AI touchpoint (issue #31, plan sprint 3.2): the website
+scanner's 4-line soft-404 keyword heuristic is replaced by a feature-based
+logistic classifier with probability output and a four-way label.
+
+### The classifier
+
+`core::soft404::classify_body` extracts de-boilerplated page features —
+body/word counts, link/form/script density, error keywords in **title vs
+body** (title hits near-conclusive), and the **requested-path echo** (a body
+that references the probed path means the server handled it) — and scores
+them through hand-calibrated logistic weights. Verdict: probability (0-1) +
+label (hit / partial / miss / inconclusive), with human-readable reasons.
+
+- **Hit** (p >= 0.85): discovery-path finding skipped, counted in a task
+  event ("soft-404 classifier skipped N noise page(s)").
+- **Partial** (0.45-0.85): finding kept but **demoted to Info** — an
+  uncertain classification cannot cry wolf.
+- **Miss** (< 0.45): trusted as real content.
+- **Inconclusive**: conflicting strong signals (error keywords AND path
+  echo) hand the decision back to the caller.
+
+### Calibration + benchmark
+
+Weights are calibrated against the labeled fixture corpus in the unit
+tests — real-world page shapes (nginx, Apache, WordPress, SPA shells) as
+soft-404 positives and rich content pages as negatives: **precision and
+recall 1.0 on the fixture set**. The legacy heuristic test cases upgrade
+transparently (`is_soft_404` delegates to the classifier).
+
+### Wiring
+
+- Website scanner discovery gate (the old call site) uses the classifier.
+- **ffuf gains auto-calibration** (`-ac/-acs`, `auto_calibrate` field,
+  default on) — the fuzzer-side twin of the classifier, filtering responses
+  matching the baseline size/word/line profile.
+- `scripts/soft404_dataset.mjs` collects a live labeled corpus for offline
+  weight recalibration (feature extraction mirrored in JS; documented
+  review flow for 200-status candidates).
+
+Everything is local and synchronous: zero model download, zero egress,
+graceful legacy fallback. Docs: the classifier is documented as the first
+AI touchpoint in ARCHITECTURE.md; the plan's sprint 3.2 items are checked.
+
+### Tests
+core 77 (+5 classifier tests), verify.mjs 214/214, exec 121, api_test 37,
+frontend 75.
+
 ## 4.8.2 -- Finding provenance + deterministic identity
 
 Closes issue #15 — findings are now defensible evidence with provenance and

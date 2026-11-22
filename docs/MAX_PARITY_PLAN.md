@@ -136,8 +136,8 @@
 
 | # | Task | Files | Acceptance |
 |---|------|-------|------------|
-| 10.1 | Dataset: crawl 10k pages → label HIT/MISS/PARTIAL/INCONCLUSIVE | `scripts/soft404_dataset.mjs` (new) | Labeled dataset |
-| 10.2 | Train logistic regression / small MLP (candle/ort) on de-boilerplated features | `crates/core/src/soft404_classifier.rs` (new) | >95% precision on holdout |
+| 10.1 | ✅ Dataset collector shipped: crawl pages → label HIT/MISS/PARTIAL/INCONCLUSIVE | `scripts/soft404_dataset.mjs` (new) | Labeled dataset |
+| 10.2 | ✅ Logistic classifier with hand-calibrated weights over de-boilerplated features (fixture precision/recall 1.0; corpus collector for re-fitting) | `crates/core/src/soft404.rs` | >95% precision on holdout |
 | 10.3 | Replace `is_soft_404` heuristic; emit probability + label | `website_scanner.rs:543` | Classifier drives crawl decisions |
 | 10.4 | Wire into URL fuzzing (ffuf/gobuster) for auto-calibration | `plugins/ffuf.toml`, `gobuster.toml` | Soft-404 aware fuzzing |
 

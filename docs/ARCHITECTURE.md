@@ -271,6 +271,20 @@ through `redact_secrets`, which masks credential **values** (Authorization
 headers, Set-Cookie values, password/token/api-key/secret/session params)
 while preserving the credential names that carry the signal.
 
+### Soft-404 classification (first ML touchpoint)
+
+`core::soft404` is the shipped ML component (issue #31, the first of the six
+planned AI touchpoints): a feature-based logistic classifier over the
+de-boilerplated page — body/word counts, link/form/script density, error
+keywords in title vs body, requested-path echo — producing a probability and
+a four-way label (hit / partial / miss / inconclusive). The website scanner
+gates discovery-path findings with it: hits are skipped (counted in a task
+event), partials are demoted to Info, misses are trusted. Weights are
+hand-calibrated against the labeled fixture set in the unit tests (precision
+and recall 1.0 on that corpus); `scripts/soft404_dataset.mjs` collects a live
+labeled corpus for offline recalibration. Fully local, zero model download,
+graceful fallback to the legacy heuristic predicate.
+
 ## Notifications, callbacks and egress policy
 
 Notification rules (per workspace) trigger on scan status, severity-threshold

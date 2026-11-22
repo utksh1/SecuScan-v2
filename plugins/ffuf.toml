@@ -32,6 +32,11 @@ argv = [
   "-w", "{wordlist}",
   "-mc", "{match_codes}",
   "-t", "{threads}",
+  # Sprint 3.2 (#31): ffuf's own auto-calibration filters responses that
+  # match the baseline size/word/line profile — the fuzzer-side twin of the
+  # website scanner's soft-404 classifier (both fight 404 noise).
+  "--if:auto_calibrate:then:-ac",
+  "--if:auto_calibrate:then:-acs",
   "--if:recursion:then:-recursion",
   "--if:recursion:then:-recursion-depth",
   "--if:recursion:then:{recursion_depth}",
@@ -73,6 +78,13 @@ type = "integer"
 default = 40
 min = 1
 max = 200
+
+[[fields]]
+id = "auto_calibrate"
+label = "Auto-calibrate filters"
+type = "boolean"
+default = true
+help = "ffuf filters responses matching the baseline size/word/line profile (-ac) — removes soft-404 noise from results."
 
 [[fields]]
 id = "recursion"

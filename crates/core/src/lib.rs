@@ -19,6 +19,7 @@ pub mod manifest;
 pub mod models;
 pub mod parser_engine;
 pub mod net_scope;
+pub mod soft404;
 pub mod policy;
 pub mod template;
 pub mod validate;
