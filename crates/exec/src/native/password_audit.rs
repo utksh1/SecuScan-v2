@@ -15,9 +15,9 @@ use super::http_headers::build_client;
 use super::{get_i64_or, get_str_or, NativeCtx, NativeScanner};
 use async_trait::async_trait;
 use secuscan_core::models::{Finding, FindingKind, Severity};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEFAULT_PAIRS: &str = include_str!("default_creds.txt");
 
@@ -50,11 +50,32 @@ impl NativeScanner for PasswordAuditScanner {
         );
         let pairs = load_pairs(get_str_or(inputs, "wordlist", ""))?;
         let protocol = get_str_or(inputs, "protocol", "http-basic");
+        let mode = get_str_or(inputs, "mode", "dictionary");
+        let delay_ms = get_i64_or(inputs, "delay_ms", 0).clamp(0, 600_000) as u64;
+        let lockout_pause_ms = get_i64_or(inputs, "lockout_pause_ms", 0).clamp(0, 600_000) as u64;
+        let attempts_per_period = get_i64_or(inputs, "attempts_per_period", 0).clamp(0, 50_000) as usize;
 
         let client = build_client(false, timeout)?;
 
         if protocol == "http-form" {
             return run_form(&client, &target, inputs, &pairs, ctx).await;
+        }
+
+        // Sprint 2.3 (#27): network protocol audit — native clients for the
+        // text-friendly protocols; hydra for the binary ones (SSH/SMB/RDP/VNC).
+        if let Some((host, port)) = parse_protocol_target(&target, &protocol) {
+            return run_protocol_audit(
+                &protocol,
+                &host,
+                port,
+                &pairs,
+                mode,
+                delay_ms,
+                lockout_pause_ms,
+                attempts_per_period,
+                ctx,
+            )
+            .await;
         }
 
         // Sanity: is the target actually Basic-auth protected? If the first
@@ -350,5 +371,272 @@ mod tests {
             "Welcome — logout"
         ));
         assert!(!form_login_accepted(401, "", "https://app/login", ""));
+    }
+}
+
+// --- Sprint 2.3 (#27): network protocol engine --------------------------------------
+
+/// Known protocol → default port map for the target parser.
+const PROTOCOL_PORTS: &[(&str, u16)] = &[
+    ("redis", 6379),
+    ("ftp", 21),
+    ("telnet", 23),
+    ("mysql", 3306),
+    ("postgresql", 5432),
+    ("mqtt", 1883),
+    ("docker", 2375),
+    ("winrm", 5985),
+    ("stomp", 61613),
+    ("http-basic", 80),
+];
+
+/// Parse "host[:port]" (or URL) plus the protocol name into (host, port),
+/// falling back to the protocol's default port.
+fn parse_protocol_target(target: &str, protocol: &str) -> Option<(String, u16)> {
+    let host = if let Ok(u) = url::Url::parse(target) {
+        u.host_str().unwrap_or("").to_string()
+    } else {
+        target
+            .split("://")
+            .last()
+            .unwrap_or(target)
+            .split('/')
+            .next()
+            .unwrap_or(target)
+            .to_string()
+    };
+    // Strip a trailing :port when present (IPv6 brackets unhandled — the
+    // common target forms are host, host:port, or URLs).
+    let (host, port) = if let Some((h, p)) = host.rsplit_once(':') {
+        if let Ok(port) = p.parse::<u16>() {
+            (h.to_string(), port)
+        } else {
+            (host.clone(), 0)
+        }
+    } else {
+        (host.clone(), 0)
+    };
+    if host.is_empty() {
+        return None;
+    }
+    let port = if port > 0 {
+        port
+    } else {
+        PROTOCOL_PORTS
+            .iter()
+            .find(|(p, _)| *p == protocol)
+            .map(|(_, port)| *port)?
+    };
+    Some((host, port))
+}
+
+/// Spray pacing state machine: after `attempts_per_period` attempts, pause
+/// `lockout_pause_ms` (account-lockout avoidance) plus a fixed `delay_ms`
+/// between attempts.
+#[derive(Debug)]
+struct Pacer {
+    delay_ms: u64,
+    lockout_pause_ms: u64,
+    attempts_per_period: usize,
+    attempted: usize,
+    last_pause: Instant,
+}
+
+impl Pacer {
+    fn new(delay_ms: u64, lockout_pause_ms: u64, attempts_per_period: usize) -> Self {
+        Pacer {
+            delay_ms,
+            lockout_pause_ms,
+            attempts_per_period,
+            attempted: 0,
+            last_pause: Instant::now(),
+        }
+    }
+
+    async fn wait(&mut self) {
+        if self.delay_ms > 0 {
+            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+        }
+        if self.attempts_per_period > 0
+            && self.attempted > 0
+            && self.attempted % self.attempts_per_period == 0
+            && self.lockout_pause_ms > 0
+        {
+            tokio::time::sleep(Duration::from_millis(self.lockout_pause_ms)).await;
+            self.last_pause = Instant::now();
+        }
+        self.attempted += 1;
+    }
+}
+
+/// Run a single credential against the named protocol client.
+async fn try_protocol(
+    protocol: &str,
+    host: &str,
+    port: u16,
+    username: &str,
+    password: &str,
+) -> Result<super::proto_auth::ProtoResult, String> {
+    match protocol {
+        "redis" => super::proto_auth::redis_auth(host, port, username, password).await,
+        "ftp" => super::proto_auth::ftp_auth(host, port, username, password).await,
+        "telnet" => super::proto_auth::telnet_auth(host, port, username, password).await,
+        "mysql" => super::proto_auth::mysql_auth(host, port, username, password).await,
+        "postgresql" => super::proto_auth::postgres_auth(host, port, username, password).await,
+        "mqtt" => super::proto_auth::mqtt_auth(host, port, username, password).await,
+        "docker" => super::proto_auth::docker_check(host, port).await,
+        "winrm" => super::proto_auth::winrm_auth(host, port, username, password).await,
+        "stomp" => super::proto_auth::stomp_auth(host, port, username, password).await,
+        _ => Err(format!(
+            "protocol `{protocol}` requires the hydra integration (install hydra; SSH/SMB/RDP/VNC are not natively supported)"
+        )),
+    }
+}
+
+/// The network protocol audit engine (issue #27).
+#[allow(clippy::too_many_arguments)]
+async fn run_protocol_audit(
+    protocol: &str,
+    host: &str,
+    port: u16,
+    pairs: &[(String, String)],
+    mode: &str,
+    delay_ms: u64,
+    lockout_pause_ms: u64,
+    attempts_per_period: usize,
+    ctx: &NativeCtx,
+) -> Result<Vec<Finding>, String> {
+    ctx.sink
+        .emit(crate::events::TaskEvent::Info(format!(
+            "protocol audit: {protocol}://{host}:{port} — {} credential pair(s), mode={mode}",
+            pairs.len()
+        )))
+        .await;
+
+    // Docker/WinRM checks don't take credential pairs — single probe.
+    if protocol == "docker" {
+        return match super::proto_auth::docker_check(host, port).await {
+            Ok(r) if r.authenticated_as.is_some() => Ok(vec![finding(
+                Severity::Critical,
+                format!("Docker API exposed without authentication ({host}:{port})"),
+                format!(
+                    "The Docker Engine API answers HTTP requests with no authentication. \
+                     This grants full root-equivalent control over the host: containers, \
+                     volumes, and mounted filesystems."
+                ),
+                "Bind the Docker socket to 127.0.0.1 only; enable TLS client auth (2376) behind the firewall; never expose 2375 publicly.",
+                host,
+                json!({ "protocol": "docker", "port": port, "version_context": r.context }),
+            )]),
+            Ok(_) => Ok(vec![finding(
+                Severity::Info,
+                format!("Docker API not exposed at {host}:{port}"),
+                "The endpoint did not return an unauthenticated Docker API response.".to_string(),
+                "n/a",
+                host,
+                json!({ "protocol": "docker" }),
+            )]),
+            Err(e) => Err(e),
+        };
+    }
+
+    // Separate username/password wordlists (#27) + classic pairs.
+    // `pairs` is user:pass format from the wordlist field; also accept the
+    // username/password single-credential fields for targeted checks.
+    let mut attempts: Vec<(String, String)> = Vec::new();
+    for (u, p) in pairs {
+        attempts.push((u.clone(), p.clone()));
+    }
+
+    let mut pacer = Pacer::new(delay_ms, lockout_pause_ms, attempts_per_period);
+    let mut successes: Vec<(String, String)> = Vec::new();
+    let mut connection_errors = 0usize;
+
+    for (u, p) in &attempts {
+        if ctx.cancel.is_cancelled() {
+            break;
+        }
+        pacer.wait().await;
+        match try_protocol(protocol, host, port, u, p).await {
+            Ok(r) => {
+                if let Some(authenticated) = &r.authenticated_as {
+                    successes.push((authenticated.clone(), p.clone()));
+                    tracing::info!(
+                        "protocol audit: VALID credentials for {protocol}://{host}:{port} — user `{authenticated}`"
+                    );
+                }
+            }
+            Err(e) => {
+                connection_errors += 1;
+                if connection_errors == 1 {
+                    // First error carries context; subsequent ones are silent.
+                    tracing::warn!("protocol audit connection issue: {e}");
+                }
+            }
+        }
+    }
+
+    if connection_errors > 0 && connection_errors == attempts.len() {
+        return Err(format!(
+            "all {connection_errors} attempts failed with connection errors — \
+             check the host/port and protocol banner"
+        ));
+    }
+
+    let mut findings = audit_findings(host, &successes);
+    // Tag findings with the protocol context for the report.
+    for f in &mut findings {
+        if let Value::Object(ref mut m) = f.metadata {
+            m.insert("protocol".into(), json!(protocol));
+            m.insert("port".into(), json!(port));
+            m.insert("mode".into(), json!(mode));
+        }
+    }
+    Ok(findings)
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[test]
+    fn parse_target_host_port_and_bare() {
+        assert_eq!(
+            parse_protocol_target("10.0.0.5:6380", "redis"),
+            Some(("10.0.0.5".into(), 6380))
+        );
+        assert_eq!(
+            parse_protocol_target("redis-server", "redis"),
+            Some(("redis-server".into(), 6379)),
+            "bare host gets the protocol default port"
+        );
+        assert_eq!(
+            parse_protocol_target("http://db.internal:5432/", "postgresql"),
+            Some(("db.internal".into(), 5432))
+        );
+        assert_eq!(
+            parse_protocol_target("host", "mysql"),
+            Some(("host".into(), 3306))
+        );
+        // Unknown protocol → no default port → None.
+        assert!(parse_protocol_target("host", "gopher").is_none());
+    }
+
+    #[tokio::test]
+    async fn pacer_counts_attempts() {
+        // Disabled pauses (delay=0, lockout=0) — pure counter increments.
+        let mut p = Pacer::new(0, 0, 5);
+        for _ in 0..12 {
+            p.wait().await;
+        }
+        assert_eq!(p.attempted, 12);
+    }
+
+    #[test]
+    fn protocol_ports_cover_supported_set() {
+        let supported: Vec<&str> = PROTOCOL_PORTS.iter().map(|(p, _)| *p).collect();
+        for proto in ["redis", "ftp", "telnet", "mysql", "postgresql", "mqtt", "docker", "winrm", "stomp", "http-basic"] {
+            assert!(supported.contains(&proto), "{proto} in port map");
+        }
     }
 }

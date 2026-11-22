@@ -24,6 +24,7 @@ pub mod password_audit;
 pub mod people_hunter;
 pub mod net_guard;
 pub mod port_scanner;
+pub mod proto_auth;
 pub mod reverse_dns;
 pub mod subdomain_finder;
 pub mod tls_check;

@@ -53,6 +53,50 @@ db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
 dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
 exec 121, mcp 7, frontend 75), verify.mjs 214/214.
 
+## 4.13.0 -- Password Auditor: 10 native protocol clients + spray pacing
+
+The scanner-depth gap shrinks (issue #27): Password Auditor's native
+credential-audit surface expands from HTTP-only to **10 protocols** with
+handshake-level clients in Rust.
+
+### Native protocol clients (`core::proto_auth`)
+
+Each protocol gets a bounded (4 s connect + 5 s read) minimal handshake:
+
+| Protocol | Port | Mechanism |
+|----------|------|-----------|
+| Redis | 6379 | RESP AUTH (user+pass / pass-only), detects no-auth servers via PING |
+| FTP | 21 | USER/PASS control-channel exchange (220/331/230/530 states) |
+| MySQL | 3306 | HandshakeResponse41 with mysql_native_password (SHA1 challenge-response) |
+| PostgreSQL | 5432 | md5 auth (md5(md5(pass+user)+salt)) + trust-auth detection |
+| MQTT | 1883/8883 | CONNECT/CONNACK with user/pass flags |
+| Docker | 2375/2376 | Unauthenticated /version probe (Critical — full host control) |
+| WinRM | 5985 | HTTP Basic over SOAP (200/500 = accepted, 401 = rejected) |
+| STOMP | 61613 | CONNECT/ERROR frames |
+| Telnet | 23 | Prompt heuristic (login/password/shell-prompt states) |
+
+SSH/SMB/RDP/VNC require real crypto (SSH2, NTLMv2, TLS+NLA) — documented as
+hydra-integration targets.
+
+### Protocol engine
+
+`run_protocol_audit` routes by protocol name (parsed from the target with
+per-protocol default ports), drives the credential list with **spray pacing**
+(`delay_ms` between attempts, `lockout_pause_ms` after
+`attempts_per_period` attempts — account-lockout avoidance) and reports
+successes through the standard finding pipeline with protocol/port/mode
+metadata. All-connection-errors fail the scan honestly; wrong passwords are
+None (no finding).
+
+### Manifest
+
+New fields: `mode` (dictionary | spray), `delay_ms`, `lockout_pause_ms`,
+`attempts_per_period` — the lockout-pacing surface from the competitor.
+
+### Tests
+exec 133 (+4: target parsing, pacer counting, port-map coverage), workspace
+green.
+
 ## 4.12.0 -- WordPress Scanner rebuilt: native WPScan-equivalent audit
 
 The weakest catalog tool is rebuilt (issue #26): `wordpress-audit` swaps the

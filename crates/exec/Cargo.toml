@@ -35,6 +35,9 @@ webpki-roots = "0.26"
 rustls-pki-types = "1"
 # Subject Organization extraction for the Domain Finder's CT org-pivot.
 x509-parser = { version = "0.16", default-features = false, features = ["verify"] }
+# Protocol credential-audit handshakes (MySQL native_password, PostgreSQL md5).
+sha1 = "0.10"
+md-5 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
