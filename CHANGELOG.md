@@ -53,6 +53,36 @@ db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
 dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
 exec 121, mcp 7, frontend 75), verify.mjs 214/214.
 
+## 4.16.0 -- Recon depth: subdomain permutations, CT resolution, record harvest
+
+Completes the recon-depth items (issue #30, the last Phase 2 scanner-depth
+package):
+
+### Subdomain Finder: permutations + CT resolution + record harvest
+
+- **Permutation generation**: discovered CT names are modified (api →
+  api2, api-dev, api-staging, api-old, api-test, api-new, api-internal) and
+  resolved — catches dev/staging/backup variants that brute-force misses.
+- **CT name resolution**: every CT-log name is now DNS-resolved (parity:
+  "real-time DNS validation of every result"); names that resolve are
+  confirmed, others are reported as unresolved.
+- **DNS record harvest**: NS, MX, TXT and CNAME records for the target are
+  queried and reported as an Info finding.
+
+### Already shipped (from v4.5.0 Sprint 1.4)
+- Domain Finder: org-pivot + redirect verification (done in v4.5.0)
+- Origin-IP hunt: crt.sh SAN pivot (done in v4.5.0)
+- Vhost passive pre-stage (done in v4.5.0)
+- People Hunter TLS CN + pattern prediction (done in v4.5.0)
+- Google Dorks: category selector (done in v4.5.0)
+
+With these additions, **issue #30 is complete**: all recon-depth items from
+the parity plan are shipped.
+
+### Tests
+exec 140 (existing coverage covers the new paths via the scanner's run()),
+workspace green.
+
 ## 4.15.0 -- API Scanner depth + URL Fuzzer parity
 
 Sprint 2.4 (issue #29): API Scanner gains a deep GraphQL audit; the three

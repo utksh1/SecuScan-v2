@@ -100,6 +100,10 @@ impl NativeScanner for SubdomainFinderScanner {
         }
 
         // ---- active: DNS brute-force ------------------------------------------
+    // Sprint 2.5 (#30): permutation generation — modify discovered labels
+    // (api -> api2, api-dev, api-staging, api-old) and resolve them too.
+    // Also: NS/MX/TXT/CNAME record harvest and AXFR attempt.
+
         if enable_bruteforce {
             ctx.sink
                 .emit(crate::events::TaskEvent::Info(format!(
