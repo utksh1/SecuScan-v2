@@ -13,18 +13,45 @@ pub async fn insert_many(
     plugin_id: &str,
     findings: &[Finding],
 ) -> DbResult<Vec<String>> {
+    insert_many_with_provenance(pool, task_id, plugin_id, None, findings).await
+}
+
+/// Insert with provenance stamping (issue #15): the producing plugin's
+/// manifest version and the deterministic cross-scan fingerprint are
+/// recorded at observation time.
+pub async fn insert_many_with_provenance(
+    pool: &SqlitePool,
+    task_id: &str,
+    plugin_id: &str,
+    plugin_version: Option<&str>,
+    findings: &[Finding],
+) -> DbResult<Vec<String>> {
+    // Target for the fingerprint: the task's admitted target.
+    let target: Option<String> = sqlx::query_scalar("SELECT target FROM tasks WHERE id = ?1")
+        .bind(task_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
     let mut tx = pool.begin().await?;
     let mut ids = Vec::with_capacity(findings.len());
     let ts = now();
     for f in findings {
+        let fingerprint =
+            secuscan_core::models::finding_fingerprint(
+                plugin_id,
+                target.as_deref(),
+                f.url.as_deref(),
+                &f.category,
+                &f.title,
+            );
         let id = new_id();
         sqlx::query(
             "INSERT INTO findings (id, task_id, plugin_id, severity, kind, analyst_status, \
              category, title, description, remediation, proof, url, metadata_json, created_at, \
              group_id, cve, cvss_v3, cvss_vector, epss_score, epss_percentile, cisa_kev, \
-             cwe, owasp, confidence) \
+             cwe, owasp, confidence, plugin_version, fingerprint) \
              VALUES (?1, ?2, ?3, ?4, ?5, 'new', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, \
-                     NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                     NULL, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
         )
         .bind(&id)
         .bind(task_id)
@@ -48,6 +75,8 @@ pub async fn insert_many(
         .bind(&f.cwe)
         .bind(&f.owasp)
         .bind(&f.confidence)
+        .bind(plugin_version)
+        .bind(&fingerprint)
         .execute(&mut *tx)
         .await?;
         ids.push(id);

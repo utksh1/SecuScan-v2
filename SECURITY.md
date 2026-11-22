@@ -135,3 +135,14 @@ Deployment policy knobs:
 
 DNS rebinding is additionally bounded by scan-start resolution pinning: the
 addresses validated at scan start are the ones the HTTP clients use.
+
+
+## Evidence redaction (Sprint 2.4)
+
+Raw evidence (finding `proof`, OOB hit captures, task output) is stored
+unredacted — analysts need the real capture — and protected by the at-rest
+encryption + file permissions instead. Every analyst-facing **report** renders
+evidence through `redact_secrets`, which masks credential values (Authorization
+headers, cookie values, password/token/api-key/secret/session parameters) while
+keeping the credential names. OOB hits expire with their handler TTL (default 60
+days) and the daily maintenance purge removes them.

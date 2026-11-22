@@ -269,6 +269,87 @@ impl Finding {
 }
 
 /// Current UTC timestamp in RFC 3339 format (used across DB and API layers).
+
+/// Deterministic cross-scan finding identity (issue #15).
+///
+/// sha256 over the identity tuple with a unit separator — stable across
+/// runs (identical scan outputs produce identical fingerprints), scoped to
+/// target + endpoint (distinct targets/URLs never merge), and independent
+/// of proof/description text (trivial output changes do not change
+/// identity). `url` is normalized to scheme+host+path (dropping query
+/// strings, which carry volatile session data).
+pub fn finding_fingerprint(
+    plugin_id: &str,
+    target: Option<&str>,
+    url: Option<&str>,
+    category: &str,
+    title: &str,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let endpoint = url.and_then(|u| url::Url::parse(u).ok()).map(|mut u| {
+        // Drop volatile query pairs (session tokens, CSRF nonces, cache
+        // busters) — they differ on every request — but KEEP functional
+        // parameters (an IDOR's ?id=2 is a different endpoint than ?id=1).
+        let volatile = [
+            "session", "sess", "sid", "token", "csrf", "xsrf", "nonce", "ts",
+            "timestamp", "_", "auth",
+        ];
+        let kept: Vec<(String, String)> = u
+            .query_pairs()
+            .filter(|(k, _)| {
+                !volatile.contains(&k.to_ascii_lowercase().as_str())
+            })
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        u.set_query(None);
+        let base = format!("{}://{}{}", u.scheme(), u.host_str().unwrap_or(""), u.path());
+        if kept.is_empty() {
+            base
+        } else {
+            let qs = kept
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join("&");
+            format!("{base}?{qs}")
+        }
+    }).unwrap_or_default();
+    let mut hasher = Sha256::new();
+    for part in [plugin_id, target.unwrap_or(""), &endpoint, category, title] {
+        hasher.update(part.as_bytes());
+        hasher.update([0x1f]); // unit separator
+    }
+    hex::encode(hasher.finalize())
+}
+
+/// Redact obvious credential material from free-text evidence for
+/// analyst-facing reports (issue #15 retention/redaction rule). Storage
+/// keeps the raw capture; this mask applies at render time. Names of
+/// credentials are preserved (they carry the signal); values are masked.
+pub fn redact_secrets(text: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
+    let patterns = PATTERNS.get_or_init(|| {
+        vec![
+            // authorization headers: keep the scheme, mask the credential
+            Regex::new(r#"(?i)(authorization\s*[:=]\s*)(bearer|basic|token)?\s*\S+"#).unwrap(),
+            // set-cookie / cookie values: keep names, mask values
+            Regex::new(r#"(?i)(set-cookie\s*[:=]\s*)([^\s;=]+)=\S+"#).unwrap(),
+            // credential-bearing query/body params
+            Regex::new(r#"(?i)((?:password|passwd|pwd|token|api[-_]?key|secret|session)[-_.a-z0-9]*\s*[=:]\s*)(\S+)"#)
+                .unwrap(),
+        ]
+    });
+    let mut out = text.to_string();
+    for re in patterns.iter() {
+        // Group 1 = the credential label; group 2 = the value — the value
+        // is what gets masked, the label carries the signal.
+        out = re.replace_all(&out, "${1}[REDACTED]").to_string();
+    }
+    out
+}
+
 pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -468,5 +549,75 @@ mod tests {
         assert!(compute_next_named_anchor("yearly", "08:00", "UTC", "2026-11-08T09:00:00.000Z").is_none());
         assert!(compute_next_named_anchor("daily", "08:00", "Mars/Olympus", "2026-11-08T09:00:00.000Z").is_none());
         assert!(compute_next_named_anchor("daily", "99:00", "UTC", "2026-11-08T09:00:00.000Z").is_none());
+    }
+
+    #[test]
+    fn fingerprint_is_stable_across_calls() {
+        let a = finding_fingerprint("nmap", Some("example.com"), None, "Network Service", "Open port: 22/tcp");
+        let b = finding_fingerprint("nmap", Some("example.com"), None, "Network Service", "Open port: 22/tcp");
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 64, "sha256 hex");
+    }
+
+    #[test]
+    fn fingerprint_distinguishes_targets_and_endpoints() {
+        let t1 = finding_fingerprint("nuclei", Some("a.test"), None, "XSS", "Reflected XSS");
+        let t2 = finding_fingerprint("nuclei", Some("b.test"), None, "XSS", "Reflected XSS");
+        assert_ne!(t1, t2, "distinct targets never merge");
+
+        let u1 = finding_fingerprint(
+            "website-scanner",
+            Some("a.test"),
+            Some("https://a.test/admin?id=1&session=xyz"),
+            "XSS",
+            "Reflected XSS",
+        );
+        let u2 = finding_fingerprint(
+            "website-scanner",
+            Some("a.test"),
+            Some("https://a.test/admin?id=2&session=abc"),
+            "XSS",
+            "Reflected XSS",
+        );
+        assert_ne!(u1, u2, "distinct paths merge never");
+        // Query strings (volatile session data) do NOT change identity.
+        let q1 = finding_fingerprint(
+            "website-scanner",
+            Some("a.test"),
+            Some("https://a.test/admin?session=aaa"),
+            "XSS",
+            "Reflected XSS",
+        );
+        let q2 = finding_fingerprint(
+            "website-scanner",
+            Some("a.test"),
+            Some("https://a.test/admin?session=zzz"),
+            "XSS",
+            "Reflected XSS",
+        );
+        assert_eq!(q1, q2, "query-only differences are the same endpoint");
+    }
+
+    #[test]
+    fn fingerprint_ignores_proof_changes() {
+        // Same check, different proof text (e.g. varying response snippet) —
+        // identity must not move.
+        assert_eq!(
+            finding_fingerprint("p", Some("t"), None, "c", "title"),
+            finding_fingerprint("p", Some("t"), None, "c", "title")
+        );
+    }
+
+    #[test]
+    fn redaction_masks_values_keeps_names() {
+        let raw = "Authorization: Bearer abc.def.ghi and password=hunter2 and token=abc123";
+        let out = redact_secrets(raw);
+        assert!(out.contains("Authorization"), "scheme/label kept");
+        assert!(!out.contains("abc.def.ghi"), "bearer value masked");
+        assert!(out.contains("password="), "param name kept");
+        assert!(!out.contains("hunter2"), "password value masked");
+        assert!(!out.contains("abc123"), "token value masked");
+        // Non-credential text untouched.
+        assert_eq!(redact_secrets("open port 22 tcp"), "open port 22 tcp");
     }
 }

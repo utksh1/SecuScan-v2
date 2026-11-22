@@ -3,6 +3,54 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.8.2 -- Finding provenance + deterministic identity
+
+Closes issue #15 — findings are now defensible evidence with provenance and
+a stable cross-scan identity.
+
+### Provenance fields (stamped at observation time)
+
+- `plugin_version`: the producing plugin's manifest version, threaded from
+  the runtime manifest through the task outcome onto every finding —
+  evidence records *which scanner version* made the claim.
+- Task linkage (already present) carries the run: admitted target, inputs,
+  raw captured output, ran-at.
+
+### Deterministic cross-scan fingerprint
+
+`findings.fingerprint` = sha256(plugin_id | target | endpoint | category |
+title), computed at insert:
+
+- **Stable across runs** — identical scan outputs produce identical
+  fingerprints (E2E asserts across two rescans).
+- **Endpoint-scoped** — distinct targets never merge; distinct paths never
+  merge; volatile query parameters (session tokens, CSRF nonces, cache
+  busters) are stripped while functional parameters (an IDOR's `?id=`)
+  are preserved.
+- **Order- and proof-independent** — proof/description changes never move
+  identity.
+- The **diff engine prefers the stored fingerprint** and falls back to the
+  historical (plugin, category, title) triple for pre-migration rows, so
+  old data keeps diffing.
+
+The provenance block (plugin id/version, task, target, observed-at,
+fingerprint, confidence/kind, analyst status) is exposed in the finding
+JSON; the schema and lifecycle are documented in ARCHITECTURE.md.
+
+### Evidence redaction at render time
+
+Analyst-facing reports (MD/CSV/HTML/PDF/DOCX) render `proof` through
+`redact_secrets`: credential **values** are masked (Authorization headers,
+Set-Cookie values, password/token/api-key/secret/session parameters) while
+credential names survive. Storage keeps the raw capture — protected by
+at-rest encryption — and the redaction rule is documented in SECURITY.md.
+
+### Tests
+core 72 (+9: fingerprint stability/endpoint-distinction/query-stripping,
+redaction, month-clamp from Sprint 2.2), api_test 37 (+1 provenance E2E:
+version stamping + fingerprint stability across two rescans). Existing
+findings remain readable (nullable columns + fallback).
+
 ## 4.8.1 -- Docs refresh + API contract reconciliation
 
 Closes the documentation debt (issues #12, #13, #14).

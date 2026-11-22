@@ -243,6 +243,34 @@ on the task, and a `diff` notification trigger fires **only when something actua
 changed**, delivering a `scan.diff` webhook payload with the classified diff. First
 runs (no baseline) and unchanged runs stay silent.
 
+## Finding provenance and identity (evidence schema)
+
+Every finding carries defensible provenance (issue #15):
+
+| Field | Source | Meaning |
+|---|---|---|
+| `plugin_id`, `plugin_version` | stamped at insert | which scanner, at which version, made the claim |
+| `task_id` → task (target, inputs, output, ran-at) | FK | the run that observed it, including the raw captured output |
+| `created_at` | insert time | observed-at |
+| `fingerprint` | sha256(plugin_id \| target \| endpoint \| category \| title) | deterministic cross-scan identity |
+| `confidence`, `kind` | scanner + analyst | observed vs validated, without overstating verification |
+| `analyst_status` | triage lifecycle | new → confirmed / needs_review / false_positive / accepted_risk / fixed |
+
+The **fingerprint** is the deterministic identity: stable across identical
+re-scans, scoped to target + endpoint (never falsely merging distinct
+targets), independent of proof/description text, with volatile query
+parameters (session tokens, CSRF nonces, cache busters) stripped from the
+endpoint while functional parameters (an IDOR's `?id=`) are preserved. The
+diff engine prefers the stored fingerprint and falls back to the historical
+(plugin, category, title) triple for pre-migration rows.
+
+**Retention and redaction**: stored evidence (proof, OOB hits, task output)
+is kept raw — analysts need the real capture; OOB hits expire with their
+handler TTL and the daily purge. Analyst-facing reports render `proof`
+through `redact_secrets`, which masks credential **values** (Authorization
+headers, Set-Cookie values, password/token/api-key/secret/session params)
+while preserving the credential names that carry the signal.
+
 ## Notifications, callbacks and egress policy
 
 Notification rules (per workspace) trigger on scan status, severity-threshold

@@ -34,6 +34,9 @@ struct FinishOutcome<'a> {
     stats_json: String,
     /// Sprint 2.2 (#25): precise terminal reason; None for plain outcomes.
     status_detail: Option<&'a str>,
+    /// Sprint 2.4 (#15): the producing plugin's manifest version, stamped
+    /// onto every finding for defensible provenance.
+    plugin_version: Option<&'a str>,
 }
 
 pub struct TaskManager {
@@ -58,6 +61,7 @@ impl<'a> FinishOutcome<'a> {
             output_truncated: false,
             stats_json: String::new(),
             status_detail: Some("cancelled"),
+            plugin_version: None,
         }
     }
 }
@@ -155,6 +159,7 @@ impl TaskManager {
                             exit_code: None,
                             stats_json: String::new(),
                             status_detail: None,
+                            plugin_version: None,
                         },
                     )
                     .await;
@@ -192,6 +197,7 @@ impl TaskManager {
                             exit_code: None,
                             stats_json: String::new(),
                             status_detail: Some("auth_failed"),
+                            plugin_version: None,
                         },
                     )
                     .await;
@@ -235,6 +241,7 @@ impl TaskManager {
 
             // Sprint 2.2 (#25): honest terminal detail — the runner's
             // "timed out" error maps to the timed_out detail.
+            let plugin_version: Option<&str> = Some(manifest.plugin.version.as_str());
             let status_detail: Option<&str> = outcome
                 .error
                 .as_deref()
@@ -256,6 +263,7 @@ impl TaskManager {
                     })
                     .to_string(),
                     status_detail,
+                    plugin_version,
                 },
             )
             .await;
@@ -292,9 +300,14 @@ impl TaskManager {
             out
         };
 
-        let inserted_ids =
-            match repo::findings::insert_many(&self.pool, &task.id, &task.plugin_id, o.findings)
-                .await
+        let inserted_ids = match repo::findings::insert_many_with_provenance(
+            &self.pool,
+            &task.id,
+            &task.plugin_id,
+            o.plugin_version,
+            o.findings,
+        )
+        .await
             {
                 Ok(ids) => ids,
                 Err(e) => {

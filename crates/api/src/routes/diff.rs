@@ -27,6 +27,13 @@ pub fn router() -> axum::Router<SharedState> {
 /// Identity of a finding across runs. The unit separator makes collisions
 /// from concatenated field values impossible.
 fn fingerprint(f: &FindingRow) -> String {
+    // Sprint 2.4 (#15): prefer the stored deterministic fingerprint
+    // (sha256 over plugin|target|endpoint|category|title) — stable across
+    // runs and scoped to the endpoint. Pre-migration rows fall back to the
+    // historical triple so old data keeps diffing.
+    if let Some(fp) = &f.fingerprint {
+        return fp.clone();
+    }
     format!("{}\u{1f}{}\u{1f}{}", f.plugin_id, f.category, f.title)
 }
 

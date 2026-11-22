@@ -256,7 +256,7 @@ fn csv_report(findings: &[FindingRow]) -> String {
             f.title.clone(),
             f.description.clone(),
             f.remediation.clone(),
-            f.proof.clone(),
+            secuscan_core::models::redact_secrets(&f.proof),
             f.url.clone().unwrap_or_default(),
             f.cve.clone().unwrap_or_default(),
             f.cvss_v3.map(|v| v.to_string()).unwrap_or_default(),
@@ -360,7 +360,7 @@ fn html_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Str
                     }
                     if parts.is_empty() { String::new() } else { format!("<br/>{}", parts.join(" · ")) }
                 },
-                proof = html_escape(&f.proof),
+                proof = html_escape(&secuscan_core::models::redact_secrets(&f.proof)),
                 desc = html_escape(&f.description),
                 rem = html_escape(&f.remediation),
             )
@@ -679,7 +679,10 @@ fn pdf_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Resu
             doc.push(Paragraph::new(pdf_safe(&f.description)));
         }
         if !f.proof.is_empty() {
-            doc.push(Paragraph::new(format!("Evidence: {}", pdf_safe(&f.proof))));
+            doc.push(Paragraph::new(format!(
+                "Evidence: {}",
+                pdf_safe(&secuscan_core::models::redact_secrets(&f.proof))
+            )));
         }
         if let Some(url) = &f.url {
             doc.push(Paragraph::new(format!("URL: {}", pdf_safe(url))));
@@ -861,7 +864,11 @@ fn docx_report(task: &TaskRow, findings: &[FindingRow], brand: &Branding) -> Res
             );
         }
         if !f.proof.is_empty() {
-            docx = docx.add_paragraph(labelled_run("Evidence: ", &f.proof, body));
+            docx = docx.add_paragraph(labelled_run(
+                "Evidence: ",
+                &secuscan_core::models::redact_secrets(&f.proof),
+                body,
+            ));
         }
         if let Some(url) = &f.url {
             docx = docx.add_paragraph(labelled_run("URL: ", url, body));

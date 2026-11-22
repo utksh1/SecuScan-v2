@@ -134,6 +134,13 @@ pub struct FindingRow {
     pub url: Option<String>,
     pub metadata_json: String,
     pub created_at: String,
+    // Max-Parity Sprint 2.4 (issue #15): provenance + stable identity.
+    /// Manifest version of the plugin that produced this finding.
+    pub plugin_version: Option<String>,
+    /// Deterministic cross-scan identity:
+    /// sha256(plugin_id | target | url | category | title). NULL on
+    /// pre-migration rows (diff falls back to the computed triple).
+    pub fingerprint: Option<String>,
     // Max-Parity Sprint 2.1 (issue #24): analyst triage surface
     // (nullable — scanner rows start unoverridden).
     pub severity_override: Option<String>,

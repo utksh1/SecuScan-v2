@@ -4653,6 +4653,61 @@ async fn schedules_support_named_frequencies() {
     assert_eq!(resp.status(), 400);
 }
 
+// --- Max-Parity Sprint 2.4 (#15): finding provenance ---------------------------------
+#[tokio::test]
+async fn findings_carry_provenance_and_stable_fingerprints() {
+    let s = spawn_app().await;
+    let (c, token) = login(&s).await;
+
+    // Run the deterministic plugin twice with identical inputs.
+    let mut first_fp = String::new();
+    for run in 0..2 {
+        let resp = c
+            .post(format!("{}/tasks", s.base))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "plugin_id": "sevtest",
+                "inputs": { "target": "provenance.test" },
+                "consent_granted": true,
+            }))
+            .send()
+            .await
+            .unwrap();
+        let task: serde_json::Value = resp.json().await.unwrap();
+        let done = wait_task_terminal(&s, task["id"].as_str().unwrap()).await;
+        assert_eq!(done.status, "completed");
+        let findings: serde_json::Value = c
+            .get(format!(
+                "{}/findings?task_id={}&limit=1",
+                s.base,
+                task["id"].as_str().unwrap()
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let f = &findings["items"][0];
+        println!("DEBUG finding: {}", f);
+        // Provenance: producing plugin version stamped at observation time.
+        assert!(
+            f["plugin_version"].as_str().is_some(),
+            "plugin version stamped (run {run})"
+        );
+        // Stable identity: the same check on the same target across runs
+        // produces the identical fingerprint.
+        let fp = f["fingerprint"].as_str().unwrap().to_string();
+        assert_eq!(fp.len(), 64, "sha256 hex");
+        if run == 0 {
+            first_fp = fp;
+        } else {
+            assert_eq!(fp, first_fp, "fingerprint stable across rescans");
+        }
+    }
+}
+
 // --- Max-Parity Sprint 2.3 (#6): connect-time destination guard ----------------------
 #[tokio::test]
 async fn metadata_targets_are_refused_at_scan_start() {

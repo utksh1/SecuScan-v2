@@ -48,6 +48,9 @@ pub fn finding_to_json(f: &FindingRow) -> Value {
         "owasp": f.owasp,
         "confidence": f.confidence,
         "created_at": f.created_at,
+        // Sprint 2.4 (#15) provenance + stable identity
+        "plugin_version": f.plugin_version,
+        "fingerprint": f.fingerprint,
         // Sprint 2.1 analyst triage surface
         "severity_override": f.severity_override,
         "severity_original": f.severity_original,
