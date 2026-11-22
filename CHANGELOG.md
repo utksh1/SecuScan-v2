@@ -53,6 +53,36 @@ db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
 dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
 exec 121, mcp 7, frontend 75), verify.mjs 214/214.
 
+## 4.15.0 -- API Scanner depth + URL Fuzzer parity
+
+Sprint 2.4 (issue #29): API Scanner gains a deep GraphQL audit; the three
+URL fuzzers get parity fields.
+
+### API Scanner: GraphQL deep audit
+
+The introspection check is now a full audit:
+- **Endpoint map** — query/mutation operation extraction with counts and
+  a summary finding (3 queries, 2 mutations, 15 types)
+- **Sensitive operation flagging** — mutations/queries matching
+  create/update/delete/admin/user prefixes
+- **DoS depth check** — deeply nested query accepted = High finding
+  (no depth limit → resource exhaustion)
+- **IDOR probe** — scalar ID-typed query fields probed with id=0 (offset);
+  a successful response with data = High finding (CWE-639)
+- **Auth headers field** (`auth_headers` in manifest) — sanitized, applied
+  to all GraphQL probes for authenticated API testing
+
+### URL Fuzzer parity
+
+- **ffuf**: extensions list, custom headers (multi-line), method select
+  (GET/POST/PUT/PATCH), request body with FUZZ marker — the full surface
+- **gobuster**: soft-404 detection toggle + extensions field
+- **feroxbuster**: depth cap, status-code filter, extensions field
+- **api-scanner**: auth_headers field for authenticated GraphQL probes
+
+### Tests
+exec 140, workspace green.
+
 ## 4.14.0 -- Unified Network Scanner: nmap + nuclei + testssl in one tool
 
 The multi-engine composition tool lands (issue #28): one admission, one

@@ -71,6 +71,14 @@ default = true
 help = "Sends an unauthenticated DELETE against every successful GET path. Disabled in Quick and Standard profiles."
 
 [[fields]]
+id = "auth_headers"
+label = "Auth headers"
+type = "string"
+default = ""
+placeholder = "Authorization: Bearer <token>"
+help = "One header per line (key: value) — used for authenticated probes (IDOR, mass-assignment)."
+
+[[fields]]
 id = "probe_graphql"
 label = "GraphQL introspection probe"
 type = "boolean"

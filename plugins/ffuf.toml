@@ -80,6 +80,42 @@ min = 1
 max = 200
 
 [[fields]]
+id = "extensions"
+label = "Extensions"
+type = "string"
+default = ""
+placeholder = "php,html,txt,json"
+help = "Comma-separated extension list — ffuf tries each word with every extension."
+
+[[fields]]
+id = "request_headers"
+label = "Custom headers"
+type = "string"
+default = ""
+placeholder = "X-Custom: value"
+help = "One header per line (key: value), sent with every request."
+
+[[fields]]
+id = "request_method"
+label = "Method"
+type = "select"
+default = "GET"
+options = [
+  { value = "GET", label = "GET" },
+  { value = "POST", label = "POST" },
+  { value = "PUT", label = "PUT" },
+  { value = "PATCH", label = "PATCH" },
+]
+
+[[fields]]
+id = "request_body"
+label = "Request body (POST/PUT/PATCH)"
+type = "string"
+default = ""
+placeholder = 'key=FUZZ&other=value'
+help = "Body for non-GET requests; FUZZ is replaced with the word."
+
+[[fields]]
 id = "auto_calibrate"
 label = "Auto-calibrate filters"
 type = "boolean"
