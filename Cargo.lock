@@ -2643,7 +2643,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secuscan-api"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2684,7 +2684,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-cli"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2705,7 +2705,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-core"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2714,13 +2714,11 @@ dependencies = [
  "hex",
  "rand 0.8.8",
  "regex",
- "reqwest",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
- "tokio",
  "toml",
  "tracing",
  "url",
@@ -2728,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-db"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2750,7 +2748,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-exec"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2785,7 +2783,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-mcp"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2807,7 +2805,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-worker"
-version = "4.10.0"
+version = "4.11.0"
 dependencies = [
  "chrono",
  "secuscan-core",

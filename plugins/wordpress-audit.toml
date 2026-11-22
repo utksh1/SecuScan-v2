@@ -1,37 +1,35 @@
-# WordPress-focused scan via nuclei template tags (WordPress Scanner parity).
+# WordPress Scanner — native WPScan-equivalent audit (Sprint 2.2, #26).
 [plugin]
 id = "wordpress-audit"
-name = "WordPress Scanner (nuclei, wp tags)"
-version = "1.0.0"
-description = "Run nuclei's WordPress template set against a WP site"
+name = "WordPress Scanner"
+version = "2.0.0"
+description = "WPScan-equivalent WordPress audit: user enum (3 vectors), plugins/themes, backups, XML-RPC, debug logs"
 long_description = """
-Wraps nuclei restricted to its WordPress templates: core version
-disclosure, exposed debug logs, xmlrpc abuse, known plugin/theme
-vulnerabilities and misconfigurations. Requires the nuclei templates
-(installed by scripts/install-tools.sh).
+Native WordPress audit with the WPScan-equivalent passive surface:
+
+1. Core version disclosure (meta generator / readme).
+2. User enumeration via three vectors: REST API, author archives (?author=N
+   redirects) — login-error differential is roadmap.
+3. Vulnerable plugin/theme discovery: directory listings + probes of common
+   vulnerable plugins' readme/changelog paths.
+4. Config backups + DB exports (wp-config.bak, *.sql, etc.).
+5. Interesting findings: XML-RPC enabled, wp-cron reachable, readme.html,
+   debug.log, uploads listing, TimThumb.
+
+GET-only and non-destructive; severity capped at High (parity). Nuclei's
+WordPress templates remain available as a companion engine.
 """
 category = "web"
 author = "SecuScan Contributors"
 license = "MIT"
 icon = "wordpress"
 difficulty = "intermediate"
-tags = ["web", "wordpress", "cms", "nuclei"]
+tags = ["web", "wordpress", "cms"]
 
 [engine]
-type = "cli"
-binary = "nuclei"
-timeout_seconds = 1800
-output_format = "text"
-argv = [
-  "nuclei",
-  "-u", "{target}",
-  "-tags", "wordpress",
-  "-jsonl",
-  "-silent",
-  "--if:templates:then:-t",
-  "--if:templates:then:{templates}",
-  "-c", "{concurrency}",
-]
+type = "native"
+native = "wordpress_audit"
+timeout_seconds = 900
 
 [[fields]]
 id = "target"
@@ -43,68 +41,87 @@ pattern = '^[a-zA-Z0-9][a-zA-Z0-9.:/_-]*$'
 message = "Must be a URL"
 
 [[fields]]
-id = "templates"
-label = "Extra template dirs/tags"
-type = "string"
-placeholder = "~/nuclei-templates/http/technologies/wordpress"
-pattern = '^[a-zA-Z0-9~/,._-]*$'
-help = "Optional extra template paths; the wordpress tag set is always applied."
+id = "enum_users"
+label = "Enumerate users (3 vectors)"
+type = "boolean"
+default = true
 
 [[fields]]
-id = "concurrency"
-label = "Concurrency"
+id = "enum_plugins"
+label = "Discover plugins"
+type = "boolean"
+default = true
+
+[[fields]]
+id = "enum_themes"
+label = "Discover themes"
+type = "boolean"
+default = true
+
+[[fields]]
+id = "check_backups"
+label = "Check config/DB backups"
+type = "boolean"
+default = true
+
+[[fields]]
+id = "check_interesting"
+label = "Check XML-RPC / wp-cron / readme / debug.log"
+type = "boolean"
+default = true
+
+[[fields]]
+id = "timeout_ms"
+label = "Request timeout (ms)"
 type = "integer"
-default = 10
-min = 1
-max = 50
-
-[parser]
-type = "json_lines"
-
-[parser.finding]
-title_field = "info.name"
-description_field = "info.description"
-severity_field = "info.severity"
-url_field = "matched-at"
-proof_field = "template-id"
-category = "WordPress"
-kind = "suspected_issue"
-
-[parser.severity_map]
-critical = "critical"
-high = "high"
-medium = "medium"
-low = "low"
-info = "info"
-unknown = "info"
+default = 12000
+min = 1000
+max = 60000
 
 [safety]
-level = "intrusive"
+level = "safe"
 requires_consent = true
-consent_message = "Sends active WordPress probe traffic. Only scan authorized targets."
-max_concurrent = 1
-max_per_hour = 6
-capabilities = ["network"]
+consent_message = "Only scan WordPress sites you own or are authorized to assess."
+allowed_targets = ["*"]
+max_concurrent = 3
+max_per_hour = 20
+capabilities = ["http.request"]
 
-[dependencies]
-binaries = ["nuclei"]
+# ---------------------------------------------------------------- presets ---
 
-# ---------------------------------------------------------------- profiles ---
+[presets.quick]
+enum_users = true
+enum_plugins = false
+enum_themes = false
+check_backups = false
 
-[presets.light]
-templates = ""
-concurrency = 15
-
-[preset_meta.light]
-label = "Light"
-description = "The core WordPress template tag set: version disclosure, xmlrpc, debug logs. Fast triage."
+[preset_meta.quick]
+label = "Quick"
+description = "User enumeration + interesting findings only."
 badge = "fast"
 
 [presets.deep]
-templates = ""
-concurrency = 25
+enum_users = true
+enum_plugins = true
+enum_themes = true
+check_backups = true
+check_interesting = true
+timeout_ms = 20000
 
 [preset_meta.deep]
 label = "Deep"
-description = "The full WordPress tag set — core, plugins, themes, exposures and misconfigurations — at high concurrency."
+description = "Full passive audit: all enumeration toggles and backup probes."
 badge = "thorough"
+
+[presets.stealth]
+enum_users = true
+enum_plugins = false
+enum_themes = false
+check_backups = false
+check_interesting = true
+timeout_ms = 20000
+
+[preset_meta.stealth]
+label = "Stealth"
+description = "Low-and-slow: user enum + interesting findings with a long timeout."
+badge = "stealth"

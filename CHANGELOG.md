@@ -53,6 +53,36 @@ db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
 dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
 exec 121, mcp 7, frontend 75), verify.mjs 214/214.
 
+## 4.12.0 -- WordPress Scanner rebuilt: native WPScan-equivalent audit
+
+The weakest catalog tool is rebuilt (issue #26): `wordpress-audit` swaps the
+bare `nuclei -tags wordpress` wrapper for a **native Rust scanner** with the
+WPScan-equivalent passive surface. Nuclei's WordPress templates remain
+available as a companion engine (install templates, run nuclei separately).
+
+### The surface
+
+- **User enumeration, 3 vectors** (toggle): REST API `/wp-json/wp/v2/users`,
+  author archives (`?author=N` redirect Location), login differential
+  (roadmap). Findings name the disclosure vector per user.
+- **Vulnerable plugin/theme discovery** (toggles): directory-listing
+  detection + probes of common plugins' readme/changelog paths (Contact
+  Form 7, WP File Manager, Elementor, WooCommerce, Revolution Slider, …).
+- **Config backups + DB exports** (toggle): wp-config.php.{bak,save,old,~},
+  *.sql dumps — content-validated (table prefix / CREATE TABLE / DB_*
+  defines), not just status-code matching.
+- **Interesting findings** (toggle): XML-RPC banner, wp-cron reachable,
+  readme.html, debug.log (High), uploads/mu-plugins listing, TimThumb.
+- **Core version disclosure** via the generator meta tag.
+- **Severity capped at High** (parity with the competitor's cap); GET-only,
+  non-destructive; auth-profile material (cookies/headers/Basic) applies to
+  every request via the Sprint 1.1 pipeline.
+
+### Tests
+exec 130 (+9 WordPress tests: content-dir detection, generator version,
+XML-RPC/debug-log/backup findings, 404 negatives, severity cap), workspace
+green.
+
 ## 4.10.0 -- AI layer: LLM client, finding enrichment, translate, Mini-Specter
 
 First slice of the AI umbrella (issue #33): the provider-agnostic client,

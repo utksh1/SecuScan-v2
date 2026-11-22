@@ -30,3 +30,10 @@ Thumbs.db
 coverage/
 *.lcov
 .video_agent/
+
+# Local-only planning files
+GITHUB_ISSUES_TEMPLATE.md
+PHASED_IMPLEMENTATION_PLAN.md
+Pentest-Tools-Platform-Reverse-Engineering-Report.pdf
+.video_agent/
+.v2c/

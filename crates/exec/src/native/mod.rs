@@ -28,6 +28,7 @@ pub mod reverse_dns;
 pub mod subdomain_finder;
 pub mod tls_check;
 pub mod vhost_finder;
+pub mod wordpress_audit;
 pub mod website_scanner;
 pub mod xss_exploiter;
 
@@ -164,6 +165,7 @@ pub fn registry() -> &'static NativeRegistry {
             &xss_exploiter::XssExploiter,
             &people_hunter::PeopleHunter,
             &website_scanner::WebsiteScanner,
+            &wordpress_audit::WordpressAudit,
             &api_scanner::ApiScanner,
             &param_finder::ParamFinder,
             &js_analyzer::JsAnalyzer,
