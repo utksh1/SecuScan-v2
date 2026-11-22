@@ -53,6 +53,34 @@ db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
 dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
 exec 121, mcp 7, frontend 75), verify.mjs 214/214.
 
+## 4.14.0 -- Unified Network Scanner: nmap + nuclei + testssl in one tool
+
+The multi-engine composition tool lands (issue #28): one admission, one
+consent, one result set — three detection engines behind per-engine toggles.
+
+### Engines
+
+1. **nmap version scan** (`engine_nmap`, default on) — `-sV` against the
+   port range (`top-100` / explicit list / range), open-service parsing
+   with version extraction, CVE-banner flagging (High).
+2. **Nuclei network templates** (`engine_nuclei`, default on) — JSONL
+   parsing with classification fields (CVE id, CVSS score/vector, CISA-KEV
+   marker), `nuclei_kev_only` restricts to KEV templates, `custom_cves`
+   allowlist caps at 500 and reaches the template filter, `rps` 1-1000.
+3. **testssl.sh** (`engine_testssl`, default off — long-running) — JSONL
+   parsing that skips OK/INFO (only problems reported, parity).
+
+### Manifest + presets
+
+`network-scanner.toml` with 8 fields (target, 3 engine toggles,
+`nuclei_kev_only`, `custom_cves`, `rps`, `ports`) and Quick / Deep / TLS-Only
+presets.
+
+### Tests
+exec 140 (+7: nmap args + open-service parse with version, CVE-banner
+flagging, nuclei JSONL parse with KEV/CVE fields, KEV-only + custom-CVE
+args, 500-CVE cap, testssl severity mapping), workspace green.
+
 ## 4.13.0 -- Password Auditor: 10 native protocol clients + spray pacing
 
 The scanner-depth gap shrinks (issue #27): Password Auditor's native
