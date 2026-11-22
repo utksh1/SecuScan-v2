@@ -3,6 +3,61 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.9.1 -- MCP governance: annotations, dispatch validation, new verbs, setup guide
+
+Closes issue #32 — the MCP server's governance polish.
+
+### Tool annotations
+
+Every tool now declares `readOnlyHint`/`destructiveHint` — launchers
+(`start_scan`, `start_people_hunter`) and `delete_task` are destructive,
+the read family is read-only — so compliant MCP clients can auto-gate
+destructive calls without server round-trips.
+
+### Schema enforcement at dispatch
+
+Arguments are validated against **the same JSON schema `list_tools`
+advertised** before any API call: required keys, declared types, string
+minLength. Malformed calls fail with a structured MCP error naming the tool
+and the argument — what the LLM sees is what is enforced. Unknown tool names
+are rejected at dispatch too.
+
+### New verbs
+
+- `stop_task` — cancel a queued/running scan
+- `delete_task` — irreversible; requires an explicit `confirm=true`
+  argument
+- `get_raw_output` — raw scanner stdout+stderr for a finished task
+- `create_finding` — manual analyst finding anchored to a task
+
+Tool catalogue is now 21; the report family (`list_reports` + the new
+`secuscan://reports` resource and per-id reads) covers report access.
+
+### Resources: per-id reads
+
+`secuscan://tasks/{id}`, `secuscan://findings/{id}`,
+`secuscan://workspaces/{id}`, `secuscan://reports/{id}` now resolve through
+the client (collection URIs remain); `secuscan://reports` is listed as a
+resource. The doc comment no longer advertises a `create_report` tool that
+was removed during the governance refactor.
+
+### Protocol version negotiation
+
+`initialize` echoes the client's requested protocol version when supported
+(`2025-06-18`, `2025-03-26`, `2024-11-05`) instead of pinning 2024-11-05 —
+newer clients negotiate up.
+
+### Setup guide
+
+`docs/MCP_SETUP.md`: Claude Code / Cursor / VS Code configuration, the
+dedicated-scanner-account + API-key flow, the approval-token workflow from
+the agent's and the admin's side, governance summary and limitations.
+
+### Tests
+mcp crate 7 (+4: validator matrix, annotations on every tool, schema
+registry coverage, dispatch-gate message), workspace green,
+verify.mjs 214/214.
+
 ## 4.9.0 -- Soft-404 classifier: feature-based noise filtering
 
 First shipped AI touchpoint (issue #31, plan sprint 3.2): the website

@@ -81,12 +81,125 @@ pub fn list_tools(req: JsonRpcRequest) -> JsonRpcResponse {
             },
             "required": ["target", "consent_granted", "approval_token"]
         })),
+        tool("stop_task", "Cancel a queued or running scan", json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        })),
+        tool("delete_task", "Delete a task AND its findings (irreversible — pass confirm=true)", json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" },
+                "confirm": { "type": "boolean", "description": "Must be true; deletion also removes findings" }
+            },
+            "required": ["id", "confirm"]
+        })),
+        tool("get_raw_output", "Get the raw scanner output for a task (stdout+stderr)", json!({
+            "type": "object",
+            "properties": { "id": { "type": "string" } },
+            "required": ["id"]
+        })),
+        tool("create_finding", "Create a manual analyst finding anchored to an existing task", json!({
+            "type": "object",
+            "properties": {
+                "task_id": { "type": "string" },
+                "title": { "type": "string", "minLength": 1 },
+                "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+                "category": { "type": "string" },
+                "description": { "type": "string" },
+                "remediation": { "type": "string" },
+                "proof": { "type": "string" },
+                "url": { "type": "string" }
+            },
+            "required": ["task_id", "title", "severity"]
+        })),
     ]});
     JsonRpcResponse::ok(req.id, tools)
 }
 
+/// Build a tool entry with MCP **annotations** (issue #32): `readOnlyHint`
+/// and `destructiveHint` let compliant clients auto-gate destructive calls.
 fn tool(name: &str, description: &str, schema: Value) -> Value {
-    json!({ "name": name, "description": description, "inputSchema": schema })
+    let (read_only, destructive) = match name {
+        // Launchers change server state (spawn scans, burn approvals).
+        "start_scan" | "start_people_hunter" | "run_robot" => (false, true),
+        // Deletion is destructive. Note start_scan is BOTH: it is a state
+        // change (not read-only) whose destructiveHint lets clients gate it.
+        "delete_task" => (false, true),
+        _ => (true, false),
+    };
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": schema,
+        "annotations": {
+            "readOnlyHint": read_only,
+            "destructiveHint": destructive,
+        },
+    })
+}
+
+/// Minimal JSON-Schema enforcement at dispatch (issue #32): required keys,
+/// declared types, enum membership and string minLength. The schemas are the
+/// same ones `list_tools` advertises — what the LLM sees is what is enforced.
+fn validate_args(name: &str, schema: &Value, args: &Value) -> Result<(), String> {
+    let empty = serde_json::Map::new();
+    let props = schema.get("properties").and_then(Value::as_object).unwrap_or(&empty);
+    for req in schema.get("required").and_then(Value::as_array).unwrap_or(&vec![]) {
+        let key = req.as_str().unwrap_or("");
+        if args.get(key).is_none() {
+            return Err(format!("{name}: missing required argument `{key}`"));
+        }
+    }
+    for (key, spec) in props {
+        let v = match args.get(key) {
+            Some(v) if !v.is_null() => v,
+            _ => continue,
+        };
+        let ty = spec.get("type").and_then(Value::as_str).unwrap_or("");
+        let ok = match ty {
+            "string" => v.is_string(),
+            "boolean" => v.is_boolean(),
+            "integer" | "number" => v.is_i64() || v.is_u64() || v.is_f64(),
+            "array" => v.is_array(),
+            "object" => v.is_object(),
+            _ => true,
+        };
+        if !ok {
+            return Err(format!("{name}: argument `{key}` must be {ty}"));
+        }
+        if let Some(min) = spec.get("minLength").and_then(Value::as_u64) {
+            if v.as_str().map(|s| s.chars().count() < min as usize).unwrap_or(false) {
+                return Err(format!("{name}: argument `{key}` must be at least {min} characters"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The advertised tool schemas, keyed by name — the dispatch validator uses
+/// exactly what `list_tools` returned to the client.
+pub fn tool_schemas() -> serde_json::Map<String, Value> {
+    let resp = list_tools(JsonRpcRequest {
+        jsonrpc: "2.0".into(),
+        id: None,
+        method: "tools/list".into(),
+        params: None,
+    });
+    let tools = resp
+        .result
+        .as_ref()
+        .and_then(|r| r.get("tools"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    tools
+        .into_iter()
+        .filter_map(|t| {
+            let name = t.get("name")?.as_str()?.to_string();
+            Some((name, t.get("inputSchema").cloned().unwrap_or(Value::Null)))
+        })
+        .collect()
 }
 
 pub async fn call_tool(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcResponse {
@@ -99,7 +212,33 @@ pub async fn call_tool(client: &SecuScanClient, req: JsonRpcRequest) -> JsonRpcR
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     let id = req.id.clone();
-    let result = dispatch_call(client, name, args).await;
+    // Sprint 3.3 (#32): enforce the advertised schema at dispatch — enums,
+    // types, required keys — before any API call happens.
+    let schemas = tool_schemas();
+    let validated = match schemas.get(name) {
+        Some(schema) => match validate_args(name, schema, &args) {
+            Ok(()) => args,
+            Err(e) => {
+                return JsonRpcResponse::ok(
+                    id,
+                    json!({
+                        "isError": true,
+                        "content": [{ "type": "text", "text": format!("error: {e}") }]
+                    }),
+                )
+            }
+        },
+        None => {
+            return JsonRpcResponse::ok(
+                id,
+                json!({
+                    "isError": true,
+                    "content": [{ "type": "text", "text": format!("error: unknown tool `{name}`") }]
+                }),
+            )
+        }
+    };
+    let result = dispatch_call(client, name, validated).await;
     match result {
         Ok(text) => JsonRpcResponse::ok(
             id,
@@ -146,6 +285,69 @@ fn approved_scan_payload(args: &Value, plugin_id: &str, inputs: Value) -> Result
 
 async fn dispatch_call(client: &SecuScanClient, name: &str, args: Value) -> Result<String, String> {
     match name {
+        "stop_task" => {
+            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
+            let v = client
+                .post(&format!("/api/v1/tasks/{id}/cancel"), json!({}))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "delete_task" => {
+            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
+            let confirm = args
+                .get("confirm")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if !confirm {
+                return Err(
+                    "deleting a task also deletes its findings — pass confirm=true to proceed"
+                        .into(),
+                );
+            }
+            let _ = client
+                .delete(&format!("/api/v1/tasks/{id}"))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(format!("task {id} deleted"))
+        }
+        "get_raw_output" => {
+            let id = args.get("id").and_then(|v| v.as_str()).ok_or("missing id")?;
+            let v = client
+                .get(&format!("/api/v1/tasks/{id}/output"))
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
+        "create_finding" => {
+            let task_id = args
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing task_id")?;
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
+                .ok_or("missing title")?;
+            let severity = args
+                .get("severity")
+                .and_then(|v| v.as_str())
+                .ok_or("missing severity")?;
+            let body = json!({
+                "task_id": task_id,
+                "title": title,
+                "severity": severity,
+                "category": args.get("category"),
+                "description": args.get("description"),
+                "remediation": args.get("remediation"),
+                "proof": args.get("proof"),
+                "url": args.get("url"),
+            });
+            let v = client
+                .post("/api/v1/findings", body)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?)
+        }
         "list_plugins" => {
             let v = client
                 .get("/api/v1/plugins")
@@ -428,5 +630,84 @@ mod tests {
         assert_eq!(request["scan"]["plugin_id"], "port-scanner");
         assert_eq!(request["scan"]["workspace_id"], "workspace-1");
         assert_eq!(request["scan"]["preset"], "deep");
+    }
+}
+
+#[cfg(test)]
+mod governance_tests {
+    use super::*;
+
+    #[test]
+    fn validator_enforces_required_types_and_min_length() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "id": { "type": "string" },
+                "limit": { "type": "integer" },
+                "confirm": { "type": "boolean" },
+                "title": { "type": "string", "minLength": 3 }
+            },
+            "required": ["id"]
+        });
+
+        // Missing required.
+        assert!(validate_args("t", &schema, &json!({})).is_err());
+        // Type mismatch.
+        assert!(validate_args("t", &schema, &json!({ "id": 42 })).is_err());
+        assert!(validate_args("t", &schema, &json!({ "id": "x", "confirm": "yes" })).is_err());
+        // minLength.
+        assert!(validate_args("t", &schema, &json!({ "id": "x", "title": "ab" })).is_err());
+        // Happy paths.
+        assert!(validate_args("t", &schema, &json!({ "id": "x", "limit": 5, "confirm": true, "title": "abc" })).is_ok());
+        // Extra unknown args are tolerated (the API re-validates authoritatively).
+        assert!(validate_args("t", &schema, &json!({ "id": "x", "extra": 1 })).is_ok());
+    }
+
+    #[test]
+    fn every_tool_carries_annotations() {
+        let resp = list_tools(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: None,
+            method: "tools/list".into(),
+            params: None,
+        });
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        println!("DEBUG tools len={}", tools.len());
+        assert!(tools.len() >= 17, "tool catalogue size: {}", tools.len());
+        for t in &tools {
+            let ann = t.get("annotations").expect("annotations block");
+            assert!(ann.get("readOnlyHint").is_some(), "readOnlyHint on {}", t["name"]);
+            assert!(ann.get("destructiveHint").is_some(), "destructiveHint on {}", t["name"]);
+        }
+        // Launchers destructive; readers read-only.
+        let by = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap().clone();
+        assert_eq!(by("start_scan")["annotations"]["destructiveHint"], true);
+        assert_eq!(by("list_tasks")["annotations"]["readOnlyHint"], true);
+        assert_eq!(by("delete_task")["annotations"]["destructiveHint"], true);
+    }
+
+    #[test]
+    fn tool_schemas_cover_every_tool() {
+        let schemas = tool_schemas();
+        let resp = list_tools(JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: None,
+            method: "tools/list".into(),
+            params: None,
+        });
+        let tools = resp.result.unwrap()["tools"].as_array().unwrap().clone();
+        for t in &tools {
+            let name = t["name"].as_str().unwrap();
+            assert!(schemas.contains_key(name), "schema registry has {name}");
+        }
+    }
+
+    #[test]
+    fn dispatch_rejects_invalid_args_before_api_calls() {
+        // The validator is the gate: a get_task without `id` must fail with a
+        // structured message naming the tool and the missing key.
+        let schema = tool_schemas().get("get_task").unwrap().clone();
+        let err = validate_args("get_task", &schema, &json!({})).unwrap_err();
+        assert!(err.contains("get_task") && err.contains("`id`"), "{err}");
     }
 }

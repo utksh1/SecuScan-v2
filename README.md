@@ -194,6 +194,7 @@ notifications and every audit-fix regression.
 - [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) — write your own plugin in one TOML file
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — configuration, Docker, reverse proxy, OOB, outbound policy
 - [`docs/MAX_PARITY_PLAN.md`](docs/MAX_PARITY_PLAN.md) — the phased parity roadmap and its acceptance criteria
+- [`docs/MCP_SETUP.md`](docs/MCP_SETUP.md) — connect Claude/Cursor/VS Code agents to SecuScan
 - [`docs/MCP_CONSENT.md`](docs/MCP_CONSENT.md) — human-authorized one-use MCP scan approvals and safety limits
 - [`docs/REVIEW_LOG.md`](docs/REVIEW_LOG.md) — the review cycles behind this release
 - [`SECURITY.md`](SECURITY.md) — security policy, threat boundaries, outbound policy

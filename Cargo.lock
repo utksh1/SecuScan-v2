@@ -2643,7 +2643,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secuscan-api"
-version = "4.8.2"
+version = "4.9.0"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2684,7 +2684,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-cli"
-version = "4.8.2"
+version = "4.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2704,7 +2704,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-core"
-version = "4.8.2"
+version = "4.9.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -2725,7 +2725,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-db"
-version = "4.8.2"
+version = "4.9.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-exec"
-version = "4.8.2"
+version = "4.9.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "secuscan-mcp"
-version = "4.8.2"
+version = "4.9.0"
 dependencies = [
  "anyhow",
  "async-trait",

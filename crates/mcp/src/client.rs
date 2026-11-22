@@ -135,8 +135,9 @@ impl SecuScanClient {
         self.request(reqwest::Method::DELETE, path, None).await
     }
 
-    /// Read a resource URI like `secuscan://plugins` and return its body as a
-    /// JSON string.
+    /// Read a resource URI like `secuscan://plugins` or the per-id forms
+    /// `secuscan://tasks/{id}` / `secuscan://findings/{id}` / `secuscan://reports/{id}`
+    /// (issue #32) and return its body as a JSON string.
     pub async fn get_resource(&self, uri: &str) -> Result<String> {
         let path = match uri {
             "secuscan://plugins" => "/api/v1/plugins",
@@ -144,7 +145,28 @@ impl SecuScanClient {
             "secuscan://findings" => "/api/v1/findings?limit=50",
             "secuscan://workspaces" => "/api/v1/workspaces",
             "secuscan://attack-surface" => "/api/v1/attack-surface?limit=100",
-            other => return Err(anyhow!("unknown resource uri: {other}")),
+            "secuscan://reports" => "/api/v1/reports?limit=50",
+            other => {
+                // Per-id resources: secuscan://<collection>/<id>.
+                if let Some(rest) = other.strip_prefix("secuscan://") {
+                    if let Some((collection, id)) = rest.split_once('/') {
+                        if !id.is_empty() {
+                            let base = match collection {
+                                "tasks" => "/api/v1/tasks",
+                                "findings" => "/api/v1/findings",
+                                "workspaces" => "/api/v1/workspaces",
+                                "reports" => "/api/v1/reports",
+                                _ => {
+                                    return Err(anyhow!("unknown resource collection: {collection}"))
+                                }
+                            };
+                            let v = self.get(&format!("{base}/{id}")).await?;
+                            return Ok(serde_json::to_string_pretty(&v)?);
+                        }
+                    }
+                }
+                return Err(anyhow!("unknown resource uri: {other}"));
+            }
         };
         let v = self.get(path).await?;
         Ok(serde_json::to_string_pretty(&v)?)

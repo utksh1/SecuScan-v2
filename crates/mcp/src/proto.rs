@@ -62,9 +62,27 @@ pub mod error_codes {
     pub const INTERNAL_ERROR: i32 = -32603;
 }
 
+/// Protocol versions this server can speak. A client offering one of these
+/// gets exactly that version back; anything else falls back to our newest
+/// (and the client may decline — that is the MCP version handshake).
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
+const DEFAULT_PROTOCOL_VERSION: &str = "2025-06-18";
+
 pub fn handle_initialize(req: JsonRpcRequest) -> JsonRpcResponse {
+    // Version negotiation: echo the client's requested version when we
+    // support it (issue #32) instead of pinning 2024-11-05 forever.
+    let requested = req
+        .params
+        .as_ref()
+        .and_then(|p| p.get("protocolVersion"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let protocol_version = requested
+        .as_deref()
+        .filter(|v| SUPPORTED_PROTOCOL_VERSIONS.contains(v))
+        .unwrap_or(DEFAULT_PROTOCOL_VERSION);
     let result = json!({
-        "protocolVersion": "2024-11-05",
+        "protocolVersion": protocol_version,
         "capabilities": {
             "tools": { "listChanged": false },
             "resources": { "listChanged": false, "subscribe": false },
@@ -86,6 +104,7 @@ pub fn list_resources(req: JsonRpcRequest) -> JsonRpcResponse {
             { "uri": "secuscan://findings", "name": "Recent findings", "description": "Most recent findings across all scans" },
             { "uri": "secuscan://workspaces", "name": "Workspaces", "description": "All workspaces" },
             { "uri": "secuscan://attack-surface", "name": "Attack Surface", "description": "Aggregated asset inventory" },
+            { "uri": "secuscan://reports", "name": "Report jobs", "description": "Recent report jobs" },
         ]
     });
     JsonRpcResponse::ok(req.id, resources)
