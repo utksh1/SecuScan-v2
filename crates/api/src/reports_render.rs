@@ -1122,6 +1122,8 @@ mod tests {
             started_at: None,
             finished_at: Some("2025-01-01T00:00:01Z".into()),
             status_detail: None,
+            claimed_by: None,
+            claimed_at: None,
         }
     }
 

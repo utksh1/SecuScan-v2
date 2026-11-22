@@ -382,3 +382,60 @@ async fn oob_expired_handlers_purge_with_hits(pool: sqlx::SqlitePool) {
     assert_eq!(remaining.len(), 1, "only the live handler remains");
     assert_eq!(remaining[0].id, live.id);
 }
+
+// --- Max-Parity Sprint 4 (#34): distributed execution ------------------------------
+#[sqlx::test]
+async fn worker_claims_are_atomic_and_stale_claims_release(pool: sqlx::SqlitePool) {
+    use secuscan_db::repo;
+    let user = repo::users::create(&pool, "fleet@test.local", "Fleet", "h", "scanner")
+        .await
+        .unwrap();
+    // Two queued tasks from one plugin run.
+    for target in ["127.0.0.1:1", "127.0.0.1:2"] {
+        repo::tasks::create(
+            &pool,
+            repo::tasks::NewTask {
+                user_id: &user.id,
+                plugin_id: "port-scanner",
+                plugin_name: "Port Scanner",
+                target: Some(target),
+                inputs_json: "{}",
+                options_json: "{}",
+                workflow_run_id: None,
+                workspace_id: None,
+                schedule_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    // Two workers claim — never the same task.
+    let t1 = repo::tasks::claim_next(&pool, "worker-a").await.unwrap().unwrap();
+    let t2 = repo::tasks::claim_next(&pool, "worker-b").await.unwrap().unwrap();
+    assert_ne!(t1.id, t2.id, "atomic claim: no double-claim");
+    assert_eq!(t1.claimed_by.as_deref(), Some("worker-a"));
+    assert_eq!(t2.claimed_by.as_deref(), Some("worker-b"));
+    // Pool exhausted.
+    assert!(repo::tasks::claim_next(&pool, "worker-c").await.unwrap().is_none());
+
+    // Release one claim → claimable again.
+    repo::tasks::release_claim(&pool, &t1.id, "worker-a").await.unwrap();
+    let again = repo::tasks::claim_next(&pool, "worker-a").await.unwrap().unwrap();
+    assert_eq!(again.id, t1.id, "released task is re-claimable");
+
+    // Free a task for the zombie-claim phase.
+    repo::tasks::release_claim(&pool, &t2.id, "worker-b").await.unwrap();
+    // Register a worker, backdate its heartbeat, claim a task as it, then
+    // verify the stale-claim sweeper releases it.
+    repo::misc::register_worker(&pool, "worker-z", "zombie", "[]", 2).await.unwrap();
+    sqlx::query("UPDATE workers SET last_heartbeat = '2020-01-01T00:00:00.000Z' WHERE id = 'worker-z'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let t3 = repo::tasks::claim_next(&pool, "worker-z").await.unwrap().unwrap();
+    let released = repo::tasks::release_stale_claims(&pool, 120).await.unwrap();
+    assert!(released.contains(&t3.id), "zombie worker's claim released");
+    let requeued = repo::tasks::get(&pool, &t3.id).await.unwrap();
+    assert!(requeued.claimed_by.is_none(), "claim cleared");
+}

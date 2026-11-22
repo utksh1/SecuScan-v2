@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 secuscan-core = { path = "../core" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 secuscan-exec = { path = "../exec" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

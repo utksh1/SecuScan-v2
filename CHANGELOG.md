@@ -3,6 +3,118 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.11.0 -- Distributed execution: worker binary, atomic claims, remote CLI
+
+The core of Sprint 4 (issue #34): scans can now execute out-of-process.
+
+### Worker binary
+
+`secuscan-worker` claims queued tasks from the shared SQLite database and
+runs the same `execute_task` pipeline as the API (events persisted to
+task_events, findings through the FP-memory/dedup pipeline with provenance
+stamping). Registration + heartbeat (10 s) + capacity reporting; workers
+whose heartbeat lapses are pruned and their claims released (tasks re-queue
+automatically — no task loss on worker death). Idle-exit for CI/autoscaled
+workers (`SECUSCAN_WORKER_IDLE_EXIT`).
+
+### Atomic claims
+
+`claim_next` uses `BEGIN IMMEDIATE` — two workers can never take the same
+task (regression-tested). Claims are visible via the fleet registry
+(`GET /api/v1/workers`, admin): name, tags, concurrency cap, claimed count,
+last heartbeat.
+
+### Execution mode
+
+`SECUSCAN_EXEC_MODE=local` (default, unchanged) | `workers` (API queues
+only; workers execute). Stale-claim release + worker prune run at boot.
+
+### Remote CLI (CI parity)
+
+`secuscan remote --server-url … --api-key … --plugin nmap --input
+target=… --fail high --json` — launches via REST, polls to completion,
+exits 2 on task failure or findings at/above the severity gate, `--json`
+for machine parsing.
+
+### Tooling
+
+- `scripts/load_test.mjs` — concurrent scan load generator with latency
+  percentiles.
+- `.github/workflows/sdk.yml` — Python + TypeScript SDK generation from
+  docs/openapi.json on tag pushes (artifacts uploaded for review).
+
+### Deferred within #34
+Cross-host fleets (Redis-backed queue), regional tag routing, asset-based
+metering — the claim/heartbeat/registry layer shipped here is the
+foundation they build on; single-host multi-process is fully operational.
+
+### Tests
+db 9 (+1: atomic claim, no-double-claim, release, stale-claim release via
+dead-worker heartbeat), workspace green (api lib 90, api_test 37, core 80,
+exec 121, mcp 7, frontend 75), verify.mjs 214/214.
+
+## 4.10.0 -- AI layer: LLM client, finding enrichment, translate, Mini-Specter
+
+First slice of the AI umbrella (issue #33): the provider-agnostic client,
+the most visible feature (finding enrichment), report translation and the
+Mini-Specter agent loop — all **opt-in, local-first, deterministic-first**
+per the parity plan's doctrine (the model proposes, deterministic code
+validates).
+
+### Provider-agnostic LLM client
+
+`core::ai_client` — OpenAI-compatible `/chat/completions` (Ollama, vLLM, LM
+Studio, OpenAI, gateways) with bearer auth, 120 s timeout, no redirects and
+one 5xx retry. **Sanitization is structural**: `sanitize` masks
+Authorization headers, cookie values, password/token/api-key params, PEM
+blocks and long hex/base64 blobs before anything leaves the process
+(unit-tested). Nothing is ever logged.
+
+### Finding enrichment (opt-in)
+
+With `SECUSCAN_AI_ENRICHMENT=true` + AI config, task completion spawns a
+bounded enrichment pass: top-10 severity findings get sanitized context
+(<=2500 chars) and the model's SUMMARY/NEXT_STEPS output is stored on
+`findings.ai_summary/ai_next_steps` (migration 0017) and rendered in
+HTML/PDF/DOCX reports + the findings JSON. Enrichment never changes
+severity/kind/status; failures are logged and skipped; the default
+deployment has zero LLM egress.
+
+### Report translation
+
+`POST /api/v1/ai/translate {task_id, language, limit}` (gated by
+`SECUSCAN_AI_TRANSLATE=true`): translates the top findings' titles/
+descriptions into a target language; scanner-role gated, sanitized, bounded
+at 100 findings, per-finding errors carried inline. MCP tool
+`translate_report` shells to it.
+
+### Mini-Specter agent loop
+
+`api::agent_loop` — plan->execute->observe with an **injectable planner**
+(LLM-backed in production, scripted in tests): actions run through the real
+admission pipeline, hard budget (4 h ceiling, per-run configurable), max 12
+actions. The **validator is deterministic**: a finding is agent-reportable
+only with controlled proof (OOB marker / validated+certain / replayable
+request-response evidence) — zero false positives by construction, the
+model cannot mark anything. Exposed as the MCP `run_specter` tool, gated by
+`SECUSCAN_AI_AGENT=true` AND the existing approval-token flow.
+
+### Governance
+
+Per-feature opt-out flags (all OFF by default); no prompt/completion
+logging; exploit determination stays deterministic; documented in the new
+`docs/AI_ARCHITECTURE.md` (config surface, data flows, governance summary).
+
+### Deferred within #33
+Flowmapper-lite (LLM-driven crawl) and the AI-assisted auth fallback are
+deferred to a follow-up — the client/flags/plumbing they need is now in
+place.
+
+### Tests
+core 80 (+3 sanitize tests), api lib 90 (+3 enrichment split/parse tests),
+mcp 7, api_test 37, exec 121, frontend 75, verify.mjs 214/214. Existing
+findings readable (nullable ai columns).
+
 ## 4.9.1 -- MCP governance: annotations, dispatch validation, new verbs, setup guide
 
 Closes issue #32 — the MCP server's governance polish.

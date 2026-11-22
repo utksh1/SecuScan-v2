@@ -176,3 +176,37 @@ forward the OOB path unchanged and must not strip `Sec-Fetch-Dest` headers.
 Local-first defaults keep loopback/private scanning working (the product's
 own verify suite scans `127.0.0.1`); cloud metadata endpoints are always
 refused. See SECURITY.md for the enforcement model.
+
+
+## Distributed execution (Sprint 4)
+
+By default the API executes scans in-process (`SECUSCAN_EXEC_MODE=local`).
+Setting `SECUSCAN_EXEC_MODE=workers` queues tasks instead; one or more
+**`secuscan-worker`** processes claim and execute them from the shared
+database.
+
+```bash
+# API: queues tasks, no local execution
+SECUSCAN_EXEC_MODE=workers ./target/release/secuscan-server
+
+# Workers: register, heartbeat every 10s, claim + execute + persist
+SECUSCAN_DB_URL=sqlite://./data/secuscan.db \
+SECUSCAN_PLUGINS_DIR=./plugins \
+SECUSCAN_WORKER_NAME=lab-1 \
+SECUSCAN_WORKER_TAGS=lab,internal \
+SECUSCAN_WORKER_MAX_CONCURRENT=4 \
+./target/release/secuscan-worker
+
+# CI/autoscaled workers exit after N idle seconds
+SECUSCAN_WORKER_IDLE_EXIT=300 ./target/release/secuscan-worker
+```
+
+- Claims are atomic (`BEGIN IMMEDIATE`): two workers can never take the
+  same task; the fleet registry (`GET /api/v1/workers`, admin) shows
+  names/tags/heartbeat/claimed counts; workers whose heartbeat lapses are
+  pruned and their claims released (tasks re-queue automatically).
+- Remote CLI for CI: `secuscan remote --server-url … --api-key … --plugin
+  nmap --input target=… --fail high --json` — exits 2 when findings at/above
+  the severity threshold exist or the task fails.
+- Cross-host fleets (Redis-backed queue) remain roadmap; this round ships
+  shared-DB multi-process execution on one host.

@@ -94,6 +94,10 @@ pub struct TaskRow {
     /// Sprint 2.2 (#25): precise terminal reason (timed_out | auth_failed |
     /// max_scan_time_reached | ...); NULL for plain outcomes.
     pub status_detail: Option<String>,
+    /// Sprint 4 (#34): distributed execution — the worker that claimed this
+    /// task (NULL = in-process execution or unclaimed).
+    pub claimed_by: Option<String>,
+    pub claimed_at: Option<String>,
     /// v3.1.1 — VPN profile whose tunnel guaranteed this task's route.
     pub vpn_profile_id: Option<String>,
     /// v3.1.0 — Sniper exploit chain that launched this task (NULL otherwise).
@@ -377,6 +381,19 @@ pub struct MentionRow {
     pub finding_id: String,
     pub workspace_id: Option<String>,
     pub read_at: Option<String>,
+    pub created_at: String,
+}
+
+/// Sprint 4 (#34): a registered scan worker.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct WorkerRow {
+    pub id: String,
+    pub name: String,
+    /// JSON array of capability/region tags.
+    pub tags: String,
+    pub max_concurrent: i64,
+    pub claimed_count: i64,
+    pub last_heartbeat: String,
     pub created_at: String,
 }
 

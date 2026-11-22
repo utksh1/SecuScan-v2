@@ -36,6 +36,10 @@ pub struct Config {
     /// Optional explicit at-rest encryption key; when unset a key file is
     /// generated under `data_dir` (see `secuscan_core::crypto`).
     pub enc_key: Option<String>,
+    /// Sprint 4 (#34): execution mode. `local` (default) spawns tasks in the
+    /// API process as before; `workers` leaves queued tasks for
+    /// `secuscan-worker` processes that claim them from the shared DB.
+    pub exec_mode: String,
     /// When true, URL-targeted web scans run a 4 s reachability probe at
     /// admission and reject unreachable targets with a clear error
     /// (Sprint 2.2, issue #25). Default: off (zero added latency).
@@ -204,6 +208,7 @@ impl Config {
             enc_key: std::env::var("SECUSCAN_ENC_KEY")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            exec_mode: env_or("SECUSCAN_EXEC_MODE", "local"),
             preflight_reachability: env_or("SECUSCAN_PREFLIGHT_REACHABILITY", "false") == "true",
             public_url: std::env::var("SECUSCAN_PUBLIC_URL")
                 .ok()

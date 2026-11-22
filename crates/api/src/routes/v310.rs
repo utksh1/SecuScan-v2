@@ -431,3 +431,23 @@ async fn attach_vpn_to_workspace(
     repo::vpn::attach_to_workspace(&state.db, &id, req.vpn_profile_id.as_deref()).await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+
+async fn list_workers(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+) -> ApiResult<Json<Value>> {
+    user.require_admin()?;
+    let rows = secuscan_db::repo::misc::list_workers(&state.db).await?;
+    Ok(Json(json!({
+        "items": rows.iter().map(|w| json!({
+            "id": w.id,
+            "name": w.name,
+            "tags": serde_json::from_str::<Value>(&w.tags).unwrap_or(json!([])),
+            "max_concurrent": w.max_concurrent,
+            "claimed_count": w.claimed_count,
+            "last_heartbeat": w.last_heartbeat,
+            "created_at": w.created_at,
+        })).collect::<Vec<_>>(),
+    })))
+}

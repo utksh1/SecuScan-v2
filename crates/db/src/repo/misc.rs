@@ -177,6 +177,67 @@ pub async fn set_plugin_enabled(pool: &SqlitePool, plugin_id: &str, enabled: boo
 /// When both a user and a workspace id are present the user binds to `?1`
 /// and the workspace to `?2`; with no user the workspace binds to `?1`.
 /// The fragments below are chosen accordingly.
+/// Sprint 4 (#34): worker fleet registry.
+pub async fn register_worker(
+    db: &SqlitePool,
+    id: &str,
+    name: &str,
+    tags: &str,
+    max_concurrent: i64,
+) -> DbResult<()> {
+    sqlx::query(
+        "INSERT INTO workers (id, name, tags, max_concurrent, claimed_count, last_heartbeat, created_at) \
+         VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5) \
+         ON CONFLICT(id) DO UPDATE SET name = ?2, tags = ?3, max_concurrent = ?4, last_heartbeat = ?5",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(tags)
+    .bind(max_concurrent)
+    .bind(&crate::now())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+pub async fn heartbeat_worker(db: &SqlitePool, id: &str) -> DbResult<()> {
+    sqlx::query("UPDATE workers SET last_heartbeat = ?1 WHERE id = ?2")
+        .bind(&crate::now())
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn bump_worker_claims(db: &SqlitePool, id: &str, delta: i64) -> DbResult<()> {
+    sqlx::query("UPDATE workers SET claimed_count = claimed_count + ?1 WHERE id = ?2")
+        .bind(delta)
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn list_workers(db: &SqlitePool) -> DbResult<Vec<crate::models::WorkerRow>> {
+    sqlx::query_as::<_, crate::models::WorkerRow>(
+        "SELECT * FROM workers ORDER BY created_at ASC",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(Into::into)
+}
+
+pub async fn prune_dead_workers(db: &SqlitePool, timeout_secs: i64) -> DbResult<u64> {
+    let cutoff = (chrono::Utc::now() - chrono::Duration::seconds(timeout_secs))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    sqlx::query("DELETE FROM workers WHERE last_heartbeat < ?1")
+        .bind(&cutoff)
+        .execute(db)
+        .await
+        .map(|r| r.rows_affected())
+        .map_err(Into::into)
+}
+
 pub async fn dashboard_summary(
     pool: &SqlitePool,
     user_id: Option<&str>,

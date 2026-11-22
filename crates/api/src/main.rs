@@ -110,6 +110,15 @@ async fn main() {
     // v3.1.0 — reconcile VPN profile statuses (detect tunnels that died
     // while the server was down).
     secuscan_api::vpn_manager::reconcile(&db).await;
+
+    // Sprint 4 (#34) — distributed execution bookkeeping: release claims
+    // held by dead workers and prune the fleet registry.
+    if let Err(e) = secuscan_db::repo::tasks::release_stale_claims(&db, 120).await {
+        tracing::warn!("stale claim release failed: {e}");
+    }
+    if let Err(e) = secuscan_db::repo::misc::prune_dead_workers(&db, 120).await {
+        tracing::warn!("worker prune failed: {e}");
+    }
     let state = Arc::new(AppState {
         rate_limiter: secuscan_api::rate_limit::RateLimiter::from_env(),
         db,

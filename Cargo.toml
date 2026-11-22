@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/worker",
     "crates/core",
     "crates/exec",
     "crates/db",
@@ -10,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "4.9.1"
+version = "4.11.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/utksh1/SecuScan-v2"

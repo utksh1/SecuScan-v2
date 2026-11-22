@@ -241,6 +241,7 @@ max_per_hour = 0
         ai_base_url: None,
         ai_api_key: None,
         enc_key: None,
+        exec_mode: "local".to_string(),
         preflight_reachability: false,
         // Max-Parity Sprint 1.2 — arm OOB so scanner-generated callback URLs
         // point at a reachable (if fictional) host; the receiver-level test

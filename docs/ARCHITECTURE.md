@@ -325,3 +325,15 @@ distributed workers behind a Redis queue · the AI layer (soft-404 classifier,
 LLM finding enrichment, Mini-Specter agent over MCP) · WASM plugin engine for
 parsers that genuinely need code. The full acceptance-criteria plan lives in
 `docs/MAX_PARITY_PLAN.md`; per-domain criteria in `docs/MAX_PARITY_CRITERIA.md`.
+
+
+## Distributed execution (Sprint 4)
+
+`SECUSCAN_EXEC_MODE=workers` decouples the API from execution: tasks stay
+queued until a `secuscan-worker` process claims them (atomic
+`BEGIN IMMEDIATE` claim in the shared DB), runs the same `execute_task`
+pipeline, and persists findings/events itself. Workers register with a
+name, capability tags and a concurrency cap, heartbeat every 10 s, and are
+pruned when the heartbeat lapses — releasing their claims so tasks re-queue.
+The remote CLI (`secuscan remote`) drives the REST API for CI with a
+severity gate (`--fail high --json`).

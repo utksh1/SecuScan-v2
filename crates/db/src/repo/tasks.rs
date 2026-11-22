@@ -42,6 +42,8 @@ pub async fn create(pool: &SqlitePool, t: NewTask<'_>) -> DbResult<TaskRow> {
         auth_profile_id: None,
         oob_marker: None,
         status_detail: None,
+        claimed_by: None,
+        claimed_at: None,
         sniper_run_id: None,
         vpn_profile_id: None,
         created_at: now(),
@@ -108,7 +110,7 @@ pub async fn list(pool: &SqlitePool, f: &TaskListFilters) -> DbResult<Vec<TaskRo
     let sql = format!(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail, claimed_by, claimed_at \
          FROM tasks \
          WHERE (?1 IS NULL
            OR (workspace_id IS NULL AND user_id = ?1)
@@ -219,6 +221,82 @@ pub async fn finish(pool: &SqlitePool, id: &str, f: FinishTask<'_>) -> DbResult<
 
 /// Mark any queued/running rows as failed — called at server startup so
 /// tasks orphaned by a restart do not stay "running" forever.
+/// Sprint 4 (#34): atomically claim one unclaimed queued task for a worker.
+/// The BEGIN IMMEDIATE transaction serializes claims across worker
+/// processes sharing the SQLite file — two workers can never claim the same
+/// task. Returns None when no claimable task exists.
+pub async fn claim_next(pool: &SqlitePool, worker_id: &str) -> DbResult<Option<TaskRow>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let row: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(
+        "SELECT * FROM tasks WHERE status = 'queued' AND claimed_by IS NULL \
+         ORDER BY created_at ASC LIMIT 1",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(task) = row else {
+        tx.commit().await?;
+        return Ok(None);
+    };
+    sqlx::query("UPDATE tasks SET claimed_by = ?1, claimed_at = ?2 WHERE id = ?3")
+        .bind(worker_id)
+        .bind(&now())
+        .bind(&task.id)
+        .execute(&mut *tx)
+        .await?;
+    // Re-read inside the transaction — reading on the pool before commit
+    // would see the pre-claim snapshot.
+    let updated: Option<TaskRow> = sqlx::query_as::<_, TaskRow>(
+        "SELECT * FROM tasks WHERE id = ?1",
+    )
+    .bind(&task.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+/// Release a claim (worker decided not to run it, or crashed before start).
+pub async fn release_claim(pool: &SqlitePool, id: &str, worker_id: &str) -> DbResult<()> {
+    sqlx::query(
+        "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL \
+         WHERE id = ?1 AND claimed_by = ?2 AND status = 'queued'",
+    )
+    .bind(id)
+    .bind(worker_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Sprint 4 (#34): release claims held by workers whose heartbeat has
+/// lapsed — their tasks become claimable again. Returns released task ids.
+pub async fn release_stale_claims(
+    pool: &SqlitePool,
+    heartbeat_timeout_secs: i64,
+) -> DbResult<Vec<String>> {
+    let cutoff = (chrono::Utc::now()
+        - chrono::Duration::seconds(heartbeat_timeout_secs))
+    .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    // A dead worker's claims are stale regardless of when the claim was
+    // made — the worker can never finish them. The heartbeat is the signal.
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT t.id FROM tasks t JOIN workers w ON t.claimed_by = w.id \
+         WHERE t.status = 'queued' AND w.last_heartbeat < ?1",
+    )
+    .bind(&cutoff)
+    .fetch_all(pool)
+    .await?;
+    for id in &rows {
+        sqlx::query(
+            "UPDATE tasks SET claimed_by = NULL, claimed_at = NULL WHERE id = ?1",
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(rows)
+}
+
 pub async fn fail_orphans(pool: &SqlitePool, reason: &str) -> DbResult<u64> {
     let res = sqlx::query(
         "UPDATE tasks SET status = 'failed', error = ?1, finished_at = ?2 \
@@ -263,7 +341,7 @@ pub async fn recent_scoped(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
          workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, \
-         created_at, started_at, finished_at, status_detail \
+         created_at, started_at, finished_at, status_detail, claimed_by, claimed_at \
          FROM tasks WHERE (?1 IS NULL OR
            (user_id = ?1 AND (workspace_id IS NULL OR EXISTS (
              SELECT 1 FROM workspaces w WHERE w.id = workspace_id
@@ -316,7 +394,7 @@ pub async fn find_previous_run(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail, claimed_by, claimed_at \
          FROM tasks t \
          WHERE t.plugin_id = ?1 AND t.target IS ?2 AND t.status = 'completed' \
            AND t.id != ?3 AND t.created_at <= ?4 AND t.workspace_id IS ?6 \
@@ -350,7 +428,7 @@ pub async fn list_for_schedule(
     sqlx::query_as::<_, TaskRow>(
         "SELECT id, user_id, plugin_id, plugin_name, target, status, inputs_json, options_json, \
          exit_code, error, stats_json, NULL AS output, output_truncated, workflow_run_id, \
-         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail \
+         workspace_id, schedule_id, robot_run_id, auth_profile_id, oob_marker, sniper_run_id, vpn_profile_id, created_at, started_at, finished_at, status_detail, claimed_by, claimed_at \
          FROM tasks WHERE schedule_id = ?1 \
          ORDER BY created_at DESC LIMIT ?2",
     )

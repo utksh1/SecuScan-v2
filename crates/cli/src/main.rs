@@ -18,6 +18,7 @@ use secuscan_core::validate::normalize_inputs;
 use secuscan_core::PluginRegistry;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(
@@ -61,6 +62,30 @@ enum Commands {
     },
     /// Start the API server.
     Serve,
+    /// Run against a remote SecuScan server (CI mode)
+    Remote {
+        /// Base URL, e.g. https://secuscan.example.com
+        #[arg(long)]
+        server_url: String,
+        /// API key (X-API-Key) — prefer passing via SECUSCAN_API_KEY env
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Plugin id to run
+        #[arg(long)]
+        plugin: String,
+        /// key=value inputs (repeatable)
+        #[arg(long = "input")]
+        inputs: Vec<String>,
+        /// Fail (exit 2) if a finding at/above this severity is reported
+        #[arg(long)]
+        fail: Option<String>,
+        /// Emit machine-readable JSON instead of prose
+        #[arg(long)]
+        json: bool,
+        /// Seconds to wait for completion (default 600)
+        #[arg(long, default_value_t = 600)]
+        timeout_seconds: u64,
+    },
     /// Print the OpenAPI 3.1 spec (same artifact as GET /api/v1/openapi.json).
     ExportOpenapi {
         /// Write to this file instead of stdout.
@@ -92,7 +117,7 @@ fn main() -> Result<()> {
         )
         .init();
     let cli = Cli::parse();
-    match cli.command {
+    let exit = match cli.command {
         Commands::Scan {
             plugin,
             inputs,
@@ -101,6 +126,29 @@ fn main() -> Result<()> {
             consent,
             plugins_dir,
         } => run_scan(plugin, inputs, preset, output, consent, plugins_dir),
+        Commands::Remote {
+            server_url,
+            api_key,
+            plugin,
+            inputs,
+            fail,
+            json,
+            timeout_seconds,
+        } => {
+            let rt = tokio::runtime::Runtime::new()?;
+            let code = rt.block_on(run_remote(
+                server_url,
+                api_key,
+                plugin,
+                inputs,
+                fail.as_deref(),
+                json,
+                timeout_seconds,
+            ));
+            // The severity gate (and launch/poll failures) must fail CI.
+            // `exit` never returns — the `!` coerces to the match's type.
+            std::process::exit(code)
+        }
         Commands::Plugins { command } => match command {
             PluginsCommands::List { plugins_dir } => {
                 list_plugins(&plugins_dir);
@@ -110,7 +158,8 @@ fn main() -> Result<()> {
         },
         Commands::Serve => serve(),
         Commands::ExportOpenapi { output } => export_openapi(output),
-    }
+    };
+    exit
 }
 
 fn export_openapi(output: Option<PathBuf>) -> Result<()> {
@@ -484,4 +533,154 @@ mod tests {
         let t = truncate(&long, 20);
         assert_eq!(t.chars().count(), 20);
     }
+}
+
+
+/// Remote scan mode (Sprint 4, issue #34): drives a SecuScan server's REST
+/// API from CI — launch, poll to completion, apply a severity gate.
+async fn run_remote(
+    server_url: String,
+    api_key: Option<String>,
+    plugin: String,
+    inputs: Vec<String>,
+    fail_sev: Option<&str>,
+    json: bool,
+    timeout_seconds: u64,
+) -> i32 {
+    let key = api_key
+        .or_else(|| std::env::var("SECUSCAN_API_KEY").ok())
+        .unwrap_or_default();
+    let base = server_url.trim_end_matches('/');
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("client build failed: {e}");
+            return 2;
+        }
+    };
+    let mut kv = std::collections::BTreeMap::new();
+    for i in &inputs {
+        if let Some((k, v)) = i.split_once('=') {
+            kv.insert(k.to_string(), serde_json::Value::String(v.to_string()));
+        }
+    }
+    let body = serde_json::json!({
+        "plugin_id": plugin,
+        "inputs": kv,
+        "consent_granted": true,
+    });
+
+    let mut req = client
+        .post(format!("{base}/api/v1/tasks"))
+        .header("content-type", "application/json")
+        .json(&body);
+    if !key.is_empty() {
+        req = req.header("x-api-key", &key);
+    }
+    let resp = match req.send().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("launch failed: {e}");
+            return 2;
+        }
+    };
+    if resp.status() != 201 {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        eprintln!("launch rejected ({status}): {body}");
+        return 2;
+    }
+    let task: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    let task_id = task["id"].as_str().unwrap_or("").to_string();
+    if json {
+        println!(r#"{{ "task_id": "{}" }}"#, task_id);
+    } else {
+        println!("launched task {task_id}");
+    }
+
+    // Poll to terminal state.
+    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_seconds);
+    let mut status = String::new();
+    loop {
+        if std::time::Instant::now() >= deadline {
+            eprintln!("timeout waiting for task {task_id}");
+            return 2;
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let mut req = client.get(format!("{base}/api/v1/tasks/{task_id}"));
+        if !key.is_empty() {
+            req = req.header("x-api-key", &key);
+        }
+        let t = match req.send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        let v: serde_json::Value = match t.json().await {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        status = v["status"].as_str().unwrap_or("").to_string();
+        if ["completed", "failed", "cancelled"].contains(&status.as_str()) {
+            break;
+        }
+    }
+
+    // Fetch findings (final gate input).
+    let mut req = client.get(format!("{base}/api/v1/findings?task_id={task_id}&limit=1000"));
+    if !key.is_empty() {
+        req = req.header("x-api-key", &key);
+    }
+    let findings: serde_json::Value = match req.send().await {
+        Ok(r) => r.json().await.unwrap_or(serde_json::json!({})),
+        Err(_) => serde_json::json!({}),
+    };
+    let items = findings["items"].as_array().cloned().unwrap_or_default();
+
+    let rank = |s: &str| match s {
+        "critical" => 4,
+        "high" => 3,
+        "medium" => 2,
+        "low" => 1,
+        _ => 0,
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "task_id": task_id,
+                "status": status,
+                "findings": items,
+            }))
+            .unwrap_or_default()
+        );
+    } else {
+        for f in &items {
+            println!(
+                "[{}] {} ({})",
+                f["severity"].as_str().unwrap_or("?"),
+                f["title"].as_str().unwrap_or("?"),
+                f["plugin_id"].as_str().unwrap_or("?")
+            );
+        }
+        println!("task {task_id}: {status}, {} finding(s)", items.len());
+    }
+
+    // Severity gate: exit 2 when a finding at/above the threshold exists.
+    if let Some(threshold) = fail_sev {
+        let want = rank(threshold);
+        let hit = items
+            .iter()
+            .any(|f| rank(f["severity"].as_str().unwrap_or("info")) >= want && want > 0);
+        if hit {
+            eprintln!("CI gate: findings at or above `{threshold}` present");
+            return 2;
+        }
+    }
+    if status != "completed" {
+        return 2;
+    }
+    0
 }

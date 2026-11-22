@@ -122,6 +122,15 @@ impl TaskManager {
             uuid::Uuid::parse_str(&task_id).unwrap_or_else(|_| uuid::Uuid::new_v4()),
             self.events_tx.clone(),
         );
+        // Sprint 4 (#34): in `workers` execution mode the API does NOT run
+        // the task itself — a secuscan-worker process claims it from the
+        // shared DB. The claim/release lifecycle (and the stale-claim
+        // sweeper) keeps tasks from being lost when a worker dies.
+        if self.config.exec_mode == "workers" {
+            tracing::info!("task {} queued for external workers (exec_mode=workers)", task_id);
+            mgr.cleanup(&task_id).await;
+            return;
+        }
         tokio::spawn(async move {
             let started = std::time::Instant::now();
             // Wait for the global slot and the plugin slot, cancellably.
