@@ -3,6 +3,51 @@
 All notable changes to SecuScan v2. This project follows semantic versioning from its
 first tagged release.
 
+## 4.8.1 -- Docs refresh + API contract reconciliation
+
+Closes the documentation debt (issues #12, #13, #14).
+
+### README rewritten against v4.8 reality (#12)
+
+v2.0.0 badge, the "13 plugins" catalogue table and the hardcoded test counts
+were stale. Now: v4.8 badge, the 50-plugin inventory (17 native / 33 CLI,
+grouped), a capability-highlights table covering everything shipped since
+(OOB pipeline, Sniper, robots, MCP governance, FP memory, encryption,
+destination policy, named schedules, branded reports), a refreshed safety
+model (process trees, exit honesty, connect-time destination enforcement),
+test counts delegated to CI so they cannot go stale, and the stale "deferred
+features" section replaced (everything listed there has shipped).
+
+### ARCHITECTURE.md: six crates + new subsystems (#13)
+
+Workspace layout gains the `mcp` crate and the encrypted-db/destination-
+policy/net-scope modules; the crate graph includes mcp; native-scanner
+section covers all 20 scanners + the connect-time destination guard + the
+OOB pipeline; new sections for the MCP governance model (scoped keys,
+one-use approvals) and notifications/callbacks/egress policy; the database
+inventory lists all 25+ tables and the at-rest encryption design; the
+schedule section documents named frequencies + auto-diff; the roadmap is
+refreshed (shipped items removed, remaining priorities point at
+MAX_PARITY_PLAN.md).
+
+### API contract reconciliation (#14)
+
+- `docs/openapi.json`: `/tasks/:id/report/:format` corrected POST → **GET**
+  (sync export, per-format responses + `severity`/`include_ignored` query
+  params); missing `/reports/:id` (GET + DELETE) added; missing
+  `PATCH /findings/bulk` (4.6.0) documented with its request schema.
+- `docs/API.md`: sync-export filter row updated, `DELETE /reports/:id`
+  added, and a source-of-truth note pointing at the live OpenAPI spec.
+- MCP doc comment: the ghost `create_report` tool (removed during the
+  governance refactor) and the templated per-id resource URIs (never
+  implemented — collection URIs only) are gone.
+- **Drift tripwires in verify.mjs**: the historically-drifted endpoints
+  (sync export method, `/reports/:id`, `/findings/bulk`, diff, run-now,
+  delivery log) are pinned — a spec edit that reverts them fails E2E.
+
+### Tests
+verify.mjs 214/214 (+6 contract-drift checks). No behavior changes.
+
 ## 4.8.0 -- Max-Parity Sprint 2.3: connect-time destination enforcement
 
 Closes the SSRF pair (issues #6 and #8): destination checks now run at

@@ -1,66 +1,74 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/SecuScan-v2.0.0-4f46e5?style=flat-square" alt="SecuScan v2">
+  <img src="https://img.shields.io/badge/SecuScan-v4.8-4f46e5?style=flat-square" alt="SecuScan v4.8">
   <img src="https://img.shields.io/badge/backend-Rust-dea584?style=flat-square" alt="Rust">
   <img src="https://img.shields.io/badge/frontend-React%20%2B%20TypeScript-61dafb?style=flat-square" alt="React">
   <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="MIT">
 </p>
 
-<h1 align="center">SecuScan v2</h1>
+<h1 align="center">SecuScan</h1>
 
-<p align="center"><strong>Local-first security scanning workspace — rewritten in Rust and React.</strong></p>
+<p align="center"><strong>Local-first authorized-security-scanning workspace, in Rust and React.</strong></p>
 
 > **Authorized use only.** Run SecuScan exclusively against systems you own, systems you are
 > explicitly permitted to assess, or deliberately vulnerable lab environments. Every scan
-> requires consent confirmation, and every blocked target attempt is recorded in an audit log.
+> requires consent confirmation, every target passes a three-layer admission policy, every
+> blocked attempt is audited, and outbound destinations are enforced at connection time.
 
 ---
 
 ## What is this?
 
-SecuScan is an open-source workspace for running and organizing authorized security scans:
-a plugin catalogue, a task runner with live streaming output, normalized findings with an
-analyst triage workflow, report exports, multi-user access control, and client/project
-**workspaces with a registered-target registry** — all local-first.
+SecuScan is a self-hosted workspace for running and organizing authorized security scans:
+a 50-plugin catalogue (native Rust scanners + wrapped open-source tools), a task runner
+with live streaming output, deduplicated findings with an analyst triage workflow,
+multi-scan reporting, an MCP server for LLM agents, and workspaces with a registered-target
+registry — all local-first, single binary + SQLite.
 
-**v2 is a ground-up rewrite** of the original Python/FastAPI project in **Rust + React**:
+### Capability highlights
 
-| | v1 | v2 |
-|---|---|---|
-| Backend | FastAPI (Python 3.11) | Rust (axum + tokio + sqlx) |
-| Frontend | React + TS | React 18 + TS + Vite + React Query (redesigned) |
-| Plugins | `metadata.json` + `parser.py` (code, subprocess sandbox) | **single declarative TOML manifest** (no plugin code ever executes) |
-| Scanning | external tools only | external tools **+ 4 built-in native Rust scanners** |
-| Auth | single API key | JWT + rotating refresh cookies + argon2 + roles + API keys |
-| Output streaming | SSE | SSE with DB replay + cursor-based reconnection |
-| Reports | csv/html/pdf/sarif | md/csv/html/sarif/json **+ pdf/docx/xlsx**, min-severity filter, **async report jobs with signed webhooks** |
-| Safety | consent, network policy | consent, network policy **with host canonicalization + audit log**, per-plugin concurrency/hourly limits, argv hardening |
-| Organization | flat task list | **workspaces + first-class targets** (per-client/project scoping of tasks, findings and dashboard) |
-| Run comparison | none | **scan diff**: new / fixed / regressed / improved / unchanged between runs |
-| Automation | none | **recurring schedules**: interval-based scans launched by a background worker, overlap guard, run-now, full re-admission every run |
+| Area | What ships |
+|---|---|
+| **Scanning** | 50 plugins (17 native Rust, 33 wrapped CLI tools) with per-scanner Light/Deep/Custom profiles; one-POST **attack suites** per target |
+| **Findings** | Dedup groups, false-positive **memory across rescans**, severity override (resettable, survives re-scans), CVSS/CVE/CWE/OWASP/EPSS/KEV enrichment, bulk triage, cursor pagination |
+| **Verification** | **Sniper** auto-exploiter (finding → exploit chain), **OOB callbacks** (HTTP receiver + browser-capture payloads, marker-correlated auto-findings) |
+| **Orchestration** | **Pentest Robots** (multi-tool DAG), workflows, recurring schedules with **named frequencies** (daily/weekly/monthly + timezone), **auto-diff** on scheduled runs firing a `diff` notification trigger |
+| **Lifecycle** | Honest terminal states (`status_detail`: timed_out / auth_failed / cancelled), partial findings preserved on cancel, `max_scan_time` soft caps, process-tree termination, bounded output capture, exit-code honesty |
+| **Egress safety** | Three-layer target admission (deny → allow → per-plugin) with host canonicalization + audit log; **connect-time destination enforcement** (DNS re-resolution, metadata-endpoint refusal, address pinning, same-host redirects); webhook egress policy (no redirects, resolve-at-send, bounded bodies) |
+| **AI surface** | **MCP server** (17 tools) with scoped API keys, human-approved one-use scan approvals, consent gates — the deterministic base layer for agentic workflows |
+| **Reporting** | 8 formats (JSON/MD/CSV/HTML/SARIF/PDF/DOCX/XLSX), multi-scan aggregation-ready job pipeline with HMAC-signed webhooks, white-label branding, executive enrichment rendering |
+| **Platform** | Multi-user RBAC + workspace membership, API keys with expiry + MCP scopes, TOTP-ready auth base, at-rest encryption (AES-256-GCM), per-user rate limits, VPN-pinned internal scanning, notifications (Slack/Teams/Discord/webhook), scan-completion callbacks |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    U[User] --> UI[React SPA]
+    U[User / MCP agent] --> UI[React SPA]
     UI -->|REST /api/v1| API[axum API]
     UI <--|SSE live console| API
 
-    API --> AUTH[JWT + refresh rotation + API keys + RBAC]
+    API --> AUTH[JWT + refresh rotation + scoped API keys + RBAC]
     API --> ADM[Admission pipeline]
-    ADM --> GUARD[consent · network policy · capabilities · rate limits]
+    ADM --> GUARD[consent · target policy · capabilities · rate limits · destination scope]
 
     GUARD --> MGR[TaskManager]
-    MGR --> CLI[CLI plugins<br/>subprocess, no shell]
-    MGR --> NAT[Native scanners<br/>port / headers / recon / TLS]
+    MGR --> CLI[CLI plugins<br/>subprocess trees, argv-hardened]
+    MGR --> NAT[20 native scanners<br/>Rust, no external deps]
 
-    CLI --> PARSER[declarative parser<br/>line_regex · json_lines]
+    MGR --> OOB[OOB receiver<br/>HTTP + browser payloads]
+    MGR --> MCP[MCP server<br/>scoped keys + approvals]
+
+    CLI --> PARSER[declarative parser<br/>line_regex · json_lines · static rules]
     NAT --> PARSER
-    PARSER --> DB[(SQLite)]
+    PARSER --> DB[(SQLite · encrypted secrets)]
 
     MGR -->|events| REC[recorder] --> DB
     REC -->|broadcast| UI
 ```
+
+Six crates: `core` (models, policy, parser, templates, net scope), `db` (sqlx + migrations),
+`exec` (runner, native scanners, OOB context), `api` (routes, manager, scheduler,
+notifications, reports), `mcp` (JSON-RPC 2.0 server), `cli` (offline runner, OpenAPI export).
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quick start
 
@@ -87,7 +95,9 @@ cd frontend && npm ci && npm run dev    # http://127.0.0.1:5173 (proxies /api)
 ### Docker
 
 Production requires a persistent, securely generated JWT signing key; Docker
-Compose refuses to boot without it. See [the deployment guide](docs/DEPLOYMENT.md).
+Compose refuses to boot without it. See [the deployment guide](docs/DEPLOYMENT.md)
+for the full env surface (encryption key, public URL for OOB, outbound policy,
+rate limits).
 
 ```bash
 # One-time setup. Preserve .env on subsequent restarts.
@@ -109,77 +119,84 @@ docker compose --env-file .env -f docker/docker-compose.yml up --build
 
 ## The plugin catalogue
 
-13 plugins ship in `plugins/` — see [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md)
-for the full manifest reference.
+50 plugins ship in `plugins/` — 17 **native Rust scanners** (zero external
+tooling) and 33 wrapped CLI tools (auto-detected; the UI marks missing
+binaries unavailable). Every plugin carries a declarative TOML manifest —
+see [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) for the full
+reference (parsers, presets, safety blocks, `ok_exit_codes`, capabilities).
 
-| Plugin | Kind | Category | Safety |
-|---|---|---|---|
-| `port-scanner` | **native** | network | safe |
-| `http-headers` | **native** | web | safe |
-| `http-recon` | **native** | recon | safe |
-| `tls-check` | **native** | web | safe |
-| `nmap` | cli | network | safe |
-| `nikto` | cli | web | intrusive |
-| `nuclei` | cli | web | intrusive |
-| `gobuster` | cli | web | intrusive |
-| `whatweb` | cli | recon | safe |
-| `traceroute` | cli | network | safe |
-| `whois` | cli | recon | safe |
-| `ping` | cli | network | safe |
-| `sqlmap` | cli | web | **exploit** |
+<details>
+<summary><strong>Full catalogue (50)</strong></summary>
 
-Native plugins need zero external tooling. CLI plugins auto-detect missing binaries and the
-UI marks them unavailable until installed.
+**Native (17):** `api-scanner` · `cloud-scanner` · `cors-check` · `dns-lookup` ·
+`domain-finder` · `drupal-scanner` · `email-security` · `google-dorks` ·
+`http-headers` · `http-recon` · `http-request-logger` · `js-analyzer` ·
+`param-finder` · `password-audit` · `people-hunter` · `port-scanner` ·
+`reverse-dns` · `subdomain-finder` · `tls-check` · `vhost-finder` ·
+`website-scanner` · `xss-exploiter`
+
+**CLI — network:** `fast-port-scan` · `nmap` · `ping` · `service-defaults` ·
+`smb-enum` · `ssh-audit` · `testssl` · `traceroute` · `udp-port-scan`
+
+**CLI — recon:** `subfinder` · `whatweb` · `whois`
+
+**CLI — web:** `command-injection` · `crawler` · `feroxbuster` · `ffuf` ·
+`gobuster` · `http-probe` · `http-smuggling` · `nikto` · `nuclei` ·
+`secrets-scanner` · `sqlmap` · `subdomain-takeover` · `waf-detect` ·
+`wordpress-audit` · `xss-scanner`
+
+**Exploitation:** `sqli-exploiter` (CLI) · `http-request-logger` ·
+`xss-exploiter` (native)
+
+</details>
 
 ## Safety model
 
 - **Consent gate** — plugins (and/or the whole instance) require explicit acknowledgment
-  before any task starts.
+  before any task starts; admission re-runs on every scheduled occurrence.
 - **Target policy** — three layers, in order: global deny-list → global allow-list →
   plugin `allowed_targets`. Hosts are canonicalized first (IPv4-mapped IPv6, integer IPv4
-  forms) and IPv4-shaped globs never match hostnames. Network-layer plugins default to
-  private ranges only.
+  forms) and IPv4-shaped globs never match hostnames.
+- **Connect-time destination scope** — targets are re-resolved at scan start and every
+  DNS answer is validated; cloud metadata endpoints are always refused; web scanners
+  pin the validated addresses so mid-scan DNS rebinding cannot move the scan; redirects
+  stay on the original target host. `SECUSCAN_OUTBOUND_*` knobs configure strict mode
+  and authorized private-lab scanning.
 - **Argv hardening** — commands are argv vectors (never a shell string); values starting
   with `-` are rejected unless a field explicitly opts in.
-- **Executor isolation** — per-task temp working dir, scrubbed environment (platform
-  secrets never reach tools), wall-clock timeouts, kill-on-cancel, output caps.
-- **Rate limits** — per-plugin max concurrency + hourly caps, plus a global task limit.
+- **Executor isolation** — per-task process groups (the whole tree dies on cancel/timeout),
+  per-task temp working dir, scrubbed environment, wall-clock timeouts, bounded output
+  capture, honest exit-code classification.
+- **Rate limits** — per-plugin max concurrency + hourly caps, a global task limit, and
+  per-credential API rate limits with `X-RateLimit-*` headers.
 - **Audit log** — every policy-blocked target attempt is recorded and viewable by admins.
 
-*Known boundary:* hostname-based policy matching trusts DNS at task-creation time (a DNS
-record can change). Use IP/CIDR patterns for strict enforcement; see
-[`SECURITY.md`](SECURITY.md).
+Residual boundaries (DNS pinning scope, single-node execution, no TOTP yet) are documented
+in [`SECURITY.md`](SECURITY.md).
 
 ## Testing
 
-```bash
-cargo test --workspace          # 113 backend tests (unit + integration over real HTTP)
-cd frontend && npm test         # 64 frontend tests
-cargo clippy --workspace --all-targets -- -D warnings
-```
+Backend (`cargo test --workspace`) and frontend (`npm test`) suites run in CI
+alongside clippy, rustfmt, the E2E verification script (`scripts/verify.mjs` —
+200+ checks driving a real server), and Docker smoke tests. Current test counts
+live in the CI badge and the changelog rather than this file, so they cannot go
+stale.
 
-Integration tests boot the real axum app with a temporary database, real plugin manifests
-and live listeners — covering auth flows, the task lifecycle, SSE replay, reports, RBAC,
-the network policy engine and every audit-fix regression.
+Integration tests boot the real axum app with a temporary database, real plugin
+manifests and live listeners — covering auth flows, the task lifecycle, SSE
+replay, reports, RBAC, the network policy engine, the OOB pipeline, diff
+notifications and every audit-fix regression.
 
 ## Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crates, data flow, task lifecycle
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crates, data flow, task lifecycle, trust boundaries
 - [`docs/API.md`](docs/API.md) — REST reference with curl examples
 - [`docs/PLUGIN_DEVELOPMENT.md`](docs/PLUGIN_DEVELOPMENT.md) — write your own plugin in one TOML file
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — configuration, Docker, reverse proxy
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — configuration, Docker, reverse proxy, OOB, outbound policy
+- [`docs/MAX_PARITY_PLAN.md`](docs/MAX_PARITY_PLAN.md) — the phased parity roadmap and its acceptance criteria
 - [`docs/MCP_CONSENT.md`](docs/MCP_CONSENT.md) — human-authorized one-use MCP scan approvals and safety limits
-- [`docs/REVIEW_LOG.md`](docs/REVIEW_LOG.md) — the six review cycles behind this release
-- [`SECURITY.md`](SECURITY.md) — security policy and responsible use
-
-## Relationship to SecuScan v1
-
-This repository is an independent rewrite. The original project
-(https://github.com/utksh1/SecuScan) remains the reference implementation; migration is a
-deliberate, manual decision for the maintainer. v1 features intentionally deferred:
-credential vault, notification/webhook rules, scheduled workflow ticks, saved views, and
-attack-surface assets — the architecture accommodates all of them (see the roadmap in
-`docs/ARCHITECTURE.md`).
+- [`docs/REVIEW_LOG.md`](docs/REVIEW_LOG.md) — the review cycles behind this release
+- [`SECURITY.md`](SECURITY.md) — security policy, threat boundaries, outbound policy
 
 ## License
 

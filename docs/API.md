@@ -1,5 +1,11 @@
 # HTTP API reference
 
+> **Source of truth**: the machine-readable OpenAPI 3.1 spec at
+> `/api/v1/openapi.json` (also `/openapi.yaml` and a Swagger UI at `/openapi`).
+> This reference covers the common flows; when the two disagree, the spec and
+> the code win — the CI drift checks pin the critical endpoints.
+
+
 Base URL: `/api/v1` · JSON everywhere · Errors: `{"error":{"code":<int>,"message":<string>}}`
 
 **Authentication** — one of:
@@ -52,7 +58,7 @@ TOKEN=$(curl -s -X POST localhost:8080/api/v1/auth/login \
 | GET | `/tasks/:id/result` | task + findings + severity counts |
 | GET | `/tasks/:id/output` | raw captured output + truncation flag |
 | GET | `/tasks/:id/stream` | **SSE** live console; `?after=<event id>` resumes |
-| GET | `/tasks/:id/report/{md\|csv\|html\|sarif\|json\|pdf\|docx\|xlsx}` | synchronous report download (optional `?severity=low..critical` min-severity filter) |
+| GET | `/tasks/:id/report/{md\|csv\|html\|sarif\|json\|pdf\|docx\|xlsx}` | synchronous report download (optional `?severity=low..critical` min-severity filter; `?include_ignored=true` re-includes false_positive/accepted_risk findings, excluded by default) |
 
 ### Starting a task
 
@@ -110,6 +116,7 @@ default `<data>/reports`) and served by the download endpoint.
 | GET | `/reports` | list the caller's jobs (admins see all); `?task_id=&limit=&offset=` |
 | GET | `/reports/:id` | job status |
 | GET | `/reports/:id/download` | the artifact (finished jobs only) |
+| DELETE | `/reports/:id` | delete a job and its artifact |
 | DELETE | `/reports/:id` | delete the job and its artifact |
 
 Formats: `md`, `csv`, `html`, `sarif`, `json`, `pdf`, `docx`, `xlsx` (the

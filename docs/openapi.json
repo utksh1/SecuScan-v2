@@ -1298,12 +1298,12 @@
       }
     },
     "/tasks/:id/report/:format": {
-      "post": {
+      "get": {
         "tags": [
           "Reports"
         ],
-        "summary": "Generate report for task",
-        "description": "Queue a single-task report in the given format (pdf/html/csv/xlsx/json).",
+        "summary": "Export a report synchronously",
+        "description": "Render the task's findings in the requested format and return the artifact inline. Query: severity=<low|medium|high|critical>, include_ignored=true re-includes false_positive/accepted_risk findings (excluded by default).",
         "security": [
           {
             "BearerAuth": []
@@ -1312,24 +1312,11 @@
             "ApiKeyAuth": []
           }
         ],
-        "responses": {
-          "202": {
-            "description": "Accepted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Report"
-                }
-              }
-            }
-          }
-        },
         "parameters": [
           {
             "name": "id",
             "in": "path",
             "required": true,
-            "description": "Task id.",
             "schema": {
               "type": "string"
             }
@@ -1338,12 +1325,51 @@
             "name": "format",
             "in": "path",
             "required": true,
-            "description": "Report format.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "json",
+                "md",
+                "csv",
+                "html",
+                "sarif",
+                "pdf",
+                "docx",
+                "xlsx"
+              ]
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "include_ignored",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
           }
-        ]
+        ],
+        "responses": {
+          "200": {
+            "description": "The rendered artifact (content-type per format; filename in Content-Disposition)",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown format or malformed request"
+          }
+        }
       }
     },
     "/findings": {
@@ -5449,6 +5475,155 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/reports/:id": {
+      "get": {
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Get a report job",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Report"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown job"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Reports"
+        ],
+        "summary": "Delete a report job and its artifact",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Unknown job"
+          }
+        }
+      }
+    },
+    "/findings/bulk": {
+      "patch": {
+        "tags": [
+          "Findings"
+        ],
+        "summary": "Bulk triage findings",
+        "description": "Set the analyst status on 1..=1000 findings in one statement; propagates to dedup groups and records false-positive memory per unique (workspace, plugin, title, target-fingerprint) tuple.",
+        "security": [
+          {
+            "BearerAuth": []
+          },
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids",
+                  "analyst_status"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "maxItems": 1000,
+                    "minItems": 1
+                  },
+                  "analyst_status": {
+                    "type": "string",
+                    "enum": [
+                      "new",
+                      "confirmed",
+                      "needs_review",
+                      "false_positive",
+                      "accepted_risk",
+                      "fixed"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Number of findings updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "updated": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Empty/too-many ids, unknown status, reason too long"
           }
         }
       }

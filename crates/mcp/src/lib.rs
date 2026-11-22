@@ -19,14 +19,15 @@
 //!   * run_robot             — execute a robot
 //!   * get_robot_run         — robot run status
 //!   * list_attack_surface   — assets in the Attack Surface inventory
-//!   * create_report         — generate a report (md/json/csv/html/sarif)
-//!   * list_reports          — recent reports
+//!   * list_reports          — recent report jobs
 //!
-//! Resources exposed (read-only URIs):
-//!   * secuscan://plugins/{id}
-//!   * secuscan://tasks/{id}
-//!   * secuscan://findings/{id}
-//!   * secuscan://workspaces/{id}
+//! Resources exposed (read-only collection URIs; per-id reads go through
+//! the corresponding tools):
+//!   * secuscan://plugins
+//!   * secuscan://tasks
+//!   * secuscan://findings
+//!   * secuscan://workspaces
+//!   * secuscan://attack-surface
 //!
 //! Built-in prompts:
 //!   * pentest       — full pentest against a target

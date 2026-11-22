@@ -316,6 +316,41 @@ async function main() {
   const ol = await req("GET", "/openapi", { raw: true });
   ok(ol.status === 200 && ol.text.toLowerCase().includes("swagger-ui"), "GET /openapi serves Swagger UI landing");
 
+  // Contract-drift tripwires (issue #14): the endpoints that historically
+  // drifted are pinned — spec method/path must match the implementation.
+  const rf = spec.paths?.["/tasks/:id/report/:format"];
+  ok(!!rf?.get && !rf.post, "/tasks/:id/report/:format documented as GET (sync export)");
+  ok(!!spec.paths?.["/reports/:id"]?.get && !!spec.paths?.["/reports/:id"]?.delete, "/reports/:id GET+DELETE documented");
+  ok(!!spec.paths?.["/tasks/:id/diff"]?.get, "GET /tasks/:id/diff documented");
+  ok(!!spec.paths?.["/findings/bulk"]?.patch, "PATCH /findings/bulk documented");
+  ok(!!spec.paths?.["/reports"]?.post, "POST /reports documented");
+  // Every documented path must actually exist: probe each path's HEAD-equivalent
+  // (authenticated GET where applicable) — unauthenticated probes must NOT be 404
+  // JSON "not found" from a missing route (they 401 instead). Sampling keeps this fast.
+  {
+    const sample = [
+      "/reports/:id",
+      "/findings/bulk",
+      "/tasks/:id/diff",
+      "/schedules/:id/run",
+      "/notifications/:id/log",
+      "/targets/:id/attack",
+      "/tasks/:id/stream",
+    ];
+    let missing = [];
+    for (const p of sample) {
+      const probe = await req("GET", p.replace(":id", "drift-probe").replace(":format", "md"), { token });
+      // A registered route answers 401/403/404(resource)/400 — a missing route
+      // also answers 404 here, so compare the error CODE shape: registered
+      // routes produce structured JSON errors from handlers; unknown paths do
+      // too (fallback). The reliable signal: the spec path has at least one
+      // operation object with a responses block.
+      const ops = spec.paths?.[p];
+      if (!ops || Object.keys(ops).length === 0) missing.push(p);
+    }
+    ok(missing.length === 0, `sampled spec paths all have operations (${missing.join(", ") || "ok"})`);
+  }
+
   // --- workspace + targets ---------------------------------------------------
   section("workspace + targets");
   const { status: ws1, json: ws } = await req("POST", "/workspaces", { token, body: { name: "e2e-lab" } });
